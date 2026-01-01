@@ -101,6 +101,16 @@ public struct RealityKitStageView: View {
                         .padding()
                     }
                     Spacer()
+                    HStack {
+                        // Orientation Gizmo (bottom-left)
+                        OrientationGizmoView(
+                            cameraRotation: cameraState.quaternion,
+                            isZUp: _isZUp
+                        )
+                        .padding(12)
+                        .allowsHitTesting(false)
+                        Spacer()
+                    }
                 }
             }
         }

@@ -40,6 +40,13 @@ public struct ArcballCameraState: Equatable, Sendable {
         
         return translateFocus * rotationMatrix * translateDist
     }
+
+    /// Camera rotation as quaternion (for gizmo)
+    public var quaternion: simd_quatf {
+        let rotX = simd_quatf(angle: rotation.x, axis: [1, 0, 0])
+        let rotY = simd_quatf(angle: rotation.y, axis: [0, 1, 0])
+        return rotY * rotX
+    }
 }
 
 #if os(macOS)
