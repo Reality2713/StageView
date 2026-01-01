@@ -15,6 +15,8 @@ public struct RealityKitStageView: View {
 
     // Selection
     @Binding private var _selectedPrimPath: String?
+    @Binding private var _externalModelEntity: Entity?
+    @State private var lastExternalModelId: ObjectIdentifier?
     @State private var selectionHighlightEntity: Entity?
 
     // Scene info
@@ -30,6 +32,7 @@ public struct RealityKitStageView: View {
         gridConfig: Binding<GridConfiguration>,
         iblConfig: Binding<IBLConfiguration>,
         selectedPrimPath: Binding<String?>,
+        modelEntity: Binding<Entity?> = .constant(nil),
         sceneBounds: SceneBounds,
         metersPerUnit: Double,
         isZUp: Bool,
@@ -39,6 +42,7 @@ public struct RealityKitStageView: View {
         self._gridConfig = gridConfig
         self._iblConfig = iblConfig
         self.__selectedPrimPath = selectedPrimPath
+        self.__externalModelEntity = modelEntity
         self._sceneBounds = sceneBounds
         self._metersPerUnit = metersPerUnit
         self._isZUp = isZUp
@@ -53,6 +57,11 @@ public struct RealityKitStageView: View {
                 content.add(root)
                 self.rootEntity = root
                 setupSubscriptions(for: root)
+                
+                if let entity = _externalModelEntity {
+                    loadModel(entity)
+                    syncRenderInfo()
+                }
             } update: { content in
                 // Handle dynamic updates
             }
@@ -60,14 +69,21 @@ public struct RealityKitStageView: View {
                 VStack {
                     HStack {
                         Spacer()
+                        // Use a default camera distance based on scene bounds
                         ScaleIndicatorView(
-                            sceneBounds: _sceneBounds,
-                            metersPerUnit: _metersPerUnit
+                            cameraDistance: Double(_sceneBounds.maxExtent) * _metersPerUnit * 2.0
                         )
                         .padding()
                     }
                     Spacer()
                 }
+            }
+        }
+        .onChange(of: _externalModelEntity.map { ObjectIdentifier($0) }) { _, newId in
+            if let entity = _externalModelEntity, newId != nil {
+                loadModel(entity)
+                syncRenderInfo()
+                lastExternalModelId = newId
             }
         }
         .onChange(of: _selectedPrimPath) { _, newPath in
@@ -134,12 +150,7 @@ public struct RealityKitStageView: View {
 
     @MainActor
     private func setupSubscriptions(for root: Entity) {
-        guard let scene = root.scene else { return }
-        sceneSubscription = scene.subscribe(to: SceneEvents.Update.self) { _ in
-            Task { @MainActor in
-                self.syncRenderInfo()
-            }
-        }
+        // Removing Scene.Update subscription that was causing infinite render loops
     }
 
     @MainActor
