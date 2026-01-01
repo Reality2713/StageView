@@ -50,6 +50,7 @@ public struct ArcballCameraControls: ViewModifier {
     @State private var startRotation: SIMD3<Float>?
     @State private var startFocus: SIMD3<Float>?
     @State private var startDistance: Float?
+    @State private var previousDragValue: DragGesture.Value?
     
     public init(state: Binding<ArcballCameraState>, sceneBounds: SceneBounds) {
         self._state = state
@@ -74,11 +75,17 @@ public struct ArcballCameraControls: ViewModifier {
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         #if os(macOS)
-                        if NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command) {
+                        if NSEvent.modifierFlags.contains(.option) {
+                            // User requested: Option + Click Drag = Zoom
+                            // Determine deltaY for zoom
+                            let deltaY = Float(value.translation.height - (previousDragValue?.translation.height ?? 0))
+                            handleZoom(delta: deltaY * 0.01)
+                        } else if NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command) {
                             handlePan(value)
                         } else {
                             handleOrbit(value)
                         }
+                        previousDragValue = value
                         #else
                         handleOrbit(value)
                         #endif
@@ -86,6 +93,8 @@ public struct ArcballCameraControls: ViewModifier {
                     .onEnded { _ in
                         startRotation = nil
                         startFocus = nil
+                        startDistance = nil
+                        previousDragValue = nil
                     }
             )
             .gesture(
@@ -146,13 +155,29 @@ public struct ArcballCameraControls: ViewModifier {
         let newDistance = start / Float(magnification)
         state.distance = max(0.01, newDistance)
     }
+
+    private func handleZoom(delta: Float) {
+        // Linear zoom based on drag delta
+        // Drag down (+) = Zoom Out (increase distance), Drag Up (-) = Zoom In
+        // Scaling sensitivity by distance
+        let change = delta * state.distance * 2.0
+        state.distance = max(0.01, state.distance + change)
+    }
     
     #if os(macOS)
     private func handleNativeScroll(_ event: NSEvent) {
-        // Handle both zooming (vertical scroll) and panning (scroll with modifiers)
-        // Note: NSEvent.scrollingDeltaY is positive for upward/forward scroll
+        // Hydra Parity:
+        // Default Scroll = Pan (Translate)
+        // Option + Scroll = Zoom
         
-        if event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.command) {
+        if event.modifierFlags.contains(.option) {
+             // Zoom
+             let sensitivity: Float = 0.005
+             let delta = Float(event.scrollingDeltaY) * sensitivity
+             // distance = distance * (1 - delta)
+             let newDistance = state.distance * (1.0 - delta)
+             state.distance = max(0.01, newDistance)
+        } else {
             // Pan
             let scale = state.distance * 0.001
             
@@ -167,15 +192,6 @@ public struct ArcballCameraControls: ViewModifier {
             let deltaY = Float(-event.scrollingDeltaY) * scale
             
             state.focus += (right * deltaX) + (up * deltaY)
-        } else {
-            // Zoom behavior: scrolling up (positive deltaY) usually zooms in
-            // Sensitivity for scroll zoom
-            let sensitivity: Float = 0.005
-            let delta = Float(event.scrollingDeltaY) * sensitivity
-            
-            // distance = distance * (1 - delta)
-            let newDistance = state.distance * (1.0 - delta)
-            state.distance = max(0.01, newDistance)
         }
     }
     
