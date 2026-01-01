@@ -7,7 +7,9 @@ public struct RealityKitStageView: View {
     @State private var rootEntity: Entity?
     @State private var modelEntity: Entity?
     @State private var iblEntity: Entity?
+    @State private var skyboxEntity: Entity?
     @State private var sceneSubscription: (any Sendable)?
+    @State private var cameraState = ArcballCameraState()
 
     // Configuration
     @Binding private var gridConfig: GridConfiguration
@@ -18,6 +20,7 @@ public struct RealityKitStageView: View {
     @Binding private var _externalModelEntity: Entity?
     @State private var lastExternalModelId: ObjectIdentifier?
     @State private var selectionHighlightEntity: Entity?
+    @Binding private var _loadError: String?
 
     // Scene info
     private let _sceneBounds: SceneBounds
@@ -27,6 +30,7 @@ public struct RealityKitStageView: View {
     // Callbacks
     private let onModelLoaded: ((Entity) -> Void)?
     private let onBoundsChanged: ((SceneBounds) -> Void)?
+    private let onRootReady: ((Entity) -> Void)?
 
     public init(
         gridConfig: Binding<GridConfiguration>,
@@ -36,18 +40,22 @@ public struct RealityKitStageView: View {
         sceneBounds: SceneBounds,
         metersPerUnit: Double,
         isZUp: Bool,
+        loadError: Binding<String?> = .constant(nil),
         onModelLoaded: ((Entity) -> Void)? = nil,
-        onBoundsChanged: ((SceneBounds) -> Void)? = nil
+        onBoundsChanged: ((SceneBounds) -> Void)? = nil,
+        onRootReady: ((Entity) -> Void)? = nil
     ) {
         self._gridConfig = gridConfig
         self._iblConfig = iblConfig
         self.__selectedPrimPath = selectedPrimPath
         self.__externalModelEntity = modelEntity
+        self.__loadError = loadError
         self._sceneBounds = sceneBounds
         self._metersPerUnit = metersPerUnit
         self._isZUp = isZUp
         self.onModelLoaded = onModelLoaded
         self.onBoundsChanged = onBoundsChanged
+        self.onRootReady = onRootReady
     }
 
     public var body: some View {
@@ -66,6 +74,23 @@ public struct RealityKitStageView: View {
                 // Handle dynamic updates
             }
             .overlay {
+                if let error = _loadError {
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.largeTitle)
+                            .foregroundStyle(.yellow)
+                        Text("Load Failed")
+                            .font(.headline)
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(24)
+                    .background(.regularMaterial)
+                    .cornerRadius(12)
+                }
+                
                 VStack {
                     HStack {
                         Spacer()
@@ -92,9 +117,19 @@ public struct RealityKitStageView: View {
         .onChange(of: gridConfig) { _, newConfig in
             updateGrid(configuration: newConfig)
         }
-        .onChange(of: iblConfig) { _, newConfig in
-            // Handle IBL config changes if needed
+        .onChange(of: iblConfig) { oldValue, newConfig in
+            if oldValue.environmentURL != newConfig.environmentURL {
+                Task { await updateEnvironment(newConfig.environmentURL) }
+            } else if oldValue.exposure != newConfig.exposure {
+                updateIBLExposure(newConfig.exposure)
+            } else if oldValue.rotation != newConfig.rotation {
+                updateIBLRotation(newConfig.rotation)
+            }
         }
+        .onChange(of: cameraState) { _, newState in
+            updateCamera(state: newState)
+        }
+        .modifier(ArcballCameraControls(state: $cameraState, sceneBounds: _sceneBounds))
     }
 
     @MainActor
@@ -145,6 +180,7 @@ public struct RealityKitStageView: View {
         root.addChild(ibl)
         self.iblEntity = ibl
 
+        onRootReady?(root)
         return root
     }
 
@@ -212,6 +248,98 @@ public struct RealityKitStageView: View {
         }
     }
 
+    @MainActor
+    private func updateCamera(state: ArcballCameraState) {
+        guard let camera = rootEntity?.findEntity(named: "MainCamera") else { return }
+        camera.transform.matrix = state.transform
+    }
+
+    // MARK: - Environment & IBL
+
+    @MainActor
+    private func updateEnvironment(_ url: URL?) async {
+        guard let ibl = iblEntity else { return }
+
+        // Remove existing IBL component
+        ibl.components.remove(ImageBasedLightComponent.self)
+        skyboxEntity?.removeFromParent()
+        skyboxEntity = nil
+
+        guard let url = url else {
+            return
+        }
+
+        do {
+            // Load the HDR as a CGImage first, then generate EnvironmentResource (macOS 15+)
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                print("[RealityKitStageView] ❌ Failed to create CGImage from: \(url.path)")
+                return
+            }
+            let resource = try await EnvironmentResource(equirectangular: cgImage, withName: url.lastPathComponent)
+
+            var iblComp = ImageBasedLightComponent(source: .single(resource))
+            iblComp.intensityExponent = iblConfig.realityKitIntensityExponent
+            ibl.components.set(iblComp)
+
+            // Skybox Sphere
+            let skybox = Entity()
+            skybox.name = "SkyboxSphere"
+            
+            let texture = try await TextureResource.generate(from: cgImage, options: .init(semantic: .color))
+            var material = UnlitMaterial()
+            material.color = .init(texture: .init(texture))
+            
+            skybox.components.set(ModelComponent(
+                mesh: .generateSphere(radius: 1000),
+                materials: [material]
+            ))
+            
+            // Flip sphere inward
+            skybox.scale *= .init(x: -1, y: 1, z: 1)
+            
+            rootEntity?.addChild(skybox)
+            self.skyboxEntity = skybox
+
+            updateIBLRotation(iblConfig.rotation)
+            
+            // Ensure model receives IBL
+            if let model = modelEntity {
+                applyIBLReceiver(to: model)
+            }
+            
+            print("[RealityKitStageView] ✅ Environment updated: \(url.lastPathComponent)")
+        } catch {
+            print("[RealityKitStageView] ❌ Environment load failed: \(error.localizedDescription)")
+        }
+    }
+
+    @MainActor
+    private func updateIBLExposure(_ exposure: Float) {
+        guard let ibl = iblEntity,
+              var iblComp = ibl.components[ImageBasedLightComponent.self] else { return }
+        iblComp.intensityExponent = iblConfig.realityKitIntensityExponent
+        ibl.components.set(iblComp)
+    }
+
+    @MainActor
+    private func updateIBLRotation(_ degrees: Float) {
+        let axis: SIMD3<Float> = _isZUp ? [0, 0, 1] : [0, 1, 0]
+        let radians = degrees * .pi / 180.0
+        let orientation = simd_quatf(angle: radians, axis: axis)
+        
+        iblEntity?.orientation = orientation
+        skyboxEntity?.orientation = orientation
+    }
+
+    private func applyIBLReceiver(to entity: Entity) {
+        guard let ibl = iblEntity else { return }
+        entity.components.set(ImageBasedLightReceiverComponent(imageBasedLight: ibl))
+        for child in entity.children {
+            applyIBLReceiver(to: child)
+        }
+    }
+
     // MARK: - Public API for loading models
 
     @MainActor
@@ -240,17 +368,17 @@ public struct RealityKitStageView: View {
                 // Lower the clamp significantly for small models
                 let clampedDistance = max(distance, 0.05)
 
-                // Position camera relative to model center
-                let newPos: SIMD3<Float> = [
-                    center.x,
-                    center.y + clampedDistance * 0.4, // Slight offset up
-                    center.z + Float(clampedDistance * 1.5),
-                ]
-
-                camera.look(at: center, from: newPos, relativeTo: nil)
+                // Update Camera State
+                var newState = cameraState
+                newState.focus = center
+                newState.distance = clampedDistance * 1.5
+                // Reset rotation to default
+                newState.rotation = SIMD3<Float>(-20 * .pi / 180, 0, 0)
+                cameraState = newState 
             }
 
             onModelLoaded?(entity)
+            applyIBLReceiver(to: entity)
         }
     }
 }
@@ -287,9 +415,8 @@ extension RealityKitStageView: @preconcurrency StageViewport {
 
     @MainActor
     public func resetCamera() {
-        guard let camera = rootEntity?.findEntity(named: "MainCamera") else { return }
-        camera.position = [0, 1, 2]
-        camera.look(at: .zero, from: [0, 1, 2], relativeTo: nil)
+        // Reset to default
+        cameraState = ArcballCameraState(focus: .zero, rotation: SIMD3<Float>(-20 * .pi / 180, 0, 0), distance: 5.0)
     }
 
     @MainActor
