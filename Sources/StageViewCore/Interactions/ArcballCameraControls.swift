@@ -76,18 +76,27 @@ public struct ArcballCameraControls: ViewModifier {
                     .onChanged { value in
                         #if os(macOS)
                         if NSEvent.modifierFlags.contains(.option) {
-                            // User requested: Option + Click Drag = Zoom
-                            // Determine deltaY for zoom
+                            // Hydra Parity: Option + Drag = Pan
+                            // Apple uses negative directions and different multipliers
+                            let multiplier: Float = NSEvent.modifierFlags.contains(.shift) ? 2.0 : 0.5
+                            // We need to pass the delta, but handlePan uses total translation usually.
+                            // Let's adapt handlePan to take a multiplier/sensitivity or calculate delta manually
+                            let deltaX = Float(value.translation.width - (previousDragValue?.translation.width ?? 0))
                             let deltaY = Float(value.translation.height - (previousDragValue?.translation.height ?? 0))
-                            handleZoom(delta: deltaY * 0.01)
-                        } else if NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command) {
-                            handlePan(value)
+                            
+                            // Invert deltaX for Pan to match Hydra behavior (dragging world vs camera)
+                            handlePan(deltaX: deltaX * multiplier, deltaY: deltaY * multiplier)
                         } else {
-                            handleOrbit(value)
+                            // Orbit - drag right = rotate right
+                            let deltaX = Float(value.translation.width - (previousDragValue?.translation.width ?? 0))
+                            let deltaY = Float(value.translation.height - (previousDragValue?.translation.height ?? 0))
+                            handleOrbit(deltaX: deltaX, deltaY: deltaY)
                         }
                         previousDragValue = value
                         #else
-                        handleOrbit(value)
+                        let deltaX = Float(value.translation.width - (previousDragValue?.translation.width ?? 0))
+                        let deltaY = Float(value.translation.height - (previousDragValue?.translation.height ?? 0))
+                        handleOrbit(deltaX: deltaX, deltaY: deltaY)
                         #endif
                     }
                     .onEnded { _ in
@@ -108,28 +117,19 @@ public struct ArcballCameraControls: ViewModifier {
             )
     }
     
-    private func handleOrbit(_ value: DragGesture.Value) {
-        if startRotation == nil { startRotation = state.rotation }
-        guard let start = startRotation else { return }
-        
+    private func handleOrbit(deltaX: Float, deltaY: Float) {
         // Sensitivity
         let sensitivity: Float = 0.01
         
-        let deltaX = Float(value.translation.width) * sensitivity
-        let deltaY = Float(value.translation.height) * sensitivity
-        
         // Update state
-        var newRotation = start
-        newRotation.y -= deltaX // Yaw
-        newRotation.x -= deltaY // Pitch
+        var newRotation = state.rotation
+        newRotation.y -= deltaX * sensitivity // Yaw
+        newRotation.x -= deltaY * sensitivity // Pitch
         
         state.rotation = newRotation
     }
     
-    private func handlePan(_ value: DragGesture.Value) {
-        if startFocus == nil { startFocus = state.focus }
-        guard let start = startFocus else { return }
-        
+    private func handlePan(deltaX: Float, deltaY: Float) {
         // Pan sensitivity should scale with distance
         let scale = state.distance * 0.001
         
@@ -141,10 +141,11 @@ public struct ArcballCameraControls: ViewModifier {
         let right = orientation.act([1, 0, 0])
         let up = orientation.act([0, 1, 0])
         
-        let deltaX = Float(-value.translation.width) * scale
-        let deltaY = Float(value.translation.height) * scale
+        // Apply deltas inversely to match "dragging the scene" feel if needed,
+        // or directly for "dragging the camera". Hydra uses:
+        // pan(byDeltaX: -deltaX * multiplier, deltaY: -deltaY * multiplier)
         
-        state.focus = start + (right * deltaX) + (up * deltaY)
+        state.focus += (right * (-deltaX * scale)) + (up * (deltaY * scale))
     }
     
     private func handleZoom(magnification: CGFloat) {
@@ -179,19 +180,12 @@ public struct ArcballCameraControls: ViewModifier {
              state.distance = max(0.01, newDistance)
         } else {
             // Pan
-            let scale = state.distance * 0.001
+            // Default: Pan (scroll to pan, like Apple's sample)
+            let multiplier: Float = event.modifierFlags.contains(.shift) ? 5.0 : 1.0
+            let deltaX = Float(event.scrollingDeltaX) * multiplier
+            let deltaY = Float(event.scrollingDeltaY) * multiplier
             
-            let rotX = simd_quatf(angle: state.rotation.x, axis: [1, 0, 0])
-            let rotY = simd_quatf(angle: state.rotation.y, axis: [0, 1, 0])
-            let orientation = rotY * rotX
-            
-            let right = orientation.act([1, 0, 0])
-            let up = orientation.act([0, 1, 0])
-            
-            let deltaX = Float(event.scrollingDeltaX) * scale
-            let deltaY = Float(-event.scrollingDeltaY) * scale
-            
-            state.focus += (right * deltaX) + (up * deltaY)
+            handlePan(deltaX: deltaX, deltaY: deltaY)
         }
     }
     
