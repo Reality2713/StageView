@@ -129,7 +129,23 @@ public struct RealityKitStageView: View {
         .onChange(of: cameraState) { _, newState in
             updateCamera(state: newState)
         }
+        #if os(macOS)
         .modifier(ArcballCameraControls(state: $cameraState, sceneBounds: _sceneBounds))
+        #endif
+        .onTapGesture { location in
+            handleTap(at: location)
+        }
+    }
+
+    @MainActor
+    private func handleTap(at location: CGPoint) {
+        guard let root = rootEntity, let model = modelEntity else { return }
+        
+        // Build ray from camera through tap location
+        // For now, use a simple entity name search based on selection
+        // Full raycast requires access to the RealityView's content which isn't directly available here
+        // This is a placeholder - proper picking requires ARView or custom hit-testing
+        print("[RealityKitStageView] Tap at \(location) - picking not yet implemented with raycast")
     }
 
     @MainActor

@@ -1,4 +1,5 @@
 import SwiftUI
+#if os(macOS)
 import AppKit
 
 /// A transparent NSView that captures native macOS events and bridges them to callbacks.
@@ -40,3 +41,4 @@ public struct InteractionOverlay: NSViewRepresentable {
         public override var acceptsFirstResponder: Bool { true }
     }
 }
+#endif

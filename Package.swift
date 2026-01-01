@@ -8,13 +8,11 @@ let package = Package(
         .library(name: "StageViewCore", targets: ["StageViewCore"]),
         .library(name: "RealityKitStageView", targets: ["RealityKitStageView"]),
     ],
-    dependencies: [
-        // No TCA - keeping Core lightweight and framework-agnostic
-    ],
+    dependencies: [],
     targets: [
         .target(
             name: "StageViewCore",
-            dependencies: []  // Pure Swift + SwiftUI only
+            dependencies: []
         ),
         .target(
             name: "RealityKitStageView",
