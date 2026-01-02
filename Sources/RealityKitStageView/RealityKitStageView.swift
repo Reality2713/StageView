@@ -90,28 +90,24 @@ public struct RealityKitStageView: View {
                     .background(.regularMaterial)
                     .cornerRadius(12)
                 }
-                
-                VStack {
-                    HStack {
-                        Spacer()
-                        // Use a default camera distance based on scene bounds
-                        ScaleIndicatorView(
-                            cameraDistance: Double(_sceneBounds.maxExtent) * _metersPerUnit * 2.0
-                        )
-                        .padding()
-                    }
-                    Spacer()
-                    HStack {
-                        // Orientation Gizmo (bottom-left)
-                        OrientationGizmoView(
-                            cameraRotation: cameraState.quaternion,
-                            isZUp: _isZUp
-                        )
-                        .padding(12)
-                        .allowsHitTesting(false)
-                        Spacer()
-                    }
-                }
+            }
+            .overlay {
+                // Use a default camera distance based on scene bounds
+                ScaleIndicatorView(
+                    cameraDistance: Double(cameraState.distance) * _metersPerUnit
+                )
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            }
+            .overlay {
+                // Orientation Gizmo (bottom-left)
+                OrientationGizmoView(
+                    cameraRotation: cameraState.quaternion,
+                    isZUp: _isZUp
+                )
+                .padding(12)
+                .allowsHitTesting(false)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             }
         }
         .onChange(of: _externalModelEntity.map { ObjectIdentifier($0) }) { _, newId in
@@ -121,20 +117,31 @@ public struct RealityKitStageView: View {
                 lastExternalModelId = newId
             }
         }
+        .onChange(of: rootEntity.map { ObjectIdentifier($0) }) { _, newId in
+            guard newId != nil else { return }
+            Task { await updateEnvironment(iblConfig.environmentURL) }
+            updateIBLExposure(iblConfig.exposure)
+            updateIBLRotation(iblConfig.rotation)
+            updateIBLLightIntensity()
+        }
         .onChange(of: _selectedPrimPath) { _, newPath in
             updateSelectionHighlight(for: newPath)
         }
         .onChange(of: gridConfig) { _, newConfig in
             updateGrid(configuration: newConfig)
         }
-        .onChange(of: iblConfig) { oldValue, newConfig in
-            if oldValue.environmentURL != newConfig.environmentURL {
-                Task { await updateEnvironment(newConfig.environmentURL) }
-            } else if oldValue.exposure != newConfig.exposure {
-                updateIBLExposure(newConfig.exposure)
-            } else if oldValue.rotation != newConfig.rotation {
-                updateIBLRotation(newConfig.rotation)
-            }
+        .onChange(of: iblConfig.environmentURL) { _, newValue in
+            Task { await updateEnvironment(newValue) }
+        }
+        .onChange(of: iblConfig.showBackground) { _, _ in
+            Task { await updateEnvironment(iblConfig.environmentURL) }
+        }
+        .onChange(of: iblConfig.exposure) { _, newValue in
+            updateIBLExposure(newValue)
+            updateIBLLightIntensity()
+        }
+        .onChange(of: iblConfig.rotation) { _, newValue in
+            updateIBLRotation(newValue)
         }
         .onChange(of: cameraState) { _, newState in
             updateCamera(state: newState)
@@ -168,14 +175,16 @@ public struct RealityKitStageView: View {
         modelAnchor.name = "ModelAnchor"
         root.addChild(modelAnchor)
 
-        // Lights
+        // Lights (disabled when IBL is active).
         let light = DirectionalLight()
+        light.name = "KeyLight"
         light.light.intensity = 2000
         light.light.color = .white
         light.look(at: .zero, from: [2, 4, 5], relativeTo: nil)
         root.addChild(light)
 
         let fillLight = DirectionalLight()
+        fillLight.name = "FillLight"
         fillLight.light.intensity = 1000
         fillLight.look(at: .zero, from: [-2, 2, -3], relativeTo: nil)
         root.addChild(fillLight)
@@ -296,36 +305,37 @@ public struct RealityKitStageView: View {
         }
 
         do {
-            // Load the HDR as a CGImage first, then generate EnvironmentResource (macOS 15+)
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-                  let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
-                print("[RealityKitStageView] ❌ Failed to create CGImage from: \(url.path)")
-                return
-            }
-            let resource = try await EnvironmentResource(equirectangular: cgImage, withName: url.lastPathComponent)
+            let resourceName = url.deletingLastPathComponent().lastPathComponent + "_" + url.lastPathComponent
+            let resource = try EnvironmentResource.__load(contentsOf: url, withName: resourceName)
 
             var iblComp = ImageBasedLightComponent(source: .single(resource))
             iblComp.intensityExponent = iblConfig.realityKitIntensityExponent
             ibl.components.set(iblComp)
 
-            // Skybox Sphere
-            let skybox = Entity()
-            skybox.name = "SkyboxSphere"
-            
-            let texture = try await TextureResource.generate(from: cgImage, options: .init(semantic: .color))
-            var material = UnlitMaterial()
-            material.color = .init(texture: .init(texture))
-            
-            skybox.components.set(ModelComponent(
-                mesh: .generateSphere(radius: 1000),
-                materials: [material]
-            ))
-            
-            // Flip sphere inward
-            skybox.scale *= .init(x: -1, y: 1, z: 1)
-            
-            rootEntity?.addChild(skybox)
-            self.skyboxEntity = skybox
+            if iblConfig.showBackground {
+                // Skybox Sphere
+                let skybox = Entity()
+                skybox.name = "SkyboxSphere"
+
+                let texture = try TextureResource.load(
+                    contentsOf: url,
+                    withName: resourceName,
+                    options: .init(semantic: .color)
+                )
+                var material = UnlitMaterial()
+                material.color = .init(texture: .init(texture))
+
+                skybox.components.set(ModelComponent(
+                    mesh: .generateSphere(radius: 1000),
+                    materials: [material]
+                ))
+
+                // Flip sphere inward
+                skybox.scale *= .init(x: -1, y: 1, z: 1)
+
+                rootEntity?.addChild(skybox)
+                self.skyboxEntity = skybox
+            }
 
             updateIBLRotation(iblConfig.rotation)
             
@@ -350,10 +360,12 @@ public struct RealityKitStageView: View {
 
     @MainActor
     private func updateIBLRotation(_ degrees: Float) {
-        let axis: SIMD3<Float> = _isZUp ? [0, 0, 1] : [0, 1, 0]
         let radians = degrees * .pi / 180.0
-        let orientation = simd_quatf(angle: radians, axis: axis)
-        
+        let spinAxis: SIMD3<Float> = _isZUp ? [0, 0, 1] : [0, 1, 0]
+        let spin = simd_quatf(angle: -radians, axis: spinAxis)
+        let baseTilt = _isZUp ? simd_quatf(angle: .pi / 2, axis: [1, 0, 0]) : simd_quatf()
+        let orientation = simd_normalize(spin * baseTilt)
+
         iblEntity?.orientation = orientation
         skyboxEntity?.orientation = orientation
     }
@@ -363,6 +375,18 @@ public struct RealityKitStageView: View {
         entity.components.set(ImageBasedLightReceiverComponent(imageBasedLight: ibl))
         for child in entity.children {
             applyIBLReceiver(to: child)
+        }
+    }
+
+    @MainActor
+    private func updateIBLLightIntensity() {
+        guard let root = rootEntity else { return }
+        let useIBL = iblConfig.environmentURL != nil
+        if let key = root.findEntity(named: "KeyLight") as? DirectionalLight {
+            key.light.intensity = useIBL ? 0 : 2000
+        }
+        if let fill = root.findEntity(named: "FillLight") as? DirectionalLight {
+            fill.light.intensity = useIBL ? 0 : 1000
         }
     }
 

@@ -108,6 +108,17 @@ public struct ArcballCameraControls: ViewModifier {
             )
     }
     
+    private var minDistance: Float { 0.01 }
+
+    private var maxDistance: Float {
+        let extent = Swift.max(Float(sceneBounds.maxExtent), 0.001)
+        return Swift.max(1000.0, extent * 100000.0)
+    }
+
+    private func clampDistance(_ value: Float) -> Float {
+        Swift.min(Swift.max(value, minDistance), maxDistance)
+    }
+
     private func handleOrbit(deltaX: Float, deltaY: Float) {
         let sensitivity: Float = 0.01
         
@@ -116,7 +127,7 @@ public struct ArcballCameraControls: ViewModifier {
         newRotation.x -= deltaY * sensitivity // Pitch
         
         // Clamp pitch to prevent camera flip
-        newRotation.x = max(-.pi / 2 + 0.01, min(.pi / 2 - 0.01, newRotation.x))
+        newRotation.x = Swift.max(-.pi / 2 + 0.01, Swift.min(.pi / 2 - 0.01, newRotation.x))
         
         state.rotation = newRotation
     }
@@ -140,10 +151,11 @@ public struct ArcballCameraControls: ViewModifier {
     private func handleZoom(magnification: CGFloat) {
         if startDistance == nil { startDistance = state.distance }
         guard let start = startDistance else { return }
+        guard magnification > 0 else { return }
         
         // Pinch out (scale > 1) -> zoom in (distance < start)
         let newDistance = start / Float(magnification)
-        state.distance = max(0.01, newDistance)
+        state.distance = clampDistance(newDistance)
     }
     
     private func handleNativeScroll(_ event: NSEvent) {
@@ -153,7 +165,7 @@ public struct ArcballCameraControls: ViewModifier {
             let sensitivity: Float = 0.005
             let delta = Float(event.scrollingDeltaY) * sensitivity
             let newDistance = state.distance * (1.0 - delta)
-            state.distance = max(0.01, newDistance)
+            state.distance = clampDistance(newDistance)
         } else {
             // Pan
             let multiplier: Float = event.modifierFlags.contains(.shift) ? 5.0 : 1.0
@@ -168,7 +180,7 @@ public struct ArcballCameraControls: ViewModifier {
         let sensitivity: Float = 1.0
         let delta = Float(event.magnification) * sensitivity
         let newDistance = state.distance * (1.0 - delta)
-        state.distance = max(0.01, newDistance)
+        state.distance = clampDistance(newDistance)
     }
 }
 #endif
