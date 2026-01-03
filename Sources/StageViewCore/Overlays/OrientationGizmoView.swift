@@ -139,13 +139,9 @@ public struct OrientationGizmoView: View {
             }
             .frame(width: size, height: size)
 
-            Text(isZUp ? "Z-Up" : "Y-Up")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.7))
-                .padding(.horizontal, 4)
         }
-        .padding(8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .padding(4)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
     }
 
     /// Rotate a point by a quaternion

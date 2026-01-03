@@ -24,9 +24,10 @@ public struct ScaleIndicatorView: View {
 
     /// Calculate what real-world distance (in meters) fits in our fixed bar width.
     private var realWorldDistanceForBar: Double {
+        guard cameraDistance > 0, cameraDistance.isFinite else { return 0 }
         let fovRadians = fieldOfView * .pi / 180.0
         let visibleWidthAtDistance = 2.0 * cameraDistance * tan(fovRadians / 2.0)
-        let assumedScreenWidth: Double = 1200.0
+        let assumedScreenWidth: Double = 800.0 // Adjusted for split-viewports
         let barFraction = barWidth / assumedScreenWidth
         return visibleWidthAtDistance * barFraction
     }
@@ -34,6 +35,8 @@ public struct ScaleIndicatorView: View {
     /// Choose a nice round number for the label (1, 2, 5, 10, 20, 50, 100, etc.)
     private var normalizedDistance: Double {
         let raw = realWorldDistanceForBar
+        guard raw > 0, raw.isFinite else { return 0 }
+        
         let magnitude = pow(10.0, floor(log10(raw)))
         let normalized = raw / magnitude
 
@@ -76,23 +79,33 @@ public struct ScaleIndicatorView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 8) {
-            scaleBar(multiplier: 1)
-            scaleBar(multiplier: 5)
+        if normalizedDistance > 0 {
+            scaleBar
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: Capsule())
         }
-        .padding(8)
-       	.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
     }
 
-    private func scaleBar(multiplier: Int) -> some View {
-        let distance = normalizedDistance * Double(multiplier)
-        return VStack(spacing: 2) {
+    private var scaleBar: some View {
+        let distance = normalizedDistance
+        let width = barWidth(forDistance: distance)
+        
+        return VStack(spacing: 3) {
             Rectangle()
-                .frame(width: barWidth(forMultiplier: multiplier), height: 2)
-                .foregroundStyle(.secondary)
+                .fill(.secondary.opacity(0.8))
+                .frame(width: width, height: 1.5)
             Text(formatDistance(distance))
-                .font(.caption2)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func barWidth(forDistance distance: Double) -> CGFloat {
+        let raw = realWorldDistanceForBar
+        guard raw > 0 else { return 0 }
+        let ratio = distance / raw
+        // Ensure the bar stays within a sane range (40 to 140 pts)
+        return CGFloat(min(140, max(40, barWidth * ratio)))
     }
 }

@@ -53,14 +53,21 @@ public struct ArcballCameraState: Equatable, Sendable {
 public struct ArcballCameraControls: ViewModifier {
     @Binding var state: ArcballCameraState
     let sceneBounds: SceneBounds
+    let maxDistanceOverride: Float?
     
     // Interaction State
     @State private var startDistance: Float?
     @State private var previousDragValue: DragGesture.Value?
+    @State private var lastClampedEdge: ClampEdge?
     
-    public init(state: Binding<ArcballCameraState>, sceneBounds: SceneBounds) {
+    public init(
+        state: Binding<ArcballCameraState>,
+        sceneBounds: SceneBounds,
+        maxDistance: Float? = nil
+    ) {
         self._state = state
         self.sceneBounds = sceneBounds
+        self.maxDistanceOverride = maxDistance
     }
     
     public func body(content: Content) -> some View {
@@ -108,15 +115,51 @@ public struct ArcballCameraControls: ViewModifier {
             )
     }
     
+    private enum ClampEdge {
+        case min
+        case max
+    }
+
+    private let clampEpsilon: Float = 0.0001
+
     private var minDistance: Float { 0.01 }
 
-    private var maxDistance: Float {
+    private var maxDistanceValue: Float {
+        if let override = maxDistanceOverride {
+            return Swift.max(override, minDistance)
+        }
+
         let extent = Swift.max(Float(sceneBounds.maxExtent), 0.001)
         return Swift.max(1000.0, extent * 100000.0)
     }
 
     private func clampDistance(_ value: Float) -> Float {
-        Swift.min(Swift.max(value, minDistance), maxDistance)
+        let maxDistance = maxDistanceValue
+        let clamped = Swift.min(Swift.max(value, minDistance), maxDistance)
+        let edge: ClampEdge?
+
+        if clamped <= minDistance + clampEpsilon {
+            edge = .min
+        } else if clamped >= maxDistance - clampEpsilon {
+            edge = .max
+        } else {
+            edge = nil
+        }
+
+        if edge != lastClampedEdge {
+            if edge != nil {
+                performHapticFeedback()
+            }
+            lastClampedEdge = edge
+        }
+
+        return clamped
+    }
+
+    private func performHapticFeedback() {
+        #if os(macOS)
+        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        #endif
     }
 
     private func handleOrbit(deltaX: Float, deltaY: Float) {

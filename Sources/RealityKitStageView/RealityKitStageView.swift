@@ -1,6 +1,9 @@
 import RealityKit
 import StageViewCore
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 /// Main RealityKit viewport implementation conforming to StageViewport protocol.
 public struct RealityKitStageView: View {
@@ -26,6 +29,11 @@ public struct RealityKitStageView: View {
     private let _sceneBounds: SceneBounds
     private let _metersPerUnit: Double
     private let _isZUp: Bool
+
+    private var environmentRadius: Double {
+        let extent = Double(_sceneBounds.maxExtent)
+        return Swift.max(1000.0, extent * 10.0)
+    }
 
     // Callbacks
     private let onModelLoaded: ((Entity) -> Void)?
@@ -71,7 +79,9 @@ public struct RealityKitStageView: View {
                     syncRenderInfo()
                 }
             } update: { content in
-                // Handle dynamic updates
+                // Sync IBL and other dynamic state
+                syncIBLState()
+                updateCamera(state: cameraState)
             }
             .overlay {
                 if let error = _loadError {
@@ -91,15 +101,15 @@ public struct RealityKitStageView: View {
                     .cornerRadius(12)
                 }
             }
-            .overlay {
+            .overlay(alignment: .bottomTrailing) {
                 // Use a default camera distance based on scene bounds
                 ScaleIndicatorView(
                     cameraDistance: Double(cameraState.distance) * _metersPerUnit
                 )
-                .padding()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(12)
+                .allowsHitTesting(false)
             }
-            .overlay {
+            .overlay(alignment: .bottomLeading) {
                 // Orientation Gizmo (bottom-left)
                 OrientationGizmoView(
                     cameraRotation: cameraState.quaternion,
@@ -107,7 +117,6 @@ public struct RealityKitStageView: View {
                 )
                 .padding(12)
                 .allowsHitTesting(false)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             }
         }
         .onChange(of: _externalModelEntity.map { ObjectIdentifier($0) }) { _, newId in
@@ -137,17 +146,17 @@ public struct RealityKitStageView: View {
             Task { await updateEnvironment(iblConfig.environmentURL) }
         }
         .onChange(of: iblConfig.exposure) { _, newValue in
-            updateIBLExposure(newValue)
+            // Handled in RealityView update closure
             updateIBLLightIntensity()
         }
         .onChange(of: iblConfig.rotation) { _, newValue in
-            updateIBLRotation(newValue)
+            // Handled in RealityView update closure
         }
         .onChange(of: cameraState) { _, newState in
-            updateCamera(state: newState)
+            // Camera updates are now handled in the RealityView update closure
         }
         #if os(macOS)
-        .modifier(ArcballCameraControls(state: $cameraState, sceneBounds: _sceneBounds))
+        .modifier(ArcballCameraControls(state: $cameraState, sceneBounds: _sceneBounds, maxDistance: Float(environmentRadius * 0.9)))
         #endif
         .onTapGesture { location in
             handleTap(at: location)
@@ -289,6 +298,13 @@ public struct RealityKitStageView: View {
         camera.transform.matrix = state.transform
     }
 
+    @MainActor
+    private func syncIBLState() {
+        updateIBLExposure(iblConfig.exposure)
+        updateIBLRotation(iblConfig.rotation)
+        updateIBLLightIntensity()
+    }
+
     // MARK: - Environment & IBL
 
     @MainActor
@@ -325,8 +341,9 @@ public struct RealityKitStageView: View {
                 var material = UnlitMaterial()
                 material.color = .init(texture: .init(texture))
 
+                let radius = Float(environmentRadius)
                 skybox.components.set(ModelComponent(
-                    mesh: .generateSphere(radius: 1000),
+                    mesh: .generateSphere(radius: radius),
                     materials: [material]
                 ))
 
@@ -352,22 +369,46 @@ public struct RealityKitStageView: View {
 
     @MainActor
     private func updateIBLExposure(_ exposure: Float) {
-        guard let ibl = iblEntity,
-              var iblComp = ibl.components[ImageBasedLightComponent.self] else { return }
-        iblComp.intensityExponent = iblConfig.realityKitIntensityExponent
-        ibl.components.set(iblComp)
+        let exponent = iblConfig.realityKitIntensityExponent
+        
+        // Update IBL Component
+        if let ibl = iblEntity,
+           var iblComp = ibl.components[ImageBasedLightComponent.self] {
+            print("[RealityKitStageView] 💡 Applying IBL exposure: \(exposure) (Exponent: \(exponent))")
+            iblComp.intensityExponent = exponent
+            ibl.components.set(iblComp)
+        }
+        
+        // Update Skybox Material (Tint)
+        if let skybox = skyboxEntity,
+           let model = skybox.components[ModelComponent.self] {
+            let intensity = powf(2.0, exposure)
+            print("[RealityKitStageView] 🌅 Applying Skybox intensity: \(intensity)")
+            
+            var material = (model.materials.first as? UnlitMaterial) ?? UnlitMaterial()
+            let color = NSColor(red: CGFloat(intensity), green: CGFloat(intensity), blue: CGFloat(intensity), alpha: 1.0)
+            material.color = .init(tint: color, texture: material.color.texture)
+            
+            var newModel = model
+            newModel.materials = [material]
+            skybox.components.set(newModel)
+        }
     }
 
     @MainActor
     private func updateIBLRotation(_ degrees: Float) {
         let radians = degrees * .pi / 180.0
         let spinAxis: SIMD3<Float> = _isZUp ? [0, 0, 1] : [0, 1, 0]
-        let spin = simd_quatf(angle: -radians, axis: spinAxis)
+        let spin = simd_quatf(angle: radians, axis: spinAxis)
         let baseTilt = _isZUp ? simd_quatf(angle: .pi / 2, axis: [1, 0, 0]) : simd_quatf()
         let orientation = simd_normalize(spin * baseTilt)
 
-        iblEntity?.orientation = orientation
-        skyboxEntity?.orientation = orientation
+        if let iblEntity {
+            iblEntity.transform.rotation = orientation
+        }
+        if let skyboxEntity {
+            skyboxEntity.transform.rotation = orientation
+        }
     }
 
     private func applyIBLReceiver(to entity: Entity) {
