@@ -1,10 +1,10 @@
 # StageView
 
-A Swift package providing shared viewport abstractions for 3D rendering with RealityKit and Hydra.
+A Swift package providing shared viewport abstractions for 3D rendering with RealityKit.
 
 ## Overview
 
-StageView provides a common protocol and types that both RealityKit and Hydra renderers can conform to, enabling consistent viewport behavior across different rendering backends.
+StageView provides a common protocol and types that RealityKit renderers can conform to, enabling consistent viewport behavior across different rendering backends.
 
 ## Features
 
@@ -33,6 +33,10 @@ RealityKit implementation:
 - `RealityKitGrid` - Dynamic grid with metersPerUnit support
 - `RealityKitIBL` - IBL handling with proper exposure conversion
 - `RealityKitStageView` - Full viewport view
+
+## Hydra / OpenUSD
+
+Hydra support (and its OpenUSD dependency) lives in a separate package: `StageViewHydra`.
 
 ## Installation
 

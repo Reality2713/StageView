@@ -3,6 +3,10 @@ import StageViewCore
 import SwiftUI
 #if os(macOS)
 import AppKit
+private typealias PlatformColor = NSColor
+#elseif os(iOS) || os(visionOS)
+import UIKit
+private typealias PlatformColor = UIColor
 #endif
 
 /// Main RealityKit viewport implementation conforming to StageViewport protocol.
@@ -386,7 +390,7 @@ public struct RealityKitStageView: View {
             print("[RealityKitStageView] 🌅 Applying Skybox intensity: \(intensity)")
             
             var material = (model.materials.first as? UnlitMaterial) ?? UnlitMaterial()
-            let color = NSColor(red: CGFloat(intensity), green: CGFloat(intensity), blue: CGFloat(intensity), alpha: 1.0)
+            let color = PlatformColor(red: CGFloat(intensity), green: CGFloat(intensity), blue: CGFloat(intensity), alpha: 1.0)
             material.color = .init(tint: color, texture: material.color.texture)
             
             var newModel = model

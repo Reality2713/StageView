@@ -18,9 +18,5 @@ let package = Package(
             name: "RealityKitStageView",
             dependencies: ["StageViewCore"]
         ),
-        .testTarget(
-            name: "StageViewTests",
-            dependencies: ["StageViewCore", "RealityKitStageView"]
-        ),
     ]
 )

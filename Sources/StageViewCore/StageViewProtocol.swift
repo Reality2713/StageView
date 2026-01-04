@@ -1,6 +1,7 @@
 import Foundation
 
 /// Main viewport protocol that both RealityKit and Hydra renderers can conform to.
+@MainActor
 public protocol StageViewport {
     // Configuration
     var gridConfiguration: GridConfiguration { get set }
