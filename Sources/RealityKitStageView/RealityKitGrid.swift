@@ -1,5 +1,4 @@
 import RealityKit
-import StageViewCore
 
 /// Dynamic grid with scale awareness that matches Hydra renderer behavior.
 public struct RealityKitGrid {

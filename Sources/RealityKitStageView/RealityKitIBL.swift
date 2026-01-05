@@ -1,6 +1,5 @@
 import CoreGraphics
 import RealityKit
-import StageViewCore
 
 /// IBL handling with proper exposure conversion (fixes the 10x brightness bug).
 public struct RealityKitIBL {
@@ -8,12 +7,12 @@ public struct RealityKitIBL {
     public static func applyEnvironment(
         to entity: Entity,
         iblEntity: Entity,
-        configuration: IBLConfiguration,
+        configuration: RealityKitConfiguration,
         cgImage: CGImage
     ) async throws {
         let resource = try await EnvironmentResource(
             equirectangular: cgImage,
-            withName: configuration.environmentURL?.lastPathComponent ?? "environment"
+            withName: configuration.environmentMapURL?.lastPathComponent ?? "environment"
         )
 
         var iblComp = ImageBasedLightComponent(source: .single(resource))

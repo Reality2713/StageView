@@ -1,6 +1,6 @@
 import Foundation
 
-/// Scene bounds information extracted from USD stage metadata.
+/// Scene bounds information for RealityKit viewport.
 public struct SceneBounds: Equatable, Sendable {
     public var min: SIMD3<Float>
     public var max: SIMD3<Float>
