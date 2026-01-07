@@ -1,10 +1,22 @@
 # StageView
 
-A Swift package providing shared viewport abstractions for 3D rendering with RealityKit.
+![StageView Preview](resources/Screenshot%202026-01-07%20at%2019.41.29.jpg)
+
+A Swift package providing shared viewport abstractions for 3D rendering with **RealityKit**.
 
 ## Overview
 
-StageView provides a common protocol and types that RealityKit renderers can conform to, enabling consistent viewport behavior across different rendering backends.
+**What is RealityKit?**
+
+RealityKit is Apple's high-performance 3D rendering framework designed for AR and spatial computing experiences. It runs natively across iOS, iPadOS, macOS, and visionOS, providing:
+- Real-time physically-based rendering (PBR)
+- AR-specific features (anchoring, occlusion, plane detection)
+- Entity-Component-System (ECS) architecture
+- Tight integration with SwiftUI and Reality Composer Pro
+
+**About This Package**
+
+StageView provides a unified protocol and shared viewport components that RealityKit-based renderers can use for consistent 3D scene presentation. It abstracts common viewport features like grids, IBL lighting, and scale indicators into reusable components.
 
 ## Features
 
@@ -34,9 +46,25 @@ RealityKit implementation:
 - `RealityKitIBL` - IBL handling with proper exposure conversion
 - `RealityKitStageView` - Full viewport view
 
-## Hydra / OpenUSD
+## Why RealityKit?
 
-Hydra support (and its OpenUSD dependency) lives in a separate package: `StageViewHydra`.
+**When to Use This Package:**
+- Building AR experiences on Apple platforms
+- Need tight SwiftUI integration
+- Want Apple-native performance and features
+- Working with Reality Composer Pro content
+
+**When to Consider Hydra Instead:**
+- Need high-fidelity OpenUSD rendering
+- Require viewport features like Storm/HdRpr renderers
+- Working with complex USD pipelines from DCC tools
+- Need pixel-accurate USD preview
+
+## Hydra Rendering (Alternative)
+
+For **OpenUSD rendering with Hydra**, see the companion package: [**StageViewHydra**](https://github.com/elkraneo/StageViewHydra)
+
+Hydra is Pixar's rendering architecture from OpenUSD that provides production-quality viewport rendering. StageViewHydra implements the same viewport protocols using Hydra instead of RealityKit, enabling pixel-accurate USD preview but with a heavier dependency stack (SwiftUsd + OpenUSD).
 
 ## Installation
 
@@ -102,10 +130,17 @@ let exponent = config.realityKitIntensityExponent
 
 ## Requirements
 
-- macOS 15.0+
-- iOS 18.0+
-- visionOS 2.0+
-- Swift 6.0+
+- **macOS 15.0+**
+- **iOS 18.0+**
+- **iPadOS 18.0+**
+- **visionOS 2.0+**
+- **Swift 6.0+**
+
+## Related Projects
+
+- [**StageViewHydra**](https://github.com/elkraneo/StageViewHydra) - Hydra/OpenUSD viewport implementation
+- [**RealityKit**](https://developer.apple.com/documentation/realitykit) - Apple's 3D rendering framework
+- [**Reality Composer Pro**](https://developer.apple.com/augmented-reality/tools/) - Apple's USD authoring tool
 
 ## License
 
