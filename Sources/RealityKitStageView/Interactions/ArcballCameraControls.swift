@@ -56,12 +56,12 @@ public struct ArcballCameraControls: ViewModifier {
     @Binding var state: ArcballCameraState
     let sceneBounds: SceneBounds
     let maxDistanceOverride: Float?
-    
+
     // Interaction State
     @State private var startDistance: Float?
-    @State private var previousDragValue: DragGesture.Value?
+    @State private var mouseCoord: CGPoint = .zero
     @State private var lastClampedEdge: ClampEdge?
-    
+
     public init(
         state: Binding<ArcballCameraState>,
         sceneBounds: SceneBounds,
@@ -71,11 +71,21 @@ public struct ArcballCameraControls: ViewModifier {
         self.sceneBounds = sceneBounds
         self.maxDistanceOverride = maxDistance
     }
-    
+
     public func body(content: Content) -> some View {
         content
-            .background {
+            .overlay {
+                // Transparent overlay that captures ALL events (sits on top of RealityView)
                 InteractionOverlay(
+                    onMouseDown: { event in
+                        handleMouseDown(event)
+                    },
+                    onMouseDragged: { event in
+                        handleMouseDragged(event)
+                    },
+                    onMouseUp: { event in
+                        handleMouseUp(event)
+                    },
                     onScroll: { event in
                         handleNativeScroll(event)
                     },
@@ -84,37 +94,33 @@ public struct ArcballCameraControls: ViewModifier {
                     }
                 )
             }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if NSEvent.modifierFlags.contains(.option) {
-                            // Hydra Parity: Option + Drag = Pan
-                            let multiplier: Float = NSEvent.modifierFlags.contains(.shift) ? 2.0 : 0.5
-                            let deltaX = Float(value.translation.width - (previousDragValue?.translation.width ?? 0))
-                            let deltaY = Float(value.translation.height - (previousDragValue?.translation.height ?? 0))
-                            handlePan(deltaX: deltaX * multiplier, deltaY: deltaY * multiplier)
-                        } else {
-                            // Orbit
-                            let deltaX = Float(value.translation.width - (previousDragValue?.translation.width ?? 0))
-                            let deltaY = Float(value.translation.height - (previousDragValue?.translation.height ?? 0))
-                            handleOrbit(deltaX: deltaX, deltaY: deltaY)
-                        }
-                        previousDragValue = value
-                    }
-                    .onEnded { _ in
-                        startDistance = nil
-                        previousDragValue = nil
-                    }
-            )
-            .gesture(
-                MagnificationGesture()
-                    .onChanged { value in
-                        handleZoom(magnification: value)
-                    }
-                    .onEnded { _ in
-                        startDistance = nil
-                    }
-            )
+    }
+
+    // MARK: - Mouse Event Handlers
+
+    private func handleMouseDown(_ event: NSEvent) {
+        mouseCoord = event.locationInWindow
+    }
+
+    private func handleMouseDragged(_ event: NSEvent) {
+        let newCoord = event.locationInWindow
+        let deltaX = Float(newCoord.x - mouseCoord.x)
+        let deltaY = Float(newCoord.y - mouseCoord.y)
+
+        if event.modifierFlags.contains(.option) {
+            // Hydra Parity: Option + Drag = Pan
+            let multiplier: Float = event.modifierFlags.contains(.shift) ? 2.0 : 0.5
+            handlePan(deltaX: deltaX * multiplier, deltaY: deltaY * multiplier)
+        } else {
+            // Orbit
+            handleOrbit(deltaX: deltaX, deltaY: deltaY)
+        }
+
+        mouseCoord = newCoord
+    }
+
+    private func handleMouseUp(_ event: NSEvent) {
+        startDistance = nil
     }
     
     private enum ClampEdge {
