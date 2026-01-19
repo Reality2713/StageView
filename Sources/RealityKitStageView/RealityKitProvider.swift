@@ -43,9 +43,9 @@ public final class RealityKitProvider {
     public private(set) var loadError: String?
     
     // MARK: - Selection (Bidirectional)
-    public var selectedPrimPath: String? {
-        didSet { emitDiscreteSnapshotIfNeeded() }
-    }
+    // NOTE: Selection changes do NOT emit snapshots to prevent feedback loops.
+    // TCA is the source of truth for selection, synced here via setSelection().
+    public var selectedPrimPath: String?
     
     // MARK: - File State
     public private(set) var currentFileURL: URL?
