@@ -46,6 +46,11 @@ public final class RealityKitProvider {
     // NOTE: Selection changes do NOT emit snapshots to prevent feedback loops.
     // TCA is the source of truth for selection, synced here via setSelection().
     public var selectedPrimPath: String?
+
+    /// Update selection from TCA/state. Does not emit snapshots.
+    public func setSelection(_ path: String?) {
+        selectedPrimPath = path
+    }
     
     // MARK: - File State
     public private(set) var currentFileURL: URL?

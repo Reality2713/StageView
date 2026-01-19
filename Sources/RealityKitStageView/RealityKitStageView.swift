@@ -93,6 +93,9 @@ public struct RealityKitStageView: View {
         .onChange(of: configuration.environmentExposure) { _, _ in
             updateIBLLightIntensity()
         }
+        .onChange(of: configuration.environmentRotation) { _, newValue in
+            updateIBLRotation(newValue)
+        }
         .onChange(of: cameraState) { _, newState in
             provider.updateCameraState(rotation: newState.quaternion, distance: newState.distance)
         }
@@ -395,13 +398,13 @@ public struct RealityKitStageView: View {
         let spinAxis: SIMD3<Float> = provider.isZUp ? [0, 0, 1] : [0, 1, 0]
         let spin = simd_quatf(angle: radians, axis: spinAxis)
         let baseTilt = provider.isZUp ? simd_quatf(angle: .pi / 2, axis: [1, 0, 0]) : simd_quatf()
-        let orientation = simd_normalize(spin * baseTilt)
+        let iblOrientation = simd_normalize(spin * baseTilt)
 
         if let iblEntity {
-            iblEntity.transform.rotation = orientation
+            iblEntity.transform.rotation = iblOrientation
         }
         if let skyboxEntity {
-            skyboxEntity.transform.rotation = orientation
+            skyboxEntity.transform.rotation = spin
         }
     }
 
