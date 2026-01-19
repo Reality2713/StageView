@@ -8,6 +8,7 @@ public struct RealityKitDiscreteSnapshot: Equatable, Sendable {
     public let metersPerUnit: Double
     public let isZUp: Bool
     public let selectedPrimPath: String?
+    public let isUserInteraction: Bool
     public let isLoaded: Bool
 
     public init(
@@ -15,12 +16,14 @@ public struct RealityKitDiscreteSnapshot: Equatable, Sendable {
         metersPerUnit: Double,
         isZUp: Bool,
         selectedPrimPath: String?,
+        isUserInteraction: Bool = false,
         isLoaded: Bool
     ) {
         self.sceneBounds = sceneBounds
         self.metersPerUnit = metersPerUnit
         self.isZUp = isZUp
         self.selectedPrimPath = selectedPrimPath
+        self.isUserInteraction = isUserInteraction
         self.isLoaded = isLoaded
     }
 }
@@ -43,13 +46,21 @@ public final class RealityKitProvider {
     public private(set) var loadError: String?
     
     // MARK: - Selection (Bidirectional)
-    // NOTE: Selection changes do NOT emit snapshots to prevent feedback loops.
-    // TCA is the source of truth for selection, synced here via setSelection().
-    public var selectedPrimPath: String?
+    public private(set) var isUserInteraction: Bool = false
+    public var selectedPrimPath: String? {
+        didSet { emitDiscreteSnapshotIfNeeded() }
+    }
 
-    /// Update selection from TCA/state. Does not emit snapshots.
+    /// Update selection from programmatic sync (e.g. TCA).
     public func setSelection(_ path: String?) {
-        selectedPrimPath = path
+        self.isUserInteraction = false
+        self.selectedPrimPath = path
+    }
+
+    /// Update selection from viewport interaction (e.g. pick).
+    public func userDidPick(_ path: String?) {
+        self.isUserInteraction = true
+        self.selectedPrimPath = path
     }
     
     // MARK: - File State
@@ -165,6 +176,7 @@ extension RealityKitProvider {
             metersPerUnit: metersPerUnit,
             isZUp: isZUp,
             selectedPrimPath: selectedPrimPath,
+            isUserInteraction: isUserInteraction,
             isLoaded: isLoaded
         )
     }
