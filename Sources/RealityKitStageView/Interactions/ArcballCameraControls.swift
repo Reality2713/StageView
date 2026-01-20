@@ -110,10 +110,10 @@ public struct ArcballCameraControls: ViewModifier {
         if event.modifierFlags.contains(.option) {
             // Hydra Parity: Option + Drag = Pan
             let multiplier: Float = event.modifierFlags.contains(.shift) ? 2.0 : 0.5
-            handlePan(deltaX: deltaX * multiplier, deltaY: deltaY * multiplier)
+            handlePan(deltaX: deltaX * multiplier, deltaY: -deltaY * multiplier)
         } else {
-            // Orbit
-            handleOrbit(deltaX: deltaX, deltaY: deltaY)
+            // Orbit - negate deltaY to match screen-to-world coordinate flip
+            handleOrbit(deltaX: deltaX, deltaY: -deltaY)
         }
 
         mouseCoord = newCoord

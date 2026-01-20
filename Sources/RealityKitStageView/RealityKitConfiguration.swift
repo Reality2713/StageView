@@ -32,10 +32,9 @@ public struct RealityKitConfiguration: Sendable {
         self.showEnvironmentBackground = showEnvironmentBackground
     }
     
-    /// Convert EV exposure to RealityKit's intensityExponent (base-10)
+    /// Convert EV exposure to RealityKit's intensityExponent (base-2)
     public var realityKitIntensityExponent: Float {
-        // EV uses base-2, intensityExponent uses base-10
-        // intensityExponent = log10(2^exposure)
-        return environmentExposure * 0.30103  // log10(2) ≈ 0.30103
+        // EV uses base-2, intensityExponent uses base-2
+        return environmentExposure
     }
 }

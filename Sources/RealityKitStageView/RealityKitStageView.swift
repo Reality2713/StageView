@@ -1,4 +1,5 @@
 import RealityKit
+import ImageIO
 import SwiftUI
 import simd
 #if os(macOS)
@@ -324,10 +325,25 @@ public struct RealityKitStageView: View {
 
         do {
             let resourceName = url.deletingLastPathComponent().lastPathComponent + "_" + url.lastPathComponent
-            let resource = try EnvironmentResource.__load(contentsOf: url, withName: resourceName)
+            
+            // Safer CGImage loading that preserves HDR floating-point data
+            let options: [String: Any] = [
+                kCGImageSourceShouldAllowFloat as String: true,
+                kCGImageSourceShouldCache as String: false
+            ]
+            
+            let resource: EnvironmentResource
+            if let dataProvider = CGDataProvider(url: url as CFURL),
+               let source = CGImageSourceCreateWithDataProvider(dataProvider, options as CFDictionary),
+               let cgImage = CGImageSourceCreateImageAtIndex(source, 0, options as CFDictionary) {
+                resource = try await EnvironmentResource(equirectangular: cgImage, withName: resourceName)
+            } else {
+                throw NSError(domain: "RealityKitStageView", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create CGImage from environment URL"])
+            }
 
             var iblComp = ImageBasedLightComponent(source: .single(resource))
             iblComp.intensityExponent = configuration.realityKitIntensityExponent
+            iblComp.inheritsRotation = true
             ibl.components.set(iblComp)
 
             if configuration.showEnvironmentBackground {
@@ -370,6 +386,8 @@ public struct RealityKitStageView: View {
         if let ibl = iblEntity,
            var iblComp = ibl.components[ImageBasedLightComponent.self] {
             iblComp.intensityExponent = exponent
+            // Ensure rotation inheritance is enabled (fixes rotation bug)
+            iblComp.inheritsRotation = true
             ibl.components.set(iblComp)
         }
         
@@ -394,17 +412,38 @@ public struct RealityKitStageView: View {
 
     @MainActor
     private func updateIBLRotation(_ degrees: Float) {
+        // Convert degrees to radians
         let radians = degrees * .pi / 180.0
-        let spinAxis: SIMD3<Float> = provider.isZUp ? [0, 0, 1] : [0, 1, 0]
-        let spin = simd_quatf(angle: radians, axis: spinAxis)
-        let baseTilt = provider.isZUp ? simd_quatf(angle: .pi / 2, axis: [1, 0, 0]) : simd_quatf()
-        let iblOrientation = simd_normalize(spin * baseTilt)
+        
+        // Calculate orientation based on up-axis
+        let orientation: simd_quatf
+        if provider.isZUp {
+            // Z-Up: Spin around Z, then tilt 90° X to align Y-up environment
+            let spin = simd_quatf(angle: radians, axis: [0, 0, 1])
+            let tilt = simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
+            orientation = spin * tilt
+        } else {
+            // Y-Up: Simple spin around Y
+            orientation = simd_quatf(angle: radians, axis: [0, 1, 0])
+        }
 
         if let iblEntity {
-            iblEntity.transform.rotation = iblOrientation
+            iblEntity.transform.rotation = orientation
+            
+            // Force component update to ensure rotation is picked up
+            if var iblComp = iblEntity.components[ImageBasedLightComponent.self] {
+                // Ensure inheritsRotation is TRUE
+                if !iblComp.inheritsRotation {
+                    iblComp.inheritsRotation = true
+                }
+                iblEntity.components.set(iblComp)
+            }
         }
+        
         if let skyboxEntity {
-            skyboxEntity.transform.rotation = spin
+            // Skybox always spins around the up-axis (visual background)
+            let axis: SIMD3<Float> = provider.isZUp ? [0, 0, 1] : [0, 1, 0]
+            skyboxEntity.transform.rotation = simd_quatf(angle: radians, axis: axis)
         }
     }
 
