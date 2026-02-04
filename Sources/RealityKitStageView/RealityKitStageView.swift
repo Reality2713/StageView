@@ -114,10 +114,7 @@ public struct RealityKitStageView: View {
     @ViewBuilder
     private var overlays: some View {
         VStack {
-            HStack {
-                Spacer()
-                scaleIndicator
-            }
+						scaleIndicator
             Spacer()
             HStack {
                 orientationGizmo

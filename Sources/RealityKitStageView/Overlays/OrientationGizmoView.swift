@@ -68,9 +68,11 @@ public struct OrientationGizmoView: View {
                     path.addLine(to: endPoint)
 
                     // Style for the "Up" axis vs others
-                    let baseOpacity = Double(max(0.3, (axis.z + 1) / 2))
-                    let lineWidth = isUp ? (axis.z > 0 ? 5.0 : 4.0) : (axis.z > 0 ? 2.5 : 1.5)
-
+                    // let baseOpacity = Double(max(0.3, (axis.z + 1) / 2))
+                    // let lineWidth = isUp ? (axis.z > 0 ? 5.0 : 4.0) : (axis.z > 0 ? 2.5 : 1.5)
+										let baseOpacity = 0.7
+										let lineWidth = 2.0
+									
                     context.stroke(
                         path,
                         with: .color(color.opacity(baseOpacity)),

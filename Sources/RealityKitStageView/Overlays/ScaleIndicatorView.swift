@@ -83,7 +83,7 @@ public struct ScaleIndicatorView: View {
             scaleBar
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(.ultraThinMaterial, in: Capsule())
+								.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
         }
     }
 

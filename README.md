@@ -62,7 +62,7 @@ RealityKit implementation:
 
 ## Hydra Rendering (Alternative)
 
-For **OpenUSD rendering with Hydra**, see the companion package: [**StageViewHydra**](https://github.com/elkraneo/StageViewHydra)
+For **OpenUSD rendering with Hydra**, see the companion package: [**StageViewHydra**](https://github.com/reality2713/StageViewHydra)
 
 Hydra is Pixar's rendering architecture from OpenUSD that provides production-quality viewport rendering. StageViewHydra implements the same viewport protocols using Hydra instead of RealityKit, enabling pixel-accurate USD preview but with a heavier dependency stack (SwiftUsd + OpenUSD).
 
@@ -74,7 +74,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/elkraneo/StageView.git", branch: "main"),
+    .package(url: "https://github.com/reality2713/StageView.git", branch: "main"),
 ]
 ```
 
@@ -138,7 +138,7 @@ let exponent = config.realityKitIntensityExponent
 
 ## Related Projects
 
-- [**StageViewHydra**](https://github.com/elkraneo/StageViewHydra) - Hydra/OpenUSD viewport implementation
+- [**StageViewHydra**](https://github.com/reality2713/StageViewHydra) - Hydra/OpenUSD viewport implementation
 - [**RealityKit**](https://developer.apple.com/documentation/realitykit) - Apple's 3D rendering framework
 - [**Reality Composer Pro**](https://developer.apple.com/augmented-reality/tools/) - Apple's USD authoring tool
 
