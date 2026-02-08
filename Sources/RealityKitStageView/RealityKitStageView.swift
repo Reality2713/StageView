@@ -166,9 +166,8 @@ public struct RealityKitStageView: View {
     
     @MainActor
     private func makeSceneRoot() -> Entity {
-        // NOTE: SelectionOutlineSystem is available but not currently used.
-        // Uncomment to enable outline-based selection highlighting:
-        // SelectionOutlineSystem.registerSystem()
+        // Register the selection outline ECS system
+        SelectionOutlineSystem.registerSystem()
         
         let root = Entity()
         root.name = "SceneRoot"
@@ -279,27 +278,42 @@ public struct RealityKitStageView: View {
     
     @MainActor
     private func updateSelectionHighlight(for path: String?) {
-        // Remove previous highlight
+        // Clear previous outlines and cleanup child entities
+        for id in outlinedEntityIDs {
+            if let entity = rootEntity?.scene?.findEntity(id: id) {
+                entity.components.remove(SelectionOutlineComponent.self)
+                // Remove the actual outline mesh entity created by the system
+                if let outlineChild = entity.children.first(where: { $0.name == SelectionOutlineSystem.outlineEntityName }) {
+                    outlineChild.removeFromParent()
+                }
+            }
+        }
+        outlinedEntityIDs.removeAll()
+        
+        // Remove bounding box highlight if it exists (legacy)
         selectionHighlightEntity?.removeFromParent()
         selectionHighlightEntity = nil
 
-        guard let path = path else { return }
+        guard let path = path, !path.isEmpty else { return }
         
-        // Use the provider's registry for O(1) path→entity lookup
+        // Find the target entity
         guard let target = provider.entity(for: path) else { return }
-
-        let bounds = target.visualBounds(relativeTo: nil)
-        guard bounds.extents.x > 0, bounds.extents.y > 0, bounds.extents.z > 0 else { return }
         
-        let mesh = MeshResource.generateBox(size: bounds.extents)
-        var material = UnlitMaterial(color: .cyan)
-        material.blending = .transparent(opacity: 0.3)
+        // Apply outline component to the target and its descendants
+        func applyOutline(to entity: Entity) {
+            // Prevent recursive outlining of the outline itself
+            if entity.name == SelectionOutlineSystem.outlineEntityName { return }
 
-        let highlight = ModelEntity(mesh: mesh, materials: [material])
-        highlight.position = bounds.center
-        highlight.name = "SelectionHighlight"
-        rootEntity?.addChild(highlight)
-        selectionHighlightEntity = highlight
+            if entity.components.has(ModelComponent.self) {
+                entity.components.set(SelectionOutlineComponent())
+                outlinedEntityIDs.insert(entity.id)
+            }
+            for child in entity.children {
+                applyOutline(to: child)
+            }
+        }
+        
+        applyOutline(to: target)
     }
     
     // MARK: - IBL
