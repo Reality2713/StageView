@@ -15,8 +15,8 @@ public struct OutlineConfiguration: Sendable, Equatable {
     public var referenceDistance: Float
 
     public init(
-        color: Color = .orange,
-        width: Float = 0.004,
+        color: Color = .cyan,
+        width: Float = 0.1,
         referenceDistance: Float = 2.0
     ) {
         self.color = color
