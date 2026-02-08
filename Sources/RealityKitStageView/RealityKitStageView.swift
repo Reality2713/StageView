@@ -25,6 +25,7 @@ public struct RealityKitStageView: View {
     @State private var skyboxEntity: Entity?
     @State private var cameraState = ArcballCameraState()
     @State private var selectionHighlightEntity: Entity?
+    @State private var outlinedEntityIDs: Set<Entity.ID> = []
     
     private var environmentRadius: Double {
         let extent = Double(provider.sceneBounds.maxExtent)
@@ -165,6 +166,10 @@ public struct RealityKitStageView: View {
     
     @MainActor
     private func makeSceneRoot() -> Entity {
+        // NOTE: SelectionOutlineSystem is available but not currently used.
+        // Uncomment to enable outline-based selection highlighting:
+        // SelectionOutlineSystem.registerSystem()
+        
         let root = Entity()
         root.name = "SceneRoot"
 
@@ -274,31 +279,27 @@ public struct RealityKitStageView: View {
     
     @MainActor
     private func updateSelectionHighlight(for path: String?) {
+        // Remove previous highlight
         selectionHighlightEntity?.removeFromParent()
         selectionHighlightEntity = nil
 
-        guard let path = path, let model = provider.modelEntity else { return }
+        guard let path = path else { return }
+        
+        // Use the provider's registry for O(1) path→entity lookup
+        guard let target = provider.entity(for: path) else { return }
 
-        let normalizedPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
-        let components = normalizedPath.split(separator: "/")
-        var current: Entity? = model
-        for comp in components {
-            current = current?.children.first(where: { $0.name == String(comp) })
-            if current == nil { break }
-        }
+        let bounds = target.visualBounds(relativeTo: nil)
+        guard bounds.extents.x > 0, bounds.extents.y > 0, bounds.extents.z > 0 else { return }
+        
+        let mesh = MeshResource.generateBox(size: bounds.extents)
+        var material = UnlitMaterial(color: .cyan)
+        material.blending = .transparent(opacity: 0.3)
 
-        if let target = current {
-            let bounds = target.visualBounds(relativeTo: nil)
-            let mesh = MeshResource.generateBox(size: bounds.extents)
-            var material = UnlitMaterial(color: .cyan)
-            material.blending = .transparent(opacity: 0.3)
-
-            let highlight = ModelEntity(mesh: mesh, materials: [material])
-            highlight.position = bounds.center
-            highlight.name = "SelectionHighlight"
-            rootEntity?.addChild(highlight)
-            selectionHighlightEntity = highlight
-        }
+        let highlight = ModelEntity(mesh: mesh, materials: [material])
+        highlight.position = bounds.center
+        highlight.name = "SelectionHighlight"
+        rootEntity?.addChild(highlight)
+        selectionHighlightEntity = highlight
     }
     
     // MARK: - IBL
