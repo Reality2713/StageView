@@ -131,9 +131,10 @@ public struct RealityKitStageView: View {
         .onChange(of: cameraState) { _, newState in
             provider.updateCameraState(rotation: newState.quaternion, distance: newState.distance)
         }
-        .onChange(of: store?.liveTransformRequestID) { _, _ in
+        .task(id: store?.liveTransformRequestID) {
             // Apply live transform when request ID changes (triggered by inspector edits)
-            if let transform = store?.liveTransform {
+            guard let transform = store?.liveTransform else { return }
+            await MainActor.run {
                 provider.applyLiveTransform(transform)
             }
         }
