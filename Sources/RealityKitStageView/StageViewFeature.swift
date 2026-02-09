@@ -27,6 +27,7 @@ public struct StageViewFeature {
     @ObservableState
     public struct State: Equatable {
         public var modelURL: URL?
+        public var loadRequestID: UUID
         public var selectedPrimPath: String?
         public var isLoaded: Bool = false
         public var sceneBounds: SceneBounds = SceneBounds()
@@ -40,6 +41,7 @@ public struct StageViewFeature {
 
         public init(
             modelURL: URL? = nil,
+            loadRequestID: UUID = UUID(),
             selectedPrimPath: String? = nil,
             isLoaded: Bool = false,
             sceneBounds: SceneBounds = SceneBounds(),
@@ -49,6 +51,7 @@ public struct StageViewFeature {
             liveTransformRequestID: UUID? = nil
         ) {
             self.modelURL = modelURL
+            self.loadRequestID = loadRequestID
             self.selectedPrimPath = selectedPrimPath
             self.isLoaded = isLoaded
             self.sceneBounds = sceneBounds
@@ -96,9 +99,16 @@ public struct StageViewFeature {
             case let .loadRequested(url):
                 state.modelURL = url
                 state.isLoaded = false
+                state.loadRequestID = UUID()
                 return .none
 
-            case .reloadRequested, .frameRequested:
+            case .reloadRequested:
+                guard state.modelURL != nil else { return .none }
+                state.isLoaded = false
+                state.loadRequestID = UUID()
+                return .none
+
+            case .frameRequested:
                 return .none
                 
             case let .applyLiveTransform(transform):

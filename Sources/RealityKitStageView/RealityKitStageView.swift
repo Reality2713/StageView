@@ -83,7 +83,7 @@ public struct RealityKitStageView: View {
         // Use `.task(id:)` rather than `.onChange` so we also load when the view first
         // appears with an already-populated `modelURL` (common in TCA when state is
         // set before the SwiftUI subtree is mounted).
-        .task(id: store?.modelURL) {
+        .task(id: store?.loadRequestID) {
             guard let url = store?.modelURL else {
                 await MainActor.run {
                     provider.teardown()
