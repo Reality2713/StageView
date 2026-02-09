@@ -354,7 +354,9 @@ public struct RealityKitStageView: View {
             if entity.name == SelectionOutlineSystem.outlineEntityName { return }
 
             if entity.components.has(ModelComponent.self) {
-                entity.components.set(SelectionOutlineComponent())
+                entity.components.set(
+                    SelectionOutlineComponent(configuration: configuration.outlineConfiguration)
+                )
                 outlinedEntityIDs.insert(entity.id)
             }
             for child in entity.children {

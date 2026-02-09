@@ -1,5 +1,6 @@
 import Foundation
 import RealityKit
+import SwiftUI
 
 /// Configuration for the RealityKit viewport.
 public struct RealityKitConfiguration: Sendable {
@@ -12,6 +13,9 @@ public struct RealityKitConfiguration: Sendable {
     public var environmentRotation: Float = 0.0
     public var showEnvironmentBackground: Bool = true
 
+    /// Appearance for selection outlines.
+    public var outlineConfiguration: OutlineConfiguration = .init()
+
     public init(
         showGrid: Bool = true,
         showAxes: Bool = true,
@@ -20,7 +24,8 @@ public struct RealityKitConfiguration: Sendable {
         environmentMapURL: URL? = nil,
         environmentExposure: Float = 0.0,
         environmentRotation: Float = 0.0,
-        showEnvironmentBackground: Bool = true
+        showEnvironmentBackground: Bool = true,
+        outlineConfiguration: OutlineConfiguration = .init()
     ) {
         self.showGrid = showGrid
         self.showAxes = showAxes
@@ -30,6 +35,7 @@ public struct RealityKitConfiguration: Sendable {
         self.environmentExposure = environmentExposure
         self.environmentRotation = environmentRotation
         self.showEnvironmentBackground = showEnvironmentBackground
+        self.outlineConfiguration = outlineConfiguration
     }
 
     public var realityKitIntensityExponent: Float {
