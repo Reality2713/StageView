@@ -56,6 +56,8 @@ public struct ArcballCameraControls: ViewModifier {
     @State private var previousOrbitValue: DragGesture.Value?
     @State private var previousPanValue: DragGesture.Value?
     @State private var lastClampedEdge: ClampEdge?
+    @State private var eventRegionView: NSView?
+    @State private var scrollMonitor: LocalScrollEventMonitor?
 
     public init(
         state: Binding<ArcballCameraState>,
@@ -101,16 +103,36 @@ public struct ArcballCameraControls: ViewModifier {
             .gesture(orbitDrag)
             .gesture(panDrag)
             .simultaneousGesture(magnifyGesture)
-            .overlay {
-                ScrollWheelOverlay(
-                    onScrollPan: { deltaX, deltaY in
-                        handlePan(deltaX: deltaX, deltaY: deltaY)
-                    },
-                    onScrollZoom: { delta in
+            // Geometry anchor used to filter scroll events to just this viewport.
+            .background(EventRegionView { view in
+                self.eventRegionView = view
+            })
+            .onAppear {
+                guard scrollMonitor == nil else { return }
+                scrollMonitor = LocalScrollEventMonitor { event in
+                    guard shouldHandleScrollEvent(event) else {
+                        return event
+                    }
+
+                    // Consume scroll events in the viewport so parent scroll views
+                    // (and other SwiftUI controls) don't react at the same time.
+                    if event.modifierFlags.contains(.option) {
+                        let sensitivity: Float = 0.005
+                        let delta = Float(event.scrollingDeltaY) * sensitivity
                         let newDistance = state.distance * (1.0 - delta)
                         state.distance = clampDistance(newDistance)
+                    } else {
+                        let multiplier: Float = event.modifierFlags.contains(.shift) ? 5.0 : 1.0
+                        let deltaX = Float(event.scrollingDeltaX) * multiplier
+                        let deltaY = Float(event.scrollingDeltaY) * multiplier
+                        handlePan(deltaX: deltaX, deltaY: deltaY)
                     }
-                )
+                    return nil
+                }
+            }
+            .onDisappear {
+                // Tear down the monitor when the viewport goes away.
+                scrollMonitor = nil
             }
     }
 
@@ -193,6 +215,17 @@ public struct ArcballCameraControls: ViewModifier {
         guard magnification > 0 else { return }
         let newDistance = start / Float(magnification)
         state.distance = clampDistance(newDistance)
+    }
+
+    @MainActor
+    private func shouldHandleScrollEvent(_ event: NSEvent) -> Bool {
+        guard let view = eventRegionView else { return false }
+        guard let window = view.window, window == event.window else { return false }
+
+        let viewRectInWindow = view.convert(view.bounds, to: nil)
+        let viewRectOnScreen = window.convertToScreen(viewRectInWindow)
+        let mouseOnScreen = NSEvent.mouseLocation
+        return viewRectOnScreen.contains(mouseOnScreen)
     }
 }
 #else
