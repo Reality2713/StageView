@@ -131,13 +131,7 @@ public struct RealityKitStageView: View {
         .onChange(of: cameraState) { _, newState in
             provider.updateCameraState(rotation: newState.quaternion, distance: newState.distance)
         }
-        .task(id: store?.liveTransformRequestID) {
-            // Apply live transform when request ID changes (triggered by inspector edits)
-            guard let transform = store?.liveTransform else { return }
-            await MainActor.run {
-                provider.applyLiveTransform(transform)
-            }
-        }
+        .withLiveTransform(store: store, provider: provider)
         #if os(macOS)
         .modifier(ArcballCameraControls(
             state: $cameraState,
