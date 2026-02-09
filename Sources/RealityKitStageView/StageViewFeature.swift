@@ -1,5 +1,26 @@
 import ComposableArchitecture
 import Foundation
+import simd
+
+/// Live transform data for runtime viewport updates (not persisted to USD)
+public struct LiveTransformData: Equatable, Sendable {
+    public var primPath: String
+    public var position: SIMD3<Double>
+    public var rotationDegrees: SIMD3<Double>
+    public var scale: SIMD3<Double>
+    
+    public init(
+        primPath: String,
+        position: SIMD3<Double>,
+        rotationDegrees: SIMD3<Double>,
+        scale: SIMD3<Double>
+    ) {
+        self.primPath = primPath
+        self.position = position
+        self.rotationDegrees = rotationDegrees
+        self.scale = scale
+    }
+}
 
 @Reducer
 public struct StageViewFeature {
@@ -11,6 +32,11 @@ public struct StageViewFeature {
         public var sceneBounds: SceneBounds = SceneBounds()
         public var metersPerUnit: Double = 1.0
         public var isZUp: Bool = false
+        
+        /// Live transform for instant viewport updates during editing
+        public var liveTransform: LiveTransformData?
+        /// Trigger ID for applying live transforms (change triggers update)
+        public var liveTransformRequestID: UUID?
 
         public init(
             modelURL: URL? = nil,
@@ -18,7 +44,9 @@ public struct StageViewFeature {
             isLoaded: Bool = false,
             sceneBounds: SceneBounds = SceneBounds(),
             metersPerUnit: Double = 1.0,
-            isZUp: Bool = false
+            isZUp: Bool = false,
+            liveTransform: LiveTransformData? = nil,
+            liveTransformRequestID: UUID? = nil
         ) {
             self.modelURL = modelURL
             self.selectedPrimPath = selectedPrimPath
@@ -26,6 +54,8 @@ public struct StageViewFeature {
             self.sceneBounds = sceneBounds
             self.metersPerUnit = metersPerUnit
             self.isZUp = isZUp
+            self.liveTransform = liveTransform
+            self.liveTransformRequestID = liveTransformRequestID
         }
     }
 
@@ -38,6 +68,8 @@ public struct StageViewFeature {
         case loadRequested(URL)
         case reloadRequested
         case frameRequested
+        /// Apply a live transform to the viewport (runtime only, not persisted)
+        case applyLiveTransform(LiveTransformData)
     }
 
     public var body: some ReducerOf<Self> {
@@ -67,6 +99,11 @@ public struct StageViewFeature {
                 return .none
 
             case .reloadRequested, .frameRequested:
+                return .none
+                
+            case let .applyLiveTransform(transform):
+                state.liveTransform = transform
+                state.liveTransformRequestID = UUID()
                 return .none
             }
         }

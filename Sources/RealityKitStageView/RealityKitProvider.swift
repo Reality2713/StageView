@@ -168,6 +168,43 @@ public final class RealityKitProvider {
         self.sceneBounds = SceneBounds(min: bounds.min, max: bounds.max)
         emitDiscreteSnapshotIfNeeded()
     }
+    
+    // MARK: - Live Transform (Runtime Only)
+    
+    /// Apply a transform directly to a RealityKit entity for instant visual feedback.
+    /// This does NOT persist to USD – use this during interactive editing.
+    public func applyLiveTransform(_ transform: LiveTransformData) {
+        guard let entity = entity(for: transform.primPath) else {
+            print("[RealityKitProvider] No entity found for prim path: \(transform.primPath)")
+            return
+        }
+        
+        let position = SIMD3<Float>(
+            Float(transform.position.x),
+            Float(transform.position.y),
+            Float(transform.position.z)
+        )
+        
+        // Convert Euler degrees to quaternion (ZYX rotation order to match USD's rotateXYZ)
+        let degreesToRadians = Float.pi / 180.0
+        let rx = Float(transform.rotationDegrees.x) * degreesToRadians
+        let ry = Float(transform.rotationDegrees.y) * degreesToRadians
+        let rz = Float(transform.rotationDegrees.z) * degreesToRadians
+        
+        // Compose quaternion from Euler angles (ZYX intrinsic = XYZ extrinsic)
+        let qx = simd_quatf(angle: rx, axis: SIMD3<Float>(1, 0, 0))
+        let qy = simd_quatf(angle: ry, axis: SIMD3<Float>(0, 1, 0))
+        let qz = simd_quatf(angle: rz, axis: SIMD3<Float>(0, 0, 1))
+        let rotation = qz * qy * qx  // ZYX order
+        
+        let scale = SIMD3<Float>(
+            Float(transform.scale.x),
+            Float(transform.scale.y),
+            Float(transform.scale.z)
+        )
+        
+        entity.transform = Transform(scale: scale, rotation: rotation, translation: position)
+    }
 }
 
 // MARK: - Discrete State Observation
