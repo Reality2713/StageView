@@ -8,43 +8,38 @@ import UIKit
 
 public struct ArcballCameraState: Equatable, Sendable {
     public var focus: SIMD3<Float>
-    public var rotation: SIMD3<Float> // Euler angles (Pitch, Yaw, Roll)
+    public var rotation: SIMD3<Float>
     public var distance: Float
-    
+
     public init(focus: SIMD3<Float> = .zero, rotation: SIMD3<Float> = .zero, distance: Float = 5.0) {
         self.focus = focus
         self.rotation = rotation
         self.distance = distance
     }
-    
+
     public var transform: simd_float4x4 {
-        // Compose transform: Translate(focus) * Rotate(yaw, pitch) * Translate(0, 0, distance)
-        // This orbits the camera around the focus point.
-        
-        // Yaw (Y-axis), Pitch (X-axis)
         let rotX = simd_quatf(angle: rotation.x, axis: [1, 0, 0])
         let rotY = simd_quatf(angle: rotation.y, axis: [0, 1, 0])
         let rotationMatrix = simd_float4x4(rotY * rotX)
-        
+
         let translateFocus = simd_float4x4(
             [1, 0, 0, 0],
             [0, 1, 0, 0],
             [0, 0, 1, 0],
             [focus.x, focus.y, focus.z, 1]
         )
-        
+
         let translateDist = simd_float4x4(
             [1, 0, 0, 0],
             [0, 1, 0, 0],
             [0, 0, 1, 0],
             [0, 0, distance, 1]
         )
-        
+
         return translateFocus * rotationMatrix * translateDist
     }
 
-    /// Camera rotation as quaternion (for gizmo)
-public var quaternion: simd_quatf {
+    public var quaternion: simd_quatf {
         let rotX = simd_quatf(angle: rotation.x, axis: [1, 0, 0])
         let rotY = simd_quatf(angle: rotation.y, axis: [0, 1, 0])
         return rotY * rotX
@@ -57,9 +52,9 @@ public struct ArcballCameraControls: ViewModifier {
     let sceneBounds: SceneBounds
     let maxDistanceOverride: Float?
 
-    // Interaction State
     @State private var startDistance: Float?
-    @State private var mouseCoord: CGPoint = .zero
+    @State private var previousOrbitValue: DragGesture.Value?
+    @State private var previousPanValue: DragGesture.Value?
     @State private var lastClampedEdge: ClampEdge?
 
     public init(
@@ -73,70 +68,64 @@ public struct ArcballCameraControls: ViewModifier {
     }
 
     public func body(content: Content) -> some View {
+        let orbitDrag = DragGesture(minimumDistance: 1)
+            .onChanged { value in
+                handleOrbitDrag(value)
+                previousOrbitValue = value
+            }
+            .onEnded { _ in
+                startDistance = nil
+                previousOrbitValue = nil
+            }
+
+        let panDrag = DragGesture(minimumDistance: 1)
+            .modifiers(.option)
+            .onChanged { value in
+                handlePanDrag(value)
+                previousPanValue = value
+            }
+            .onEnded { _ in
+                startDistance = nil
+                previousPanValue = nil
+            }
+
+        let magnifyGesture = MagnificationGesture()
+            .onChanged { value in
+                handleMagnification(value)
+            }
+            .onEnded { _ in
+                startDistance = nil
+            }
+
         content
+            .gesture(orbitDrag)
+            .gesture(panDrag)
+            .simultaneousGesture(magnifyGesture)
             .overlay {
-                // Transparent overlay that captures ALL events (sits on top of RealityView)
-                InteractionOverlay(
-                    onMouseDown: { event in
-                        handleMouseDown(event)
+                ScrollWheelOverlay(
+                    onScrollPan: { deltaX, deltaY in
+                        handlePan(deltaX: deltaX, deltaY: deltaY)
                     },
-                    onMouseDragged: { event in
-                        handleMouseDragged(event)
-                    },
-                    onMouseUp: { event in
-                        handleMouseUp(event)
-                    },
-                    onScroll: { event in
-                        handleNativeScroll(event)
-                    },
-                    onMagnify: { event in
-                        handleNativeMagnify(event)
+                    onScrollZoom: { delta in
+                        let newDistance = state.distance * (1.0 - delta)
+                        state.distance = clampDistance(newDistance)
                     }
                 )
             }
     }
 
-    // MARK: - Mouse Event Handlers
-
-    private func handleMouseDown(_ event: NSEvent) {
-        mouseCoord = event.locationInWindow
-    }
-
-    private func handleMouseDragged(_ event: NSEvent) {
-        let newCoord = event.locationInWindow
-        let deltaX = Float(newCoord.x - mouseCoord.x)
-        let deltaY = Float(newCoord.y - mouseCoord.y)
-
-        if event.modifierFlags.contains(.option) {
-            // Hydra Parity: Option + Drag = Pan
-            let multiplier: Float = event.modifierFlags.contains(.shift) ? 2.0 : 0.5
-            handlePan(deltaX: deltaX * multiplier, deltaY: -deltaY * multiplier)
-        } else {
-            // Orbit - negate deltaY to match screen-to-world coordinate flip
-            handleOrbit(deltaX: deltaX, deltaY: -deltaY)
-        }
-
-        mouseCoord = newCoord
-    }
-
-    private func handleMouseUp(_ event: NSEvent) {
-        startDistance = nil
-    }
-    
     private enum ClampEdge {
         case min
         case max
     }
 
     private let clampEpsilon: Float = 0.0001
-
     private var minDistance: Float { 0.01 }
 
     private var maxDistanceValue: Float {
         if let override = maxDistanceOverride {
             return Swift.max(override, minDistance)
         }
-
         let extent = Swift.max(Float(sceneBounds.maxExtent), 0.001)
         return Swift.max(1000.0, extent * 100000.0)
     }
@@ -165,72 +154,44 @@ public struct ArcballCameraControls: ViewModifier {
     }
 
     private func performHapticFeedback() {
-        #if os(macOS)
         NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-        #endif
     }
 
-    private func handleOrbit(deltaX: Float, deltaY: Float) {
+    private func handleOrbitDrag(_ value: DragGesture.Value) {
         let sensitivity: Float = 0.01
-        
+        let deltaX = Float(value.translation.width - (previousOrbitValue?.translation.width ?? 0))
+        let deltaY = Float(value.translation.height - (previousOrbitValue?.translation.height ?? 0))
         var newRotation = state.rotation
-        newRotation.y -= deltaX * sensitivity // Yaw
-        newRotation.x -= deltaY * sensitivity // Pitch
-        
-        // Clamp pitch to prevent camera flip
+        newRotation.y -= deltaX * sensitivity
+        newRotation.x -= deltaY * sensitivity
         newRotation.x = Swift.max(-.pi / 2 + 0.01, Swift.min(.pi / 2 - 0.01, newRotation.x))
-        
         state.rotation = newRotation
     }
-    
-    private func handlePan(deltaX: Float, deltaY: Float) {
-        // Pan sensitivity scales with distance
+
+    private func handlePanDrag(_ value: DragGesture.Value) {
+        let deltaX = Float(value.translation.width - (previousPanValue?.translation.width ?? 0))
+        let deltaY = Float(value.translation.height - (previousPanValue?.translation.height ?? 0))
         let scale = state.distance * 0.001
-        
-        // Calculate pan direction relative to camera rotation
+        handlePan(deltaX: deltaX, deltaY: -deltaY, scale: scale)
+    }
+
+    private func handlePan(deltaX: Float, deltaY: Float, scale: Float? = nil) {
+        let panScale = scale ?? (state.distance * 0.001)
         let rotX = simd_quatf(angle: state.rotation.x, axis: [1, 0, 0])
         let rotY = simd_quatf(angle: state.rotation.y, axis: [0, 1, 0])
         let orientation = rotY * rotX
-        
+
         let right = orientation.act([1, 0, 0])
         let up = orientation.act([0, 1, 0])
-        
-        // Hydra uses: pan(byDeltaX: -deltaX * multiplier, deltaY: -deltaY * multiplier)
-        state.focus += (right * (-deltaX * scale)) + (up * (deltaY * scale))
+
+        state.focus += (right * (-deltaX * panScale)) + (up * (deltaY * panScale))
     }
-    
-    private func handleZoom(magnification: CGFloat) {
+
+    private func handleMagnification(_ magnification: CGFloat) {
         if startDistance == nil { startDistance = state.distance }
         guard let start = startDistance else { return }
         guard magnification > 0 else { return }
-        
-        // Pinch out (scale > 1) -> zoom in (distance < start)
         let newDistance = start / Float(magnification)
-        state.distance = clampDistance(newDistance)
-    }
-    
-    private func handleNativeScroll(_ event: NSEvent) {
-        // Hydra Parity: Scroll = Pan, Option+Scroll = Zoom
-        if event.modifierFlags.contains(.option) {
-            // Zoom
-            let sensitivity: Float = 0.005
-            let delta = Float(event.scrollingDeltaY) * sensitivity
-            let newDistance = state.distance * (1.0 - delta)
-            state.distance = clampDistance(newDistance)
-        } else {
-            // Pan
-            let multiplier: Float = event.modifierFlags.contains(.shift) ? 5.0 : 1.0
-            let deltaX = Float(event.scrollingDeltaX) * multiplier
-            let deltaY = Float(event.scrollingDeltaY) * multiplier
-            handlePan(deltaX: deltaX, deltaY: deltaY)
-        }
-    }
-    
-    private func handleNativeMagnify(_ event: NSEvent) {
-        // Pinch out (positive magnification) -> zoom in (distance decreases)
-        let sensitivity: Float = 1.0
-        let delta = Float(event.magnification) * sensitivity
-        let newDistance = state.distance * (1.0 - delta)
         state.distance = clampDistance(newDistance)
     }
 }
@@ -240,7 +201,6 @@ public struct ArcballCameraControls: ViewModifier {
     let sceneBounds: SceneBounds
     let maxDistanceOverride: Float?
 
-    // Interaction State
     @State private var startDistance: Float?
     @State private var previousDragValue: DragGesture.Value?
     @State private var previousPanValue: DragGesture.Value?
@@ -302,14 +262,12 @@ public struct ArcballCameraControls: ViewModifier {
     }
 
     private let clampEpsilon: Float = 0.0001
-
     private var minDistance: Float { 0.01 }
 
     private var maxDistanceValue: Float {
         if let override = maxDistanceOverride {
             return Swift.max(override, minDistance)
         }
-
         let extent = Swift.max(Float(sceneBounds.maxExtent), 0.001)
         return Swift.max(1000.0, extent * 100000.0)
     }
@@ -345,22 +303,15 @@ public struct ArcballCameraControls: ViewModifier {
 
     private func handleOrbit(deltaX: Float, deltaY: Float) {
         let sensitivity: Float = 0.01
-
         var newRotation = state.rotation
-        newRotation.y -= deltaX * sensitivity // Yaw
-        newRotation.x -= deltaY * sensitivity // Pitch
-
-        // Clamp pitch to prevent camera flip
+        newRotation.y -= deltaX * sensitivity
+        newRotation.x -= deltaY * sensitivity
         newRotation.x = Swift.max(-.pi / 2 + 0.01, Swift.min(.pi / 2 - 0.01, newRotation.x))
-
         state.rotation = newRotation
     }
 
     private func handlePan(deltaX: Float, deltaY: Float) {
-        // Pan sensitivity scales with distance
         let scale = state.distance * 0.001
-
-        // Calculate pan direction relative to camera rotation
         let rotX = simd_quatf(angle: state.rotation.x, axis: [1, 0, 0])
         let rotY = simd_quatf(angle: state.rotation.y, axis: [0, 1, 0])
         let orientation = rotY * rotX
@@ -375,8 +326,6 @@ public struct ArcballCameraControls: ViewModifier {
         if startDistance == nil { startDistance = state.distance }
         guard let start = startDistance else { return }
         guard magnification > 0 else { return }
-
-        // Pinch out (scale > 1) -> zoom in (distance < start)
         let newDistance = start / Float(magnification)
         state.distance = clampDistance(newDistance)
     }

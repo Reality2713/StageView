@@ -7,11 +7,15 @@ let package = Package(
     products: [
         .library(name: "RealityKitStageView", targets: ["RealityKitStageView"]),
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.23.1"),
+    ],
     targets: [
         .target(
             name: "RealityKitStageView",
-            dependencies: [],
+            dependencies: [
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+            ],
             exclude: ["SelectionOutline/Shaders/OutlineShaders.metal"]
         ),
     ]

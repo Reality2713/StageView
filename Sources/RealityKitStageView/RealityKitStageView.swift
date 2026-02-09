@@ -2,6 +2,7 @@ import RealityKit
 import ImageIO
 import SwiftUI
 import simd
+import ComposableArchitecture
 #if os(macOS)
 import AppKit
 private typealias PlatformColor = NSColor
@@ -10,36 +11,35 @@ import UIKit
 private typealias PlatformColor = UIColor
 #endif
 
-/// RealityKit viewport using the Provider pattern.
-/// The view is stateless - all state lives in the RealityKitProvider.
 public struct RealityKitStageView: View {
-    /// Observable provider that manages scene state
-    @Bindable var provider: RealityKitProvider
-    
-    /// Configuration for rendering options
+    @State private var provider: RealityKitProvider
     var configuration: RealityKitConfiguration
-    
-    // Internal state
+    var store: StoreOf<StageViewFeature>?
+
     @State private var rootEntity: Entity?
     @State private var iblEntity: Entity?
     @State private var skyboxEntity: Entity?
     @State private var cameraState = ArcballCameraState()
     @State private var selectionHighlightEntity: Entity?
     @State private var outlinedEntityIDs: Set<Entity.ID> = []
-    
+
     private var environmentRadius: Double {
         let extent = Double(provider.sceneBounds.maxExtent)
         return Swift.max(1000.0, extent * 10.0)
     }
-    
-    public init(
-        provider: RealityKitProvider,
-        configuration: RealityKitConfiguration = RealityKitConfiguration()
-    ) {
-        self.provider = provider
+
+    public init(provider: RealityKitProvider, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
+        self._provider = State(initialValue: provider)
         self.configuration = configuration
+        self.store = nil
     }
-    
+
+    public init(store: StoreOf<StageViewFeature>, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
+        self._provider = State(initialValue: RealityKitProvider())
+        self.configuration = configuration
+        self.store = store
+    }
+
     public var body: some View {
         ZStack {
             RealityView { content in
@@ -47,21 +47,19 @@ public struct RealityKitStageView: View {
                 content.add(root)
                 self.rootEntity = root
                 provider.updateRootEntity(root)
-                
+
                 if let entity = provider.modelEntity {
                     loadModel(entity)
                 }
             } update: { content in
                 syncIBLState()
                 updateCamera(state: cameraState)
-                
-                // Handle camera requests from provider
+
                 if provider._resetCameraRequested {
                     resetCameraInternal()
                     Task { @MainActor in provider._resetCameraRequested = false }
                 }
                 if provider._frameSelectionRequested {
-                    // Frame selection logic
                     Task { @MainActor in provider._frameSelectionRequested = false }
                 }
             }
@@ -70,9 +68,41 @@ public struct RealityKitStageView: View {
                     errorOverlay(error)
                 }
             }
-            
-            // Overlays
+
             overlays
+        }
+        .task {
+            if let store = store {
+                for await snapshot in provider.observeDiscreteState() {
+                    await MainActor.run {
+                        store.send(.discreteStateReceived(snapshot))
+                    }
+                }
+            }
+        }
+        // Use `.task(id:)` rather than `.onChange` so we also load when the view first
+        // appears with an already-populated `modelURL` (common in TCA when state is
+        // set before the SwiftUI subtree is mounted).
+        .task(id: store?.modelURL) {
+            guard let url = store?.modelURL else {
+                await MainActor.run {
+                    provider.teardown()
+                }
+                return
+            }
+
+            print("[RealityKitStageView] Loading model: \(url.lastPathComponent)")
+            do {
+                try await provider.load(url)
+                print("[RealityKitStageView] Model loaded successfully")
+            } catch {
+                print("[RealityKitStageView] Model load failed: \(error)")
+            }
+        }
+        .onChange(of: store?.selectedPrimPath) { _, newPath in
+            Task { @MainActor in
+                provider.setSelection(newPath)
+            }
         }
         .onChange(of: provider.modelEntity.map { ObjectIdentifier($0) }) { _, newId in
             if let entity = provider.modelEntity, newId != nil {
@@ -108,14 +138,44 @@ public struct RealityKitStageView: View {
             maxDistance: Float(environmentRadius * 0.9)
         ))
         #endif
+        .gesture(
+            SpatialTapGesture()
+                .targetedToAnyEntity()
+                .onEnded { value in
+                    if let path = provider.nearestMappedPrimPath(from: value.entity) {
+                        provider.userDidPick(path)
+                        if let store = store {
+                            Task { @MainActor in
+                                store.send(.entityPicked(path))
+                            }
+                        }
+                    } else {
+                        provider.userDidPick(nil)
+                        if let store = store {
+                            Task { @MainActor in
+                                store.send(.entityPicked(nil))
+                            }
+                        }
+                    }
+                }
+        )
+        .gesture(
+            SpatialTapGesture()
+                .onEnded { _ in
+                    provider.userDidPick(nil)
+                    if let store = store {
+                        Task { @MainActor in
+                            store.send(.entityPicked(nil))
+                        }
+                    }
+                }
+        )
     }
-    
-    // MARK: - Overlays
-    
+
     @ViewBuilder
     private var overlays: some View {
         VStack {
-						scaleIndicator
+            scaleIndicator
             Spacer()
             HStack {
                 orientationGizmo
@@ -125,7 +185,7 @@ public struct RealityKitStageView: View {
         .padding(12)
         .allowsHitTesting(false)
     }
-    
+
     @ViewBuilder
     private var scaleIndicator: some View {
         let distance = Double(cameraState.distance) * provider.metersPerUnit
@@ -133,7 +193,7 @@ public struct RealityKitStageView: View {
             ScaleIndicatorView(cameraDistance: max(0.001, distance))
         }
     }
-    
+
     @ViewBuilder
     private var orientationGizmo: some View {
         if cameraState.quaternion.vector.isFinite {
@@ -143,7 +203,7 @@ public struct RealityKitStageView: View {
             )
         }
     }
-    
+
     @ViewBuilder
     private func errorOverlay(_ error: String) -> some View {
         VStack(spacing: 8) {
@@ -161,23 +221,18 @@ public struct RealityKitStageView: View {
         .background(.regularMaterial)
         .cornerRadius(12)
     }
-    
-    // MARK: - Scene Setup
-    
+
     @MainActor
     private func makeSceneRoot() -> Entity {
-        // Register the selection outline ECS system
         SelectionOutlineSystem.registerSystem()
-        
+
         let root = Entity()
         root.name = "SceneRoot"
 
-        // Model Anchor
         let modelAnchor = Entity()
         modelAnchor.name = "ModelAnchor"
         root.addChild(modelAnchor)
 
-        // Lights
         let light = DirectionalLight()
         light.name = "KeyLight"
         light.light.intensity = 2000
@@ -191,17 +246,15 @@ public struct RealityKitStageView: View {
         fillLight.look(at: .zero, from: [-2, 2, -3], relativeTo: nil)
         root.addChild(fillLight)
 
-        // Grid
         if configuration.showGrid {
             let grid = RealityKitGrid.createGridEntity(
                 metersPerUnit: configuration.metersPerUnit,
                 worldExtent: Double(provider.sceneBounds.maxExtent) * configuration.metersPerUnit,
-                isZUp: provider.isZUp
+                isZUp: configuration.isZUp
             )
             root.addChild(grid)
         }
 
-        // Camera
         let camera = PerspectiveCamera()
         camera.name = "MainCamera"
         if var component = camera.components[PerspectiveCameraComponent.self] {
@@ -213,7 +266,6 @@ public struct RealityKitStageView: View {
         camera.look(at: .zero, from: [0, 1, 2], relativeTo: nil)
         root.addChild(camera)
 
-        // IBL Entity
         let ibl = Entity()
         ibl.name = "ImageBasedLight"
         root.addChild(ibl)
@@ -221,9 +273,7 @@ public struct RealityKitStageView: View {
 
         return root
     }
-    
-    // MARK: - Model Loading
-    
+
     @MainActor
     private func loadModel(_ entity: Entity) {
         entity.name = "LoadedModel"
@@ -234,7 +284,8 @@ public struct RealityKitStageView: View {
         if let modelAnchor = anchor {
             modelAnchor.addChild(entity)
 
-            // Dynamic Camera Framing
+            prepareForPicking(entity)
+
             if let camera = rootEntity?.findEntity(named: "MainCamera") {
                 let bounds = entity.visualBounds(relativeTo: nil)
                 let extents = bounds.extents
@@ -256,15 +307,21 @@ public struct RealityKitStageView: View {
             applyIBLReceiver(to: entity)
         }
     }
-    
-    // MARK: - Camera
-    
+
+    private func prepareForPicking(_ entity: Entity) {
+        entity.components.set(InputTargetComponent(allowedInputTypes: .indirect))
+        entity.generateCollisionShapes(recursive: true)
+        for child in entity.children {
+            prepareForPicking(child)
+        }
+    }
+
     @MainActor
     private func updateCamera(state: ArcballCameraState) {
         guard let camera = rootEntity?.findEntity(named: "MainCamera") else { return }
         camera.transform.matrix = state.transform
     }
-    
+
     @MainActor
     private func resetCameraInternal() {
         cameraState = ArcballCameraState(
@@ -273,35 +330,27 @@ public struct RealityKitStageView: View {
             distance: 5.0
         )
     }
-    
-    // MARK: - Selection
-    
+
     @MainActor
     private func updateSelectionHighlight(for path: String?) {
-        // Clear previous outlines and cleanup child entities
         for id in outlinedEntityIDs {
             if let entity = rootEntity?.scene?.findEntity(id: id) {
                 entity.components.remove(SelectionOutlineComponent.self)
-                // Remove the actual outline mesh entity created by the system
                 if let outlineChild = entity.children.first(where: { $0.name == SelectionOutlineSystem.outlineEntityName }) {
                     outlineChild.removeFromParent()
                 }
             }
         }
         outlinedEntityIDs.removeAll()
-        
-        // Remove bounding box highlight if it exists (legacy)
+
         selectionHighlightEntity?.removeFromParent()
         selectionHighlightEntity = nil
 
         guard let path = path, !path.isEmpty else { return }
-        
-        // Find the target entity
+
         guard let target = provider.entity(for: path) else { return }
-        
-        // Apply outline component to the target and its descendants
+
         func applyOutline(to entity: Entity) {
-            // Prevent recursive outlining of the outline itself
             if entity.name == SelectionOutlineSystem.outlineEntityName { return }
 
             if entity.components.has(ModelComponent.self) {
@@ -312,12 +361,10 @@ public struct RealityKitStageView: View {
                 applyOutline(to: child)
             }
         }
-        
+
         applyOutline(to: target)
     }
-    
-    // MARK: - IBL
-    
+
     @MainActor
     private func syncIBLState() {
         updateIBLExposure(configuration.environmentExposure)
@@ -337,13 +384,12 @@ public struct RealityKitStageView: View {
 
         do {
             let resourceName = url.deletingLastPathComponent().lastPathComponent + "_" + url.lastPathComponent
-            
-            // Safer CGImage loading that preserves HDR floating-point data
+
             let options: [String: Any] = [
                 kCGImageSourceShouldAllowFloat as String: true,
                 kCGImageSourceShouldCache as String: false
             ]
-            
+
             let resource: EnvironmentResource
             if let dataProvider = CGDataProvider(url: url as CFURL),
                let source = CGImageSourceCreateWithDataProvider(dataProvider, options as CFDictionary),
@@ -354,7 +400,7 @@ public struct RealityKitStageView: View {
             }
 
             var iblComp = ImageBasedLightComponent(source: .single(resource))
-            iblComp.intensityExponent = configuration.realityKitIntensityExponent
+            iblComp.intensityExponent = Float(configuration.environmentExposure)
             iblComp.inheritsRotation = true
             ibl.components.set(iblComp)
 
@@ -382,7 +428,7 @@ public struct RealityKitStageView: View {
             }
 
             updateIBLRotation(configuration.environmentRotation)
-            
+
             if let model = provider.modelEntity {
                 applyIBLReceiver(to: model)
             }
@@ -393,20 +439,17 @@ public struct RealityKitStageView: View {
 
     @MainActor
     private func updateIBLExposure(_ exposure: Float) {
-        let exponent = configuration.realityKitIntensityExponent
-        
         if let ibl = iblEntity,
            var iblComp = ibl.components[ImageBasedLightComponent.self] {
-            iblComp.intensityExponent = exponent
-            // Ensure rotation inheritance is enabled (fixes rotation bug)
+            iblComp.intensityExponent = exposure
             iblComp.inheritsRotation = true
             ibl.components.set(iblComp)
         }
-        
+
         if let skybox = skyboxEntity,
            let model = skybox.components[ModelComponent.self] {
             let intensity = powf(2.0, exposure)
-            
+
             var material = (model.materials.first as? UnlitMaterial) ?? UnlitMaterial()
             let color = PlatformColor(
                 red: CGFloat(intensity),
@@ -415,7 +458,7 @@ public struct RealityKitStageView: View {
                 alpha: 1.0
             )
             material.color = .init(tint: color, texture: material.color.texture)
-            
+
             var newModel = model
             newModel.materials = [material]
             skybox.components.set(newModel)
@@ -424,36 +467,29 @@ public struct RealityKitStageView: View {
 
     @MainActor
     private func updateIBLRotation(_ degrees: Float) {
-        // Convert degrees to radians
         let radians = degrees * .pi / 180.0
-        
-        // Calculate orientation based on up-axis
+
         let orientation: simd_quatf
         if provider.isZUp {
-            // Z-Up: Spin around Z, then tilt 90° X to align Y-up environment
             let spin = simd_quatf(angle: radians, axis: [0, 0, 1])
             let tilt = simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
             orientation = spin * tilt
         } else {
-            // Y-Up: Simple spin around Y
             orientation = simd_quatf(angle: radians, axis: [0, 1, 0])
         }
 
         if let iblEntity {
             iblEntity.transform.rotation = orientation
-            
-            // Force component update to ensure rotation is picked up
+
             if var iblComp = iblEntity.components[ImageBasedLightComponent.self] {
-                // Ensure inheritsRotation is TRUE
                 if !iblComp.inheritsRotation {
                     iblComp.inheritsRotation = true
                 }
                 iblEntity.components.set(iblComp)
             }
         }
-        
+
         if let skyboxEntity {
-            // Skybox always spins around the up-axis (visual background)
             let axis: SIMD3<Float> = provider.isZUp ? [0, 0, 1] : [0, 1, 0]
             skyboxEntity.transform.rotation = simd_quatf(angle: radians, axis: axis)
         }
@@ -479,8 +515,6 @@ public struct RealityKitStageView: View {
         }
     }
 }
-
-// MARK: - SIMD Extensions
 
 fileprivate extension SIMD4 where Scalar == Float {
     var isFinite: Bool {
