@@ -92,6 +92,7 @@ public struct RealityKitStageView: View {
             }
 
             print("[RealityKitStageView] Loading model: \(url.lastPathComponent)")
+            provider.setPreserveCameraOnNextLoad(store?.preserveCameraOnNextLoad ?? false)
             do {
                 try await provider.load(url)
                 print("[RealityKitStageView] Model loaded successfully")
@@ -278,6 +279,7 @@ public struct RealityKitStageView: View {
     @MainActor
     private func loadModel(_ entity: Entity) {
         entity.name = "LoadedModel"
+        let preserveCamera = provider.consumePreserveCameraOnNextLoad()
 
         let anchor = rootEntity?.findEntity(named: "ModelAnchor")
         anchor?.children.first(where: { $0.name == "LoadedModel" })?.removeFromParent()
@@ -287,7 +289,7 @@ public struct RealityKitStageView: View {
 
             prepareForPicking(entity)
 
-            if let camera = rootEntity?.findEntity(named: "MainCamera") {
+            if !preserveCamera, rootEntity?.findEntity(named: "MainCamera") != nil {
                 let bounds = entity.visualBounds(relativeTo: nil)
                 let extents = bounds.extents
                 let center = bounds.center

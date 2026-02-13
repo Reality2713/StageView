@@ -28,6 +28,7 @@ public struct StageViewFeature {
     public struct State: Equatable {
         public var modelURL: URL?
         public var loadRequestID: UUID
+        public var preserveCameraOnNextLoad: Bool
         public var selectedPrimPath: String?
         public var isLoaded: Bool = false
         public var sceneBounds: SceneBounds = SceneBounds()
@@ -42,6 +43,7 @@ public struct StageViewFeature {
         public init(
             modelURL: URL? = nil,
             loadRequestID: UUID = UUID(),
+            preserveCameraOnNextLoad: Bool = false,
             selectedPrimPath: String? = nil,
             isLoaded: Bool = false,
             sceneBounds: SceneBounds = SceneBounds(),
@@ -52,6 +54,7 @@ public struct StageViewFeature {
         ) {
             self.modelURL = modelURL
             self.loadRequestID = loadRequestID
+            self.preserveCameraOnNextLoad = preserveCameraOnNextLoad
             self.selectedPrimPath = selectedPrimPath
             self.isLoaded = isLoaded
             self.sceneBounds = sceneBounds
@@ -69,6 +72,7 @@ public struct StageViewFeature {
         case entityPicked(String?)
         case selectionChanged(String?)
         case loadRequested(URL)
+        case loadRequestedPreservingCamera(URL)
         case reloadRequested
         case frameRequested
         /// Apply a live transform to the viewport (runtime only, not persisted)
@@ -98,12 +102,21 @@ public struct StageViewFeature {
 
             case let .loadRequested(url):
                 state.modelURL = url
+                state.preserveCameraOnNextLoad = false
+                state.isLoaded = false
+                state.loadRequestID = UUID()
+                return .none
+
+            case let .loadRequestedPreservingCamera(url):
+                state.modelURL = url
+                state.preserveCameraOnNextLoad = true
                 state.isLoaded = false
                 state.loadRequestID = UUID()
                 return .none
 
             case .reloadRequested:
                 guard state.modelURL != nil else { return .none }
+                state.preserveCameraOnNextLoad = false
                 state.isLoaded = false
                 state.loadRequestID = UUID()
                 return .none

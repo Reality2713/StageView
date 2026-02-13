@@ -88,6 +88,7 @@ public final class RealityKitProvider {
     internal var reloadToken: UUID = UUID()
     internal var _resetCameraRequested: Bool = false
     internal var _frameSelectionRequested: Bool = false
+    internal var _preserveCameraOnNextLoad: Bool = false
     private var discreteStateObservers = DiscreteStateObservers()
     
     // MARK: - Prim Path Registry
@@ -150,6 +151,16 @@ public final class RealityKitProvider {
     
     public func frameSelection() {
         _frameSelectionRequested = true
+    }
+
+    public func setPreserveCameraOnNextLoad(_ preserve: Bool) {
+        _preserveCameraOnNextLoad = preserve
+    }
+
+    internal func consumePreserveCameraOnNextLoad() -> Bool {
+        let preserve = _preserveCameraOnNextLoad
+        _preserveCameraOnNextLoad = false
+        return preserve
     }
     
     // MARK: - Internal Updates
