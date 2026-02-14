@@ -91,6 +91,10 @@ public final class RealityKitProvider {
     internal var _preserveCameraOnNextLoad: Bool = false
     private var discreteStateObservers = DiscreteStateObservers()
     
+    /// Generation counter for stale-result detection
+    /// Incremented on each load start; completions with stale generation are discarded
+    private var currentLoadGeneration: UInt64 = 0
+    
     // MARK: - Prim Path Registry
     /// Bidirectional prim path ↔ entity mapping, built once per model load.
     private(set) var primPathToEntityID: [String: Entity.ID] = [:]
@@ -101,18 +105,37 @@ public final class RealityKitProvider {
     // MARK: - Lifecycle
     
     /// Load a model (call this or set modelEntity directly)
+    /// Uses generation-based stale-result detection
     public func load(_ url: URL) async throws {
+        // Increment generation to invalidate any pending loads
+        let generation = currentLoadGeneration &+ 1
+        currentLoadGeneration = generation
+        
+        // Clear immediately to show empty viewport
+        teardown()
+        emitDiscreteSnapshotIfNeeded()
+        
         currentFileURL = url
-        loadError = nil
         
         do {
             let entity = try await Entity(contentsOf: url)
+            
+            // Discard if generation changed (cancelled/stale)
+            guard currentLoadGeneration == generation else {
+                return
+            }
+            
             self.modelEntity = entity
             self.isLoaded = true
             buildPrimPathMapping(root: entity)
             updateBoundsFromModel(entity)
             emitDiscreteSnapshotIfNeeded()
         } catch {
+            // Discard if generation changed
+            guard currentLoadGeneration == generation else {
+                return
+            }
+            
             loadError = error.localizedDescription
             emitDiscreteSnapshotIfNeeded()
             throw error
