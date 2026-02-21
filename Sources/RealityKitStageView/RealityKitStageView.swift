@@ -15,6 +15,7 @@ public struct RealityKitStageView: View {
     @State private var provider: RealityKitProvider
     var configuration: RealityKitConfiguration
     var store: StoreOf<StageViewFeature>?
+    var driveLoadsFromStore: Bool
 
     @State private var rootEntity: Entity?
     @State private var iblEntity: Entity?
@@ -32,12 +33,26 @@ public struct RealityKitStageView: View {
         self._provider = State(initialValue: provider)
         self.configuration = configuration
         self.store = nil
+        self.driveLoadsFromStore = false
     }
 
     public init(store: StoreOf<StageViewFeature>, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
         self._provider = State(initialValue: RealityKitProvider())
         self.configuration = configuration
         self.store = store
+        self.driveLoadsFromStore = true
+    }
+
+    public init(
+        provider: RealityKitProvider,
+        store: StoreOf<StageViewFeature>,
+        configuration: RealityKitConfiguration = RealityKitConfiguration(),
+        driveLoadsFromStore: Bool = false
+    ) {
+        self._provider = State(initialValue: provider)
+        self.configuration = configuration
+        self.store = store
+        self.driveLoadsFromStore = driveLoadsFromStore
     }
 
     public var body: some View {
@@ -84,6 +99,7 @@ public struct RealityKitStageView: View {
         // appears with an already-populated `modelURL` (common in TCA when state is
         // set before the SwiftUI subtree is mounted).
         .task(id: store?.loadRequestID) {
+            guard driveLoadsFromStore else { return }
             guard let url = store?.modelURL else {
                 await MainActor.run {
                     provider.teardown()
