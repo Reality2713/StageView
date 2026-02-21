@@ -34,6 +34,14 @@ public struct RealityKitStageView: View {
         self.store = store
     }
 
+    public init(provider: RealityKitProvider, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
+        self._provider = State(initialValue: provider)
+        self.configuration = configuration
+        self.store = Store(initialState: StageViewFeature.State()) {
+            StageViewFeature()
+        }
+    }
+
     public init(store: StoreOf<StageViewFeature>, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
         self._provider = State(initialValue: RealityKitProvider())
         self.configuration = configuration
