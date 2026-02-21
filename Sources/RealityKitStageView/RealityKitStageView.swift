@@ -190,9 +190,9 @@ public struct RealityKitStageView: View {
 
     @ViewBuilder
     private var scaleIndicator: some View {
-        let distance = Double(cameraState.distance) * provider.metersPerUnit
-        if distance.isFinite && distance > 0 {
-            ScaleIndicatorView(cameraDistance: max(0.001, distance))
+        let modelExtent = Double(provider.sceneBounds.maxExtent) * provider.metersPerUnit
+        if modelExtent.isFinite && modelExtent > 0 {
+            ScaleIndicatorView(modelExtentMeters: max(0.001, modelExtent))
         }
     }
 

@@ -3,8 +3,8 @@ import SwiftUI
 /// Zoom-aware scale indicator that shows real-world distance for a fixed screen width.
 /// The bar stays constant screen size while the label changes based on zoom level.
 public struct ScaleIndicatorView: View {
-    /// Distance from camera to target (in meters). Used to calculate scale.
-    let cameraDistance: Double
+    private let referenceDistance: Double
+    private let usesReferenceAsModelExtent: Bool
 
     /// The fixed screen width for the scale bar (in points). Defaults to 80pt.
     let barWidth: Double
@@ -17,16 +17,29 @@ public struct ScaleIndicatorView: View {
         barWidth: Double = 80,
         fieldOfView: Double = 67
     ) {
-        self.cameraDistance = cameraDistance
+        self.referenceDistance = cameraDistance
+        self.usesReferenceAsModelExtent = false
         self.barWidth = barWidth
         self.fieldOfView = fieldOfView
     }
 
+    /// Displays model extent directly (world-space), independent of camera.
+    public init(
+        modelExtentMeters: Double,
+        barWidth: Double = 80
+    ) {
+        self.referenceDistance = modelExtentMeters
+        self.usesReferenceAsModelExtent = true
+        self.barWidth = barWidth
+        self.fieldOfView = 67
+    }
+
     /// Calculate what real-world distance (in meters) fits in our fixed bar width.
     private var realWorldDistanceForBar: Double {
-        guard cameraDistance > 0, cameraDistance.isFinite else { return 0 }
+        guard referenceDistance > 0, referenceDistance.isFinite else { return 0 }
+        if usesReferenceAsModelExtent { return referenceDistance }
         let fovRadians = fieldOfView * .pi / 180.0
-        let visibleWidthAtDistance = 2.0 * cameraDistance * tan(fovRadians / 2.0)
+        let visibleWidthAtDistance = 2.0 * referenceDistance * tan(fovRadians / 2.0)
         let assumedScreenWidth: Double = 800.0 // Adjusted for split-viewports
         let barFraction = barWidth / assumedScreenWidth
         return visibleWidthAtDistance * barFraction
@@ -102,6 +115,9 @@ public struct ScaleIndicatorView: View {
     }
 
     private func barWidth(forDistance distance: Double) -> CGFloat {
+        if usesReferenceAsModelExtent {
+            return CGFloat(barWidth)
+        }
         let raw = realWorldDistanceForBar
         guard raw > 0 else { return 0 }
         let ratio = distance / raw
