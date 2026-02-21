@@ -68,6 +68,7 @@ public struct StageViewFeature {
     public init() {}
 
     public enum Action {
+        case clearRequested
         case discreteStateReceived(RealityKitDiscreteSnapshot)
         case entityPicked(String?)
         case selectionChanged(String?)
@@ -82,6 +83,14 @@ public struct StageViewFeature {
     public var body: some ReducerOf<Self> {
         Reduce { state, action in
             switch action {
+            case .clearRequested:
+                state.modelURL = nil
+                state.preserveCameraOnNextLoad = false
+                state.selectedPrimPath = nil
+                state.isLoaded = false
+                state.loadRequestID = UUID()
+                return .none
+
             case let .discreteStateReceived(snapshot):
                 state.isLoaded = snapshot.isLoaded
                 state.sceneBounds = snapshot.sceneBounds

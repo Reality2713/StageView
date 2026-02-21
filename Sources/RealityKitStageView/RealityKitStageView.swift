@@ -14,8 +14,7 @@ private typealias PlatformColor = UIColor
 public struct RealityKitStageView: View {
     @State private var provider: RealityKitProvider
     var configuration: RealityKitConfiguration
-    var store: StoreOf<StageViewFeature>?
-    var driveLoadsFromStore: Bool
+    var store: StoreOf<StageViewFeature>
 
     @State private var rootEntity: Entity?
     @State private var iblEntity: Entity?
@@ -29,30 +28,16 @@ public struct RealityKitStageView: View {
         return Swift.max(1000.0, extent * 10.0)
     }
 
-    public init(provider: RealityKitProvider, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
+    public init(provider: RealityKitProvider, store: StoreOf<StageViewFeature>, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
         self._provider = State(initialValue: provider)
         self.configuration = configuration
-        self.store = nil
-        self.driveLoadsFromStore = false
+        self.store = store
     }
 
     public init(store: StoreOf<StageViewFeature>, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
         self._provider = State(initialValue: RealityKitProvider())
         self.configuration = configuration
         self.store = store
-        self.driveLoadsFromStore = true
-    }
-
-    public init(
-        provider: RealityKitProvider,
-        store: StoreOf<StageViewFeature>,
-        configuration: RealityKitConfiguration = RealityKitConfiguration(),
-        driveLoadsFromStore: Bool = false
-    ) {
-        self._provider = State(initialValue: provider)
-        self.configuration = configuration
-        self.store = store
-        self.driveLoadsFromStore = driveLoadsFromStore
     }
 
     public var body: some View {
@@ -87,20 +72,17 @@ public struct RealityKitStageView: View {
             overlays
         }
         .task {
-            if let store = store {
-                for await snapshot in provider.observeDiscreteState() {
-                    await MainActor.run {
-                        store.send(.discreteStateReceived(snapshot))
-                    }
+            for await snapshot in provider.observeDiscreteState() {
+                await MainActor.run {
+                    _ = store.send(.discreteStateReceived(snapshot))
                 }
             }
         }
         // Use `.task(id:)` rather than `.onChange` so we also load when the view first
         // appears with an already-populated `modelURL` (common in TCA when state is
         // set before the SwiftUI subtree is mounted).
-        .task(id: store?.loadRequestID) {
-            guard driveLoadsFromStore else { return }
-            guard let url = store?.modelURL else {
+        .task(id: store.loadRequestID) {
+            guard let url = store.modelURL else {
                 await MainActor.run {
                     provider.teardown()
                 }
@@ -108,7 +90,7 @@ public struct RealityKitStageView: View {
             }
 
             print("[RealityKitStageView] Loading model: \(url.lastPathComponent)")
-            provider.setPreserveCameraOnNextLoad(store?.preserveCameraOnNextLoad ?? false)
+            provider.setPreserveCameraOnNextLoad(store.preserveCameraOnNextLoad)
             do {
                 try await provider.load(url)
                 print("[RealityKitStageView] Model loaded successfully")
@@ -116,7 +98,7 @@ public struct RealityKitStageView: View {
                 print("[RealityKitStageView] Model load failed: \(error)")
             }
         }
-        .onChange(of: store?.selectedPrimPath) { _, newPath in
+        .onChange(of: store.selectedPrimPath) { _, newPath in
             Task { @MainActor in
                 provider.setSelection(newPath)
             }
@@ -162,17 +144,13 @@ public struct RealityKitStageView: View {
                 .onEnded { value in
                     if let path = provider.nearestMappedPrimPath(from: value.entity) {
                         provider.userDidPick(path)
-                        if let store = store {
-                            Task { @MainActor in
-                                store.send(.entityPicked(path))
-                            }
+                        Task { @MainActor in
+                            _ = store.send(.entityPicked(path))
                         }
                     } else {
                         provider.userDidPick(nil)
-                        if let store = store {
-                            Task { @MainActor in
-                                store.send(.entityPicked(nil))
-                            }
+                        Task { @MainActor in
+                            _ = store.send(.entityPicked(nil))
                         }
                     }
                 }
@@ -181,10 +159,8 @@ public struct RealityKitStageView: View {
             SpatialTapGesture()
                 .onEnded { _ in
                     provider.userDidPick(nil)
-                    if let store = store {
-                        Task { @MainActor in
-                            store.send(.entityPicked(nil))
-                        }
+                    Task { @MainActor in
+                        _ = store.send(.entityPicked(nil))
                     }
                 }
         )
