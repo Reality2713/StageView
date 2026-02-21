@@ -329,7 +329,7 @@ public struct ArcballCameraControls: ViewModifier {
     }
 
     private func performHapticFeedback() {
-        #if os(iOS) || os(visionOS)
+        #if os(iOS)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         #endif
     }
