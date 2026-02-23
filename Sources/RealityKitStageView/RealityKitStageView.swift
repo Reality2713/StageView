@@ -176,23 +176,29 @@ public struct RealityKitStageView: View {
 
     @ViewBuilder
     private var overlays: some View {
-        VStack {
-            scaleIndicator
-            Spacer()
-            HStack {
-                orientationGizmo
+        GeometryReader { proxy in
+            VStack {
+                scaleIndicator(viewportWidth: proxy.size.width)
                 Spacer()
+                HStack {
+                    orientationGizmo
+                    Spacer()
+                }
             }
+            .padding(12)
+            .allowsHitTesting(false)
         }
-        .padding(12)
-        .allowsHitTesting(false)
     }
 
     @ViewBuilder
-    private var scaleIndicator: some View {
-        let modelExtent = Double(provider.sceneBounds.maxExtent) * provider.metersPerUnit
-        if modelExtent.isFinite && modelExtent > 0 {
-            ScaleIndicatorView(modelExtentMeters: max(0.001, modelExtent))
+    private func scaleIndicator(viewportWidth: CGFloat) -> some View {
+        let referenceDepthMeters = Double(provider.cameraDistance)
+        if referenceDepthMeters.isFinite, referenceDepthMeters > 0 {
+            ScaleIndicatorView(
+                referenceDepthMeters: referenceDepthMeters,
+                viewportWidthPoints: Double(max(1, viewportWidth)),
+                horizontalFOVDegrees: 60
+            )
         }
     }
 

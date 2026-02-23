@@ -18,5 +18,9 @@ let package = Package(
             ],
             exclude: ["SelectionOutline/Shaders/OutlineShaders.metal"]
         ),
+        .testTarget(
+            name: "StageViewTests",
+            dependencies: ["RealityKitStageView"]
+        ),
     ]
 )
