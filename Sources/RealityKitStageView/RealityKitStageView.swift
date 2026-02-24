@@ -3,6 +3,7 @@ import ImageIO
 import SwiftUI
 import simd
 import ComposableArchitecture
+import OSLog
 #if os(macOS)
 import AppKit
 private typealias PlatformColor = NSColor
@@ -11,8 +12,10 @@ import UIKit
 private typealias PlatformColor = UIColor
 #endif
 
+private let logger = Logger(subsystem: "RealityKitStageView", category: "Viewport")
+
 public struct RealityKitStageView: View {
-    @State private var provider: RealityKitProvider
+    @State private var runtime: RealityKitProvider
     var configuration: RealityKitConfiguration
     var store: StoreOf<StageViewFeature>
 
@@ -24,26 +27,12 @@ public struct RealityKitStageView: View {
     @State private var outlinedEntityIDs: Set<Entity.ID> = []
 
     private var environmentRadius: Double {
-        let extent = Double(provider.sceneBounds.maxExtent)
+        let extent = Double(runtime.sceneBounds.maxExtent)
         return Swift.max(1000.0, extent * 10.0)
     }
 
-    public init(provider: RealityKitProvider, store: StoreOf<StageViewFeature>, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
-        self._provider = State(initialValue: provider)
-        self.configuration = configuration
-        self.store = store
-    }
-
-    public init(provider: RealityKitProvider, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
-        self._provider = State(initialValue: provider)
-        self.configuration = configuration
-        self.store = Store(initialState: StageViewFeature.State()) {
-            StageViewFeature()
-        }
-    }
-
     public init(store: StoreOf<StageViewFeature>, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
-        self._provider = State(initialValue: RealityKitProvider())
+        self._runtime = State(initialValue: RealityKitProvider())
         self.configuration = configuration
         self.store = store
     }
@@ -54,25 +43,25 @@ public struct RealityKitStageView: View {
                 let root = makeSceneRoot()
                 content.add(root)
                 self.rootEntity = root
-                provider.updateRootEntity(root)
+                runtime.updateRootEntity(root)
 
-                if let entity = provider.modelEntity {
+                if let entity = runtime.modelEntity {
                     loadModel(entity)
                 }
             } update: { content in
                 syncIBLState()
                 updateCamera(state: cameraState)
 
-                if provider._resetCameraRequested {
+                if runtime._resetCameraRequested {
                     resetCameraInternal()
-                    Task { @MainActor in provider._resetCameraRequested = false }
+                    Task { @MainActor in runtime._resetCameraRequested = false }
                 }
-                if provider._frameSelectionRequested {
-                    Task { @MainActor in provider._frameSelectionRequested = false }
+                if runtime._frameSelectionRequested {
+                    Task { @MainActor in runtime._frameSelectionRequested = false }
                 }
             }
             .overlay {
-                if let error = provider.loadError {
+                if let error = runtime.loadError {
                     errorOverlay(error)
                 }
             }
@@ -80,39 +69,51 @@ public struct RealityKitStageView: View {
             overlays
         }
         .task {
-            for await snapshot in provider.observeDiscreteState() {
+            for await snapshot in runtime.observeDiscreteState() {
                 await MainActor.run {
                     _ = store.send(.discreteStateReceived(snapshot))
                 }
             }
         }
-        // Use `.task(id:)` rather than `.onChange` so we also load when the view first
-        // appears with an already-populated `modelURL` (common in TCA when state is
-        // set before the SwiftUI subtree is mounted).
         .task(id: store.loadRequestID) {
-            guard let url = store.modelURL else {
+            guard let command = store.activeLoadCommand else {
                 await MainActor.run {
-                    provider.teardown()
+                    runtime.teardown()
                 }
                 return
             }
 
-            print("[RealityKitStageView] Loading model: \(url.lastPathComponent)")
-            provider.setPreserveCameraOnNextLoad(store.preserveCameraOnNextLoad)
+            logger.info("Loading model: \(command.url.lastPathComponent, privacy: .public)")
+            runtime.setPreserveCameraOnNextLoad(command.preserveCamera)
             do {
-                try await provider.load(url)
-                print("[RealityKitStageView] Model loaded successfully")
+                switch command.mode {
+                case .fullLoad:
+                    try await runtime.load(command.url)
+                case .refresh:
+                    try await runtime.load(command.url)
+                }
+                _ = await MainActor.run { store.send(.loadCommandCompleted(command.id)) }
+                logger.info("Model loaded successfully")
             } catch {
-                print("[RealityKitStageView] Model load failed: \(error)")
+                _ = await MainActor.run {
+                    store.send(.loadCommandFailed(command.id, error.localizedDescription))
+                }
+                logger.error("Model load failed: \(error.localizedDescription, privacy: .public)")
             }
         }
         .onChange(of: store.selectedPrimPath) { _, newPath in
             Task { @MainActor in
-                provider.setSelection(newPath)
+                runtime.setSelection(newPath)
             }
         }
-        .onChange(of: provider.modelEntity.map { ObjectIdentifier($0) }) { _, newId in
-            if let entity = provider.modelEntity, newId != nil {
+        .onChange(of: store.cameraResetRequestID) { _, requestID in
+            guard requestID != nil else { return }
+            Task { @MainActor in
+                runtime.resetCamera()
+            }
+        }
+        .onChange(of: runtime.modelEntity.map { ObjectIdentifier($0) }) { _, newId in
+            if let entity = runtime.modelEntity, newId != nil {
                 loadModel(entity)
             }
         }
@@ -120,7 +121,7 @@ public struct RealityKitStageView: View {
             guard newId != nil else { return }
             Task { await updateEnvironment(configuration.environmentMapURL) }
         }
-        .onChange(of: provider.selectedPrimPath) { _, newPath in
+        .onChange(of: runtime.selectedPrimPath) { _, newPath in
             updateSelectionHighlight(for: newPath)
         }
         .onChange(of: configuration.environmentMapURL) { _, newValue in
@@ -136,13 +137,13 @@ public struct RealityKitStageView: View {
             updateIBLRotation(newValue)
         }
         .onChange(of: cameraState) { _, newState in
-            provider.updateCameraState(rotation: newState.quaternion, distance: newState.distance)
+            runtime.updateCameraState(rotation: newState.quaternion, distance: newState.distance)
         }
-        .withLiveTransform(store: store, provider: provider)
+        .withLiveTransform(store: store, provider: runtime)
         #if os(macOS)
         .modifier(ArcballCameraControls(
             state: $cameraState,
-            sceneBounds: provider.sceneBounds,
+            sceneBounds: runtime.sceneBounds,
             maxDistance: Float(environmentRadius * 0.9)
         ))
         #endif
@@ -150,13 +151,13 @@ public struct RealityKitStageView: View {
             SpatialTapGesture()
                 .targetedToAnyEntity()
                 .onEnded { value in
-                    if let path = provider.nearestMappedPrimPath(from: value.entity) {
-                        provider.userDidPick(path)
+                    if let path = runtime.nearestMappedPrimPath(from: value.entity) {
+                        runtime.userDidPick(path)
                         Task { @MainActor in
                             _ = store.send(.entityPicked(path))
                         }
                     } else {
-                        provider.userDidPick(nil)
+                        runtime.userDidPick(nil)
                         Task { @MainActor in
                             _ = store.send(.entityPicked(nil))
                         }
@@ -166,7 +167,7 @@ public struct RealityKitStageView: View {
         .gesture(
             SpatialTapGesture()
                 .onEnded { _ in
-                    provider.userDidPick(nil)
+                    runtime.userDidPick(nil)
                     Task { @MainActor in
                         _ = store.send(.entityPicked(nil))
                     }
@@ -192,7 +193,7 @@ public struct RealityKitStageView: View {
 
     @ViewBuilder
     private func scaleIndicator(viewportWidth: CGFloat) -> some View {
-        let referenceDepthMeters = Double(provider.cameraDistance)
+        let referenceDepthMeters = Double(runtime.cameraDistance)
         if referenceDepthMeters.isFinite, referenceDepthMeters > 0 {
             ScaleIndicatorView(
                 referenceDepthMeters: referenceDepthMeters,
@@ -207,7 +208,7 @@ public struct RealityKitStageView: View {
         if cameraState.quaternion.vector.isFinite {
             OrientationGizmoView(
                 cameraRotation: cameraState.quaternion,
-                isZUp: provider.isZUp
+                isZUp: runtime.isZUp
             )
         }
     }
@@ -257,7 +258,7 @@ public struct RealityKitStageView: View {
         if configuration.showGrid {
             let grid = RealityKitGrid.createGridEntity(
                 metersPerUnit: configuration.metersPerUnit,
-                worldExtent: Double(provider.sceneBounds.maxExtent) * configuration.metersPerUnit,
+                worldExtent: Double(runtime.sceneBounds.maxExtent) * configuration.metersPerUnit,
                 isZUp: configuration.isZUp
             )
             root.addChild(grid)
@@ -285,7 +286,7 @@ public struct RealityKitStageView: View {
     @MainActor
     private func loadModel(_ entity: Entity) {
         entity.name = "LoadedModel"
-        let preserveCamera = provider.consumePreserveCameraOnNextLoad()
+        let preserveCamera = runtime.consumePreserveCameraOnNextLoad()
 
         let anchor = rootEntity?.findEntity(named: "ModelAnchor")
         anchor?.children.first(where: { $0.name == "LoadedModel" })?.removeFromParent()
@@ -357,7 +358,7 @@ public struct RealityKitStageView: View {
 
         guard let path = path, !path.isEmpty else { return }
 
-        guard let target = provider.entity(for: path) else { return }
+        guard let target = runtime.entity(for: path) else { return }
 
         func applyOutline(to entity: Entity) {
             if entity.name == SelectionOutlineSystem.outlineEntityName { return }
@@ -440,7 +441,7 @@ public struct RealityKitStageView: View {
 
             updateIBLRotation(configuration.environmentRotation)
 
-            if let model = provider.modelEntity {
+            if let model = runtime.modelEntity {
                 applyIBLReceiver(to: model)
             }
         } catch {
@@ -481,7 +482,7 @@ public struct RealityKitStageView: View {
         let radians = degrees * .pi / 180.0
 
         let orientation: simd_quatf
-        if provider.isZUp {
+        if runtime.isZUp {
             let spin = simd_quatf(angle: radians, axis: [0, 0, 1])
             let tilt = simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
             orientation = spin * tilt
@@ -501,7 +502,7 @@ public struct RealityKitStageView: View {
         }
 
         if let skyboxEntity {
-            let axis: SIMD3<Float> = provider.isZUp ? [0, 0, 1] : [0, 1, 0]
+            let axis: SIMD3<Float> = runtime.isZUp ? [0, 0, 1] : [0, 1, 0]
             skyboxEntity.transform.rotation = simd_quatf(angle: radians, axis: axis)
         }
     }
