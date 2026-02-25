@@ -50,6 +50,15 @@ public struct RealityKitDiscreteSnapshot: Equatable, Sendable {
 @Observable
 @MainActor
 public final class RealityKitProvider {
+    private enum LoadError: LocalizedError {
+        case timeout(seconds: Int)
+        var errorDescription: String? {
+            switch self {
+            case let .timeout(seconds):
+                return "Stage load timed out after \(seconds)s"
+            }
+        }
+    }
     // MARK: - Scene Feedback (Read-only)
     public private(set) var cameraRotation: simd_quatf = simd_quatf(angle: 0, axis: [0, 1, 0])
     public private(set) var cameraDistance: Float = 5.0
@@ -118,7 +127,7 @@ public final class RealityKitProvider {
         currentFileURL = url
         
         do {
-            let entity = try await Entity(contentsOf: url)
+            let entity = try await loadEntityAsync(url)
             
             // Discard if generation changed (cancelled/stale)
             guard currentLoadGeneration == generation else {
@@ -138,6 +147,33 @@ public final class RealityKitProvider {
             
             loadError = error.localizedDescription
             emitDiscreteSnapshotIfNeeded()
+            throw error
+        }
+    }
+
+    private func loadEntityAsync(_ url: URL) async throws -> Entity {
+        let timeoutSeconds = 25
+        let loaderTask = Task.detached(priority: .userInitiated) {
+            try await Entity(contentsOf: url)
+        }
+        do {
+            return try await withThrowingTaskGroup(of: Entity.self) { group in
+                group.addTask {
+                    try await loaderTask.value
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(timeoutSeconds))
+                    throw LoadError.timeout(seconds: timeoutSeconds)
+                }
+                guard let result = try await group.next() else {
+                    throw LoadError.timeout(seconds: timeoutSeconds)
+                }
+                group.cancelAll()
+                loaderTask.cancel()
+                return result
+            }
+        } catch {
+            loaderTask.cancel()
             throw error
         }
     }

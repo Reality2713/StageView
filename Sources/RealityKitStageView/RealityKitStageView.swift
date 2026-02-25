@@ -319,10 +319,15 @@ public struct RealityKitStageView: View {
     }
 
     private func prepareForPicking(_ entity: Entity) {
-        entity.components.set(InputTargetComponent(allowedInputTypes: .indirect))
+        markInputTargetsRecursively(entity)
+        // Generate collision shapes once for the full subtree.
         entity.generateCollisionShapes(recursive: true)
+    }
+
+    private func markInputTargetsRecursively(_ entity: Entity) {
+        entity.components.set(InputTargetComponent(allowedInputTypes: .indirect))
         for child in entity.children {
-            prepareForPicking(child)
+            markInputTargetsRecursively(child)
         }
     }
 
