@@ -49,6 +49,9 @@ public struct RealityKitStageView: View {
                     loadModel(entity)
                 }
             } update: { content in
+                if let rootEntity {
+                    runtime.updateRootEntity(rootEntity)
+                }
                 syncIBLState()
                 updateCamera(state: cameraState)
 
@@ -77,9 +80,13 @@ public struct RealityKitStageView: View {
         }
         .task(id: store.loadRequestID) {
             guard let command = store.activeLoadCommand else {
-                await MainActor.run {
-                    runtime.teardown()
+                if store.modelURL == nil {
+                    await MainActor.run {
+                        runtime.teardown()
+                    }
+                    return
                 }
+                await restoreModelIfNeeded()
                 return
             }
 
@@ -173,6 +180,23 @@ public struct RealityKitStageView: View {
                     }
                 }
         )
+    }
+
+    @MainActor
+    private func restoreModelIfNeeded() async {
+        guard store.isLoaded else { return }
+        guard runtime.modelEntity == nil else { return }
+        guard store.lastCompletedCommandID != nil else { return }
+        guard let url = store.modelURL else { return }
+
+        logger.info("Restoring previously loaded model after viewport remount: \(url.lastPathComponent, privacy: .public)")
+        runtime.setPreserveCameraOnNextLoad(true)
+        do {
+            try await runtime.load(url)
+            logger.info("Model restore succeeded")
+        } catch {
+            logger.error("Model restore failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     @ViewBuilder
@@ -450,7 +474,7 @@ public struct RealityKitStageView: View {
                 applyIBLReceiver(to: model)
             }
         } catch {
-            print("[RealityKitStageView] Environment load failed: \(error.localizedDescription)")
+            logger.error("Environment load failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

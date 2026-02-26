@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import RealityKit
 import simd
 
@@ -16,6 +17,8 @@ public struct USDPrimPathComponent: Component, Sendable {
 private let realityKitInternalNames: Set<String> = [
     "usdPrimitiveAxis",
 ]
+
+private let providerLogger = Logger(subsystem: "RealityKitStageView", category: "Provider")
 
 // MARK: - Discrete Snapshot
 
@@ -192,7 +195,6 @@ public final class RealityKitProvider {
     /// Clear the current model
     public func teardown() {
         modelEntity = nil
-        rootEntity = nil
         currentFileURL = nil
         isLoaded = false
         selectedPrimPath = nil
@@ -245,7 +247,7 @@ public final class RealityKitProvider {
     /// This does NOT persist to USD – use this during interactive editing.
     public func applyLiveTransform(_ transform: LiveTransformData) {
         guard let entity = entity(for: transform.primPath) else {
-            print("[RealityKitProvider] No entity found for prim path: \(transform.primPath)")
+            providerLogger.debug("No entity found for prim path: \(transform.primPath, privacy: .public)")
             return
         }
         
