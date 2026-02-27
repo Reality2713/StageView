@@ -219,7 +219,9 @@ public struct StageViewFeature {
                 state.activeLoadCommand = LoadCommand(
                     id: replayID,
                     mode: .fullLoad,
-                    preserveCamera: true,
+                    // Remounting creates a fresh RealityView/camera instance, so preserving
+                    // camera on replay can retain an unfitted default pose.
+                    preserveCamera: false,
                     url: command.url
                 )
                 state.loadRequestID = replayID

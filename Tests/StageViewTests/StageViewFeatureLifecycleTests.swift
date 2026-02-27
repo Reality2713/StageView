@@ -35,7 +35,7 @@ struct StageViewFeatureLifecycleTests {
             $0.activeLoadCommand = .init(
                 id: replayID,
                 mode: .fullLoad,
-                preserveCamera: true,
+                preserveCamera: false,
                 url: url
             )
             $0.loadRequestID = replayID
