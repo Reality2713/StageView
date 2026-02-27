@@ -24,6 +24,8 @@ public struct LiveTransformData: Equatable, Sendable {
 
 @Reducer
 public struct StageViewFeature {
+    @Dependency(\.uuid) var uuid
+
     public struct LoadCommand: Equatable {
         public enum Mode: Equatable {
             case fullLoad
@@ -52,12 +54,14 @@ public struct StageViewFeature {
         public var lastCompletedCommandID: UUID?
         public var liveTransform: LiveTransformData?
         public var liveTransformRequestID: UUID?
+        public var lastSuccessfulLoadCommand: LoadCommand?
         public var loadRequestID: UUID
         public var metersPerUnit: Double
         public var modelURL: URL?
         public var pendingSelection: String?
         public var sceneBounds: SceneBounds
         public var selectedPrimPath: String?
+        public var viewIsMounted: Bool
 
         public init(
             activeLoadCommand: LoadCommand? = nil,
@@ -67,12 +71,14 @@ public struct StageViewFeature {
             lastCompletedCommandID: UUID? = nil,
             liveTransform: LiveTransformData? = nil,
             liveTransformRequestID: UUID? = nil,
+            lastSuccessfulLoadCommand: LoadCommand? = nil,
             loadRequestID: UUID = UUID(),
             metersPerUnit: Double = 1.0,
             modelURL: URL? = nil,
             pendingSelection: String? = nil,
             sceneBounds: SceneBounds = SceneBounds(),
-            selectedPrimPath: String? = nil
+            selectedPrimPath: String? = nil,
+            viewIsMounted: Bool = false
         ) {
             self.activeLoadCommand = activeLoadCommand
             self.cameraResetRequestID = cameraResetRequestID
@@ -81,12 +87,14 @@ public struct StageViewFeature {
             self.lastCompletedCommandID = lastCompletedCommandID
             self.liveTransform = liveTransform
             self.liveTransformRequestID = liveTransformRequestID
+            self.lastSuccessfulLoadCommand = lastSuccessfulLoadCommand
             self.loadRequestID = loadRequestID
             self.metersPerUnit = metersPerUnit
             self.modelURL = modelURL
             self.pendingSelection = pendingSelection
             self.sceneBounds = sceneBounds
             self.selectedPrimPath = selectedPrimPath
+            self.viewIsMounted = viewIsMounted
         }
     }
 
@@ -105,6 +113,8 @@ public struct StageViewFeature {
         case refreshRequested(commandID: UUID, url: URL, preserveCamera: Bool)
         case resetCameraRequested
         case selectionChanged(String?)
+        case viewAppeared
+        case viewDisappeared
     }
 
     public var body: some ReducerOf<Self> {
@@ -112,7 +122,7 @@ public struct StageViewFeature {
             switch action {
             case let .applyLiveTransform(transform):
                 state.liveTransform = transform
-                state.liveTransformRequestID = UUID()
+                state.liveTransformRequestID = uuid()
                 return .none
 
             case .clearRequested:
@@ -120,7 +130,8 @@ public struct StageViewFeature {
                 state.cameraResetRequestID = nil
                 state.isLoaded = false
                 state.isZUp = false
-                state.loadRequestID = UUID()
+                state.lastSuccessfulLoadCommand = nil
+                state.loadRequestID = uuid()
                 state.metersPerUnit = 1.0
                 state.modelURL = nil
                 state.pendingSelection = nil
@@ -151,6 +162,7 @@ public struct StageViewFeature {
                 guard state.activeLoadCommand?.id == commandID else {
                     return .none
                 }
+                state.lastSuccessfulLoadCommand = state.activeLoadCommand
                 state.activeLoadCommand = nil
                 state.isLoaded = true
                 state.lastCompletedCommandID = commandID
@@ -189,12 +201,32 @@ public struct StageViewFeature {
                 return .none
 
             case .resetCameraRequested:
-                state.cameraResetRequestID = UUID()
+                state.cameraResetRequestID = uuid()
                 return .none
 
             case let .selectionChanged(path):
                 state.pendingSelection = path
                 state.selectedPrimPath = path
+                return .none
+
+            case .viewAppeared:
+                state.viewIsMounted = true
+                guard state.activeLoadCommand == nil else { return .none }
+                guard state.isLoaded else { return .none }
+                guard let command = state.lastSuccessfulLoadCommand else { return .none }
+
+                let replayID = uuid()
+                state.activeLoadCommand = LoadCommand(
+                    id: replayID,
+                    mode: .fullLoad,
+                    preserveCamera: true,
+                    url: command.url
+                )
+                state.loadRequestID = replayID
+                return .none
+
+            case .viewDisappeared:
+                state.viewIsMounted = false
                 return .none
             }
         }

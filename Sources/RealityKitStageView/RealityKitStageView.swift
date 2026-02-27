@@ -81,9 +81,7 @@ public struct RealityKitStageView: View {
                     await MainActor.run {
                         runtime.teardown()
                     }
-                    return
                 }
-                await restoreModelIfNeeded()
                 return
             }
 
@@ -104,6 +102,12 @@ public struct RealityKitStageView: View {
                 }
                 logger.error("Model load failed: \(error.localizedDescription, privacy: .public)")
             }
+        }
+        .onAppear {
+            _ = store.send(.viewAppeared)
+        }
+        .onDisappear {
+            _ = store.send(.viewDisappeared)
         }
         .onChange(of: store.selectedPrimPath) { _, newPath in
             Task { @MainActor in
@@ -177,26 +181,6 @@ public struct RealityKitStageView: View {
                     }
                 }
         )
-    }
-
-    @MainActor
-    private func restoreModelIfNeeded() async {
-        guard store.isLoaded else { return }
-        guard runtime.modelEntity == nil else { return }
-        guard store.lastCompletedCommandID != nil else { return }
-        guard let url = store.modelURL else { return }
-
-        let shouldPreserveCamera = cameraState != ArcballCameraState()
-        logger.info(
-            "Restoring previously loaded model after viewport remount: \(url.lastPathComponent, privacy: .public), preserveCamera=\(shouldPreserveCamera, privacy: .public)"
-        )
-        runtime.setPreserveCameraOnNextLoad(shouldPreserveCamera)
-        do {
-            try await runtime.load(url)
-            logger.info("Model restore succeeded")
-        } catch {
-            logger.error("Model restore failed: \(error.localizedDescription, privacy: .public)")
-        }
     }
 
     @ViewBuilder
