@@ -189,8 +189,11 @@ public struct RealityKitStageView: View {
         guard store.lastCompletedCommandID != nil else { return }
         guard let url = store.modelURL else { return }
 
-        logger.info("Restoring previously loaded model after viewport remount: \(url.lastPathComponent, privacy: .public)")
-        runtime.setPreserveCameraOnNextLoad(true)
+        let shouldPreserveCamera = cameraState != ArcballCameraState()
+        logger.info(
+            "Restoring previously loaded model after viewport remount: \(url.lastPathComponent, privacy: .public), preserveCamera=\(shouldPreserveCamera, privacy: .public)"
+        )
+        runtime.setPreserveCameraOnNextLoad(shouldPreserveCamera)
         do {
             try await runtime.load(url)
             logger.info("Model restore succeeded")
