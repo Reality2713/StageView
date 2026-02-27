@@ -49,9 +49,6 @@ public struct RealityKitStageView: View {
                     loadModel(entity)
                 }
             } update: { content in
-                if let rootEntity {
-                    runtime.updateRootEntity(rootEntity)
-                }
                 syncIBLState()
                 updateCamera(state: cameraState)
 
