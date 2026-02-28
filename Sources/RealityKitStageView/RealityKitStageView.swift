@@ -148,6 +148,7 @@ public struct RealityKitStageView: View {
             runtime.updateCameraState(rotation: newState.quaternion, distance: newState.distance)
         }
         .withLiveTransform(store: store, provider: runtime)
+        .withRuntimeBlendShapes(store: store, provider: runtime)
         #if os(macOS)
         .modifier(ArcballCameraControls(
             state: $cameraState,

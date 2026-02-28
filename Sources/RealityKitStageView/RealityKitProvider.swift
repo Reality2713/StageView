@@ -277,6 +277,26 @@ public final class RealityKitProvider {
         
         entity.transform = Transform(scale: scale, rotation: rotation, translation: position)
     }
+
+    /// Apply runtime blend-shape weights for interactive inspection.
+    /// This does NOT persist to USD.
+    public func applyBlendShapeWeights(_ updates: [BlendShapeRuntimeWeight]) {
+        guard !updates.isEmpty else { return }
+
+        for update in updates {
+            guard let entity = resolveBlendShapeEntity(for: update.primPath) else { continue }
+            guard var blendComp = entity.components[BlendShapeWeightsComponent.self] else { continue }
+            guard !blendComp.weightSet.isEmpty else { continue }
+
+            var weightSet = blendComp.weightSet
+            var weights = Array(weightSet[0].weights)
+            guard update.weightIndex >= 0, update.weightIndex < weights.count else { continue }
+            weights[update.weightIndex] = update.weight
+            weightSet[0].weights = BlendShapeWeights(weights)
+            blendComp.weightSet = weightSet
+            entity.components.set(blendComp)
+        }
+    }
 }
 
 // MARK: - Discrete State Observation
@@ -437,6 +457,23 @@ extension RealityKitProvider {
         if root.id == id { return root }
         for child in root.children {
             if let found = findEntity(byID: id, in: child) { return found }
+        }
+        return nil
+    }
+
+    /// BlendShape prims can map to mesh entities, so we walk up path ancestry
+    /// until we find an entity that carries BlendShapeWeightsComponent.
+    private func resolveBlendShapeEntity(for primPath: String) -> Entity? {
+        var cursor = primPath
+        while !cursor.isEmpty {
+            if let entity = entity(for: cursor),
+               entity.components[BlendShapeWeightsComponent.self] != nil {
+                return entity
+            }
+            guard let slash = cursor.lastIndex(of: "/"), slash != cursor.startIndex else {
+                break
+            }
+            cursor = String(cursor[..<slash])
         }
         return nil
     }

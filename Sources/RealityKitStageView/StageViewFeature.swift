@@ -22,6 +22,19 @@ public struct LiveTransformData: Equatable, Sendable {
     }
 }
 
+/// Runtime blend-shape update payload for viewport-only preview.
+public struct BlendShapeRuntimeWeight: Equatable, Sendable {
+    public var primPath: String
+    public var weightIndex: Int
+    public var weight: Float
+
+    public init(primPath: String, weightIndex: Int, weight: Float) {
+        self.primPath = primPath
+        self.weightIndex = weightIndex
+        self.weight = weight
+    }
+}
+
 @Reducer
 public struct StageViewFeature {
     @Dependency(\.uuid) var uuid
@@ -54,6 +67,8 @@ public struct StageViewFeature {
         public var lastCompletedCommandID: UUID?
         public var liveTransform: LiveTransformData?
         public var liveTransformRequestID: UUID?
+        public var blendShapeRuntimeWeights: [BlendShapeRuntimeWeight]
+        public var blendShapeRuntimeRequestID: UUID?
         public var lastSuccessfulLoadCommand: LoadCommand?
         public var loadRequestID: UUID
         public var metersPerUnit: Double
@@ -71,6 +86,8 @@ public struct StageViewFeature {
             lastCompletedCommandID: UUID? = nil,
             liveTransform: LiveTransformData? = nil,
             liveTransformRequestID: UUID? = nil,
+            blendShapeRuntimeWeights: [BlendShapeRuntimeWeight] = [],
+            blendShapeRuntimeRequestID: UUID? = nil,
             lastSuccessfulLoadCommand: LoadCommand? = nil,
             loadRequestID: UUID = UUID(),
             metersPerUnit: Double = 1.0,
@@ -87,6 +104,8 @@ public struct StageViewFeature {
             self.lastCompletedCommandID = lastCompletedCommandID
             self.liveTransform = liveTransform
             self.liveTransformRequestID = liveTransformRequestID
+            self.blendShapeRuntimeWeights = blendShapeRuntimeWeights
+            self.blendShapeRuntimeRequestID = blendShapeRuntimeRequestID
             self.lastSuccessfulLoadCommand = lastSuccessfulLoadCommand
             self.loadRequestID = loadRequestID
             self.metersPerUnit = metersPerUnit
@@ -103,6 +122,8 @@ public struct StageViewFeature {
     public enum Action {
         /// Apply a live transform to the viewport (runtime only, not persisted)
         case applyLiveTransform(LiveTransformData)
+        /// Apply runtime blend-shape weights to the viewport (not persisted to USD)
+        case applyBlendShapeWeights([BlendShapeRuntimeWeight])
         case clearRequested
         case discreteStateReceived(RealityKitDiscreteSnapshot)
         case entityPicked(String?)
@@ -125,6 +146,11 @@ public struct StageViewFeature {
                 state.liveTransformRequestID = uuid()
                 return .none
 
+            case let .applyBlendShapeWeights(weights):
+                state.blendShapeRuntimeWeights = weights
+                state.blendShapeRuntimeRequestID = uuid()
+                return .none
+
             case .clearRequested:
                 state.activeLoadCommand = nil
                 state.cameraResetRequestID = nil
@@ -132,6 +158,8 @@ public struct StageViewFeature {
                 state.isZUp = false
                 state.lastSuccessfulLoadCommand = nil
                 state.loadRequestID = uuid()
+                state.blendShapeRuntimeWeights = []
+                state.blendShapeRuntimeRequestID = nil
                 state.metersPerUnit = 1.0
                 state.modelURL = nil
                 state.pendingSelection = nil
