@@ -51,14 +51,7 @@ public struct RealityKitStageView: View {
             } update: { content in
                 syncIBLState()
                 updateCamera(state: cameraState)
-
-                if runtime._resetCameraRequested {
-                    resetCameraInternal()
-                    Task { @MainActor in runtime._resetCameraRequested = false }
-                }
-                if runtime._frameSelectionRequested {
-                    Task { @MainActor in runtime._frameSelectionRequested = false }
-                }
+                processRuntimeViewRequests()
             }
             .overlay {
                 if let error = runtime.loadError {
@@ -345,6 +338,22 @@ public struct RealityKitStageView: View {
     private func updateCamera(state: ArcballCameraState) {
         guard let camera = rootEntity?.findEntity(named: "MainCamera") else { return }
         camera.transform.matrix = state.transform
+    }
+
+    private func processRuntimeViewRequests() {
+        let shouldResetCamera = runtime._resetCameraRequested
+        let shouldFrameSelection = runtime._frameSelectionRequested
+        guard shouldResetCamera || shouldFrameSelection else { return }
+
+        Task { @MainActor in
+            if shouldResetCamera {
+                runtime._resetCameraRequested = false
+                resetCameraInternal()
+            }
+            if shouldFrameSelection {
+                runtime._frameSelectionRequested = false
+            }
+        }
     }
 
     @MainActor
