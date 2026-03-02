@@ -101,6 +101,7 @@ public final class RealityKitProvider {
     internal var _resetCameraRequested: Bool = false
     internal var _frameSelectionRequested: Bool = false
     internal var _preserveCameraOnNextLoad: Bool = false
+    private var animationController: AnimationPlaybackController?
     private var discreteStateObservers = DiscreteStateObservers()
     
     /// Generation counter for stale-result detection
@@ -141,6 +142,7 @@ public final class RealityKitProvider {
             self.isLoaded = true
             buildPrimPathMapping(root: entity)
             updateBoundsFromModel(entity)
+            startEmbeddedAnimations(on: entity)
             emitDiscreteSnapshotIfNeeded()
         } catch {
             // Discard if generation changed
@@ -189,11 +191,13 @@ public final class RealityKitProvider {
         self.isLoaded = true
         buildPrimPathMapping(root: entity)
         updateBoundsFromModel(entity)
+        startEmbeddedAnimations(on: entity)
         emitDiscreteSnapshotIfNeeded()
     }
     
     /// Clear the current model
     public func teardown() {
+        stopEmbeddedAnimations()
         modelEntity = nil
         currentFileURL = nil
         isLoaded = false
@@ -282,6 +286,8 @@ public final class RealityKitProvider {
     /// This does NOT persist to USD.
     public func applyBlendShapeWeights(_ updates: [BlendShapeRuntimeWeight]) {
         guard !updates.isEmpty else { return }
+        // Runtime blend-shape editing and animation playback are mutually exclusive.
+        stopEmbeddedAnimations()
 
         for update in updates {
             guard let entity = resolveBlendShapeEntity(for: update.primPath) else { continue }
@@ -296,6 +302,25 @@ public final class RealityKitProvider {
             blendComp.weightSet = weightSet
             entity.components.set(blendComp)
         }
+    }
+
+    private func startEmbeddedAnimations(on entity: Entity) {
+        stopEmbeddedAnimations()
+
+        guard let animation = entity.availableAnimations.first else { return }
+
+        animationController = entity.playAnimation(
+            animation.repeat(),
+            transitionDuration: 0,
+            startsPaused: false
+        )
+
+        providerLogger.info("Started default embedded animation")
+    }
+
+    private func stopEmbeddedAnimations() {
+        animationController?.stop()
+        animationController = nil
     }
 }
 
