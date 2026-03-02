@@ -302,6 +302,7 @@ public struct RealityKitStageView: View {
 
         if let modelAnchor = anchor {
             modelAnchor.addChild(entity)
+            runtime.startEmbeddedAnimationsIfAvailable()
 
             prepareForPicking(entity)
 

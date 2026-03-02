@@ -142,7 +142,6 @@ public final class RealityKitProvider {
             self.isLoaded = true
             buildPrimPathMapping(root: entity)
             updateBoundsFromModel(entity)
-            startEmbeddedAnimations(on: entity)
             emitDiscreteSnapshotIfNeeded()
         } catch {
             // Discard if generation changed
@@ -191,7 +190,6 @@ public final class RealityKitProvider {
         self.isLoaded = true
         buildPrimPathMapping(root: entity)
         updateBoundsFromModel(entity)
-        startEmbeddedAnimations(on: entity)
         emitDiscreteSnapshotIfNeeded()
     }
     
@@ -304,23 +302,43 @@ public final class RealityKitProvider {
         }
     }
 
+    /// Start the default embedded animation from the first entity in the loaded
+    /// hierarchy that exposes `availableAnimations`.
+    public func startEmbeddedAnimationsIfAvailable() {
+        guard let modelEntity else { return }
+        startEmbeddedAnimations(on: modelEntity)
+    }
+
     private func startEmbeddedAnimations(on entity: Entity) {
         stopEmbeddedAnimations()
 
-        guard let animation = entity.availableAnimations.first else { return }
+        guard let target = firstAnimatedEntity(in: entity),
+              let animation = target.availableAnimations.first else { return }
 
-        animationController = entity.playAnimation(
+        animationController = target.playAnimation(
             animation.repeat(),
             transitionDuration: 0,
             startsPaused: false
         )
 
-        providerLogger.info("Started default embedded animation")
+        providerLogger.info("Started default embedded animation on \(target.name, privacy: .public)")
     }
 
     private func stopEmbeddedAnimations() {
         animationController?.stop()
         animationController = nil
+    }
+
+    private func firstAnimatedEntity(in entity: Entity) -> Entity? {
+        if !entity.availableAnimations.isEmpty {
+            return entity
+        }
+        for child in entity.children {
+            if let found = firstAnimatedEntity(in: child) {
+                return found
+            }
+        }
+        return nil
     }
 }
 
