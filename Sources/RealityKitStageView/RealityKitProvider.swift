@@ -28,6 +28,7 @@ public struct RealityKitDiscreteSnapshot: Equatable, Sendable {
     public let metersPerUnit: Double
     public let isZUp: Bool
     public let selectedPrimPath: String?
+    public let hasEmbeddedAnimation: Bool
     public let isUserInteraction: Bool
     public let isLoaded: Bool
 
@@ -36,6 +37,7 @@ public struct RealityKitDiscreteSnapshot: Equatable, Sendable {
         metersPerUnit: Double,
         isZUp: Bool,
         selectedPrimPath: String?,
+        hasEmbeddedAnimation: Bool = false,
         isUserInteraction: Bool = false,
         isLoaded: Bool
     ) {
@@ -43,6 +45,7 @@ public struct RealityKitDiscreteSnapshot: Equatable, Sendable {
         self.metersPerUnit = metersPerUnit
         self.isZUp = isZUp
         self.selectedPrimPath = selectedPrimPath
+        self.hasEmbeddedAnimation = hasEmbeddedAnimation
         self.isUserInteraction = isUserInteraction
         self.isLoaded = isLoaded
     }
@@ -102,6 +105,7 @@ public final class RealityKitProvider {
     internal var _frameSelectionRequested: Bool = false
     internal var _preserveCameraOnNextLoad: Bool = false
     private var animationController: AnimationPlaybackController?
+    public private(set) var hasEmbeddedAnimation: Bool = false
     private var discreteStateObservers = DiscreteStateObservers()
     
     /// Generation counter for stale-result detection
@@ -304,29 +308,53 @@ public final class RealityKitProvider {
 
     /// Start the default embedded animation from the first entity in the loaded
     /// hierarchy that exposes `availableAnimations`.
-    public func startEmbeddedAnimationsIfAvailable() {
+    public func startEmbeddedAnimationsIfAvailable(autoPlay: Bool = false) {
         guard let modelEntity else { return }
-        startEmbeddedAnimations(on: modelEntity)
+        startEmbeddedAnimations(on: modelEntity, autoPlay: autoPlay)
     }
 
-    private func startEmbeddedAnimations(on entity: Entity) {
+    private func startEmbeddedAnimations(on entity: Entity, autoPlay: Bool) {
         stopEmbeddedAnimations()
 
         guard let target = firstAnimatedEntity(in: entity),
               let animation = target.availableAnimations.first else { return }
 
+        hasEmbeddedAnimation = true
+
         animationController = target.playAnimation(
             animation.repeat(),
             transitionDuration: 0,
-            startsPaused: false
+            startsPaused: !autoPlay
         )
 
-        providerLogger.info("Started default embedded animation on \(target.name, privacy: .public)")
+        if autoPlay {
+            providerLogger.info("Started embedded animation playback on \(target.name, privacy: .public)")
+        } else {
+            providerLogger.info("Prepared embedded animation (paused) on \(target.name, privacy: .public)")
+        }
+        emitDiscreteSnapshotIfNeeded()
     }
 
     private func stopEmbeddedAnimations() {
         animationController?.stop()
         animationController = nil
+        hasEmbeddedAnimation = false
+        emitDiscreteSnapshotIfNeeded()
+    }
+
+    public func setEmbeddedAnimationPlayback(isPlaying: Bool) {
+        guard let animationController else { return }
+        if isPlaying {
+            animationController.resume()
+        } else {
+            animationController.pause()
+        }
+    }
+
+    public func scrubEmbeddedAnimation(to seconds: TimeInterval) {
+        guard let animationController else { return }
+        animationController.pause()
+        animationController.time = max(0, seconds)
     }
 
     private func firstAnimatedEntity(in entity: Entity) -> Entity? {
@@ -374,6 +402,7 @@ extension RealityKitProvider {
             metersPerUnit: metersPerUnit,
             isZUp: isZUp,
             selectedPrimPath: selectedPrimPath,
+            hasEmbeddedAnimation: hasEmbeddedAnimation,
             isUserInteraction: isUserInteraction,
             isLoaded: isLoaded
         )

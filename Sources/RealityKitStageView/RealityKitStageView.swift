@@ -13,6 +13,8 @@ private typealias PlatformColor = UIColor
 #endif
 
 private let logger = Logger(subsystem: "RealityKitStageView", category: "Viewport")
+private let preflightRealityKitAnimationTimeNotification = Notification.Name("preflight.realitykit.animation.time")
+private let preflightRealityKitAnimationPlaybackNotification = Notification.Name("preflight.realitykit.animation.playback")
 
 public struct RealityKitStageView: View {
     @State private var runtime: RealityKitProvider
@@ -65,6 +67,28 @@ public struct RealityKitStageView: View {
             for await snapshot in runtime.observeDiscreteState() {
                 await MainActor.run {
                     _ = store.send(.discreteStateReceived(snapshot))
+                }
+            }
+        }
+        .task {
+            for await notification in NotificationCenter.default.notifications(
+                named: preflightRealityKitAnimationPlaybackNotification
+            ) {
+                guard let userInfo = notification.userInfo,
+                      let isPlaying = userInfo["isPlaying"] as? Bool else { continue }
+                await MainActor.run {
+                    runtime.setEmbeddedAnimationPlayback(isPlaying: isPlaying)
+                }
+            }
+        }
+        .task {
+            for await notification in NotificationCenter.default.notifications(
+                named: preflightRealityKitAnimationTimeNotification
+            ) {
+                guard let userInfo = notification.userInfo,
+                      let seconds = userInfo["seconds"] as? Double else { continue }
+                await MainActor.run {
+                    runtime.scrubEmbeddedAnimation(to: seconds)
                 }
             }
         }
@@ -295,7 +319,7 @@ public struct RealityKitStageView: View {
 
         if let modelAnchor = anchor {
             modelAnchor.addChild(entity)
-            runtime.startEmbeddedAnimationsIfAvailable()
+            runtime.startEmbeddedAnimationsIfAvailable(autoPlay: false)
 
             prepareForPicking(entity)
 
@@ -384,21 +408,131 @@ public struct RealityKitStageView: View {
 
         guard let target = runtime.entity(for: path) else { return }
 
-        func applyOutline(to entity: Entity) {
-            if entity.name == SelectionOutlineSystem.outlineEntityName { return }
+        switch configuration.selectionHighlightStyle {
+        case .none:
+            return
+        case .outline:
+            applyOutline(to: target)
+        case .boundingBox:
+            applyBoundingBox(to: target)
+        }
+    }
 
-            if entity.components.has(ModelComponent.self) {
-                entity.components.set(
-                    SelectionOutlineComponent(configuration: configuration.outlineConfiguration)
+    @MainActor
+    private func applyOutline(to entity: Entity) {
+        if entity.name == SelectionOutlineSystem.outlineEntityName { return }
+
+        if entity.components.has(ModelComponent.self) {
+            entity.components.set(
+                SelectionOutlineComponent(configuration: configuration.outlineConfiguration)
+            )
+            outlinedEntityIDs.insert(entity.id)
+        }
+        for child in entity.children {
+            applyOutline(to: child)
+        }
+    }
+
+    @MainActor
+    private func applyBoundingBox(to target: Entity) {
+        guard let root = rootEntity else { return }
+
+        let bounds = target.visualBounds(relativeTo: root)
+        let extents = bounds.extents
+        guard extents.isFinite else { return }
+
+        let maxExtent = Swift.max(extents.x, Swift.max(extents.y, extents.z))
+        guard maxExtent > 0.0001 else { return }
+
+        let edgeThickness = Swift.max(0.0015, maxExtent * 0.0075)
+        let halfX = Swift.max(extents.x * 0.5, edgeThickness * 0.5)
+        let halfY = Swift.max(extents.y * 0.5, edgeThickness * 0.5)
+        let halfZ = Swift.max(extents.z * 0.5, edgeThickness * 0.5)
+
+        let xLength = Swift.max(extents.x, edgeThickness)
+        let yLength = Swift.max(extents.y, edgeThickness)
+        let zLength = Swift.max(extents.z, edgeThickness)
+
+        var material = UnlitMaterial()
+        material.color = .init(tint: selectionTintColor(alpha: 0.95))
+
+        let xEdgeMesh = MeshResource.generateBox(
+            width: xLength,
+            height: edgeThickness,
+            depth: edgeThickness
+        )
+        let yEdgeMesh = MeshResource.generateBox(
+            width: edgeThickness,
+            height: yLength,
+            depth: edgeThickness
+        )
+        let zEdgeMesh = MeshResource.generateBox(
+            width: edgeThickness,
+            height: edgeThickness,
+            depth: zLength
+        )
+
+        let cage = Entity()
+        cage.name = "__selectionBounds__"
+        cage.position = bounds.center
+
+        let signs: [Float] = [-1, 1]
+        for sy in signs {
+            for sz in signs {
+                addEdge(
+                    to: cage,
+                    mesh: xEdgeMesh,
+                    material: material,
+                    position: SIMD3<Float>(0, sy * halfY, sz * halfZ)
                 )
-                outlinedEntityIDs.insert(entity.id)
             }
-            for child in entity.children {
-                applyOutline(to: child)
+        }
+        for sx in signs {
+            for sz in signs {
+                addEdge(
+                    to: cage,
+                    mesh: yEdgeMesh,
+                    material: material,
+                    position: SIMD3<Float>(sx * halfX, 0, sz * halfZ)
+                )
+            }
+        }
+        for sx in signs {
+            for sy in signs {
+                addEdge(
+                    to: cage,
+                    mesh: zEdgeMesh,
+                    material: material,
+                    position: SIMD3<Float>(sx * halfX, sy * halfY, 0)
+                )
             }
         }
 
-        applyOutline(to: target)
+        root.addChild(cage)
+        selectionHighlightEntity = cage
+    }
+
+    @MainActor
+    private func addEdge(
+        to parent: Entity,
+        mesh: MeshResource,
+        material: UnlitMaterial,
+        position: SIMD3<Float>
+    ) {
+        let edge = Entity()
+        edge.components.set(ModelComponent(mesh: mesh, materials: [material]))
+        edge.position = position
+        parent.addChild(edge)
+    }
+
+    private func selectionTintColor(alpha: CGFloat) -> PlatformColor {
+        let resolved = configuration.outlineConfiguration.color.resolve(in: EnvironmentValues())
+        return PlatformColor(
+            red: CGFloat(resolved.red),
+            green: CGFloat(resolved.green),
+            blue: CGFloat(resolved.blue),
+            alpha: alpha
+        )
     }
 
     @MainActor
@@ -556,5 +690,11 @@ public struct RealityKitStageView: View {
 fileprivate extension SIMD4 where Scalar == Float {
     var isFinite: Bool {
         x.isFinite && y.isFinite && z.isFinite && w.isFinite
+    }
+}
+
+fileprivate extension SIMD3 where Scalar == Float {
+    var isFinite: Bool {
+        x.isFinite && y.isFinite && z.isFinite
     }
 }
