@@ -477,6 +477,46 @@ extension RealityKitProvider {
         guard let entityID = primPathToEntityID[primPath] else { return nil }
         return findEntity(byID: entityID, in: root)
     }
+
+    /// Resolve a USD prim path to the closest selectable RealityKit entity.
+    ///
+    /// This is more tolerant than `entity(for:)` and is intended for selection
+    /// visualization when Hydra and RealityKit importer hierarchies diverge.
+    public func selectionEntity(for primPath: String) -> Entity? {
+        let normalized = normalizePrimPath(primPath)
+        guard !normalized.isEmpty else { return nil }
+
+        if let exact = entity(for: normalized) {
+            return exact
+        }
+
+        if let ancestorPath = nearestAncestorMappedPath(for: normalized),
+           let ancestor = entity(for: ancestorPath) {
+            return ancestor
+        }
+
+        for shiftedPath in droppedLeadingSegmentCandidates(for: normalized) {
+            if let direct = entity(for: shiftedPath) {
+                return direct
+            }
+            if let ancestorPath = nearestAncestorMappedPath(for: shiftedPath),
+               let ancestor = entity(for: ancestorPath) {
+                return ancestor
+            }
+        }
+
+        if let descendantPath = nearestDescendantMappedPath(for: normalized),
+           let descendant = entity(for: descendantPath) {
+            return descendant
+        }
+
+        if let suffixPath = bestSuffixMatchPath(for: normalized),
+           let suffix = entity(for: suffixPath) {
+            return suffix
+        }
+
+        return nil
+    }
     
     /// Get the USD prim path for an entity.
     public func primPath(for entity: Entity) -> String? {
@@ -531,6 +571,92 @@ extension RealityKitProvider {
             if let found = findEntity(byID: id, in: child) { return found }
         }
         return nil
+    }
+
+    private func normalizePrimPath(_ primPath: String) -> String {
+        let trimmed = primPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let withLeadingSlash = trimmed.hasPrefix("/") ? trimmed : "/\(trimmed)"
+        if withLeadingSlash.count > 1, withLeadingSlash.hasSuffix("/") {
+            return String(withLeadingSlash.dropLast())
+        }
+        return withLeadingSlash
+    }
+
+    private func nearestAncestorMappedPath(for primPath: String) -> String? {
+        var cursor = primPath
+        while true {
+            if primPathToEntityID[cursor] != nil {
+                return cursor
+            }
+            guard let slash = cursor.lastIndex(of: "/"), slash != cursor.startIndex else {
+                return nil
+            }
+            cursor = String(cursor[..<slash])
+        }
+    }
+
+    private func droppedLeadingSegmentCandidates(for primPath: String) -> [String] {
+        let components = primPath.split(separator: "/")
+        guard components.count > 1 else { return [] }
+
+        var candidates: [String] = []
+        for index in 1..<components.count {
+            let suffix = components[index...].joined(separator: "/")
+            candidates.append("/\(suffix)")
+        }
+        return candidates
+    }
+
+    private func nearestDescendantMappedPath(for primPath: String) -> String? {
+        let prefix = primPath == "/" ? "/" : primPath + "/"
+        let requestedDepth = primPath.split(separator: "/").count
+
+        return primPathToEntityID.keys
+            .filter { $0.hasPrefix(prefix) }
+            .min { lhs, rhs in
+                let lhsDepth = lhs.split(separator: "/").count
+                let rhsDepth = rhs.split(separator: "/").count
+                let lhsDelta = abs(lhsDepth - requestedDepth)
+                let rhsDelta = abs(rhsDepth - requestedDepth)
+                if lhsDelta != rhsDelta { return lhsDelta < rhsDelta }
+                return lhs.count < rhs.count
+            }
+    }
+
+    private func bestSuffixMatchPath(for requestedPath: String) -> String? {
+        let requestedComponents = requestedPath.split(separator: "/").map(String.init)
+        guard let requestedLeaf = requestedComponents.last else { return nil }
+
+        let candidates = primPathToEntityID.keys.filter { path in
+            let comps = path.split(separator: "/")
+            guard let leaf = comps.last else { return false }
+            return leaf == requestedLeaf
+        }
+        guard !candidates.isEmpty else { return nil }
+
+        func suffixScore(_ candidate: String) -> Int {
+            let candidateComponents = candidate.split(separator: "/").map(String.init)
+            var score = 0
+            var i = requestedComponents.count - 1
+            var j = candidateComponents.count - 1
+            while i >= 0, j >= 0, requestedComponents[i] == candidateComponents[j] {
+                score += 1
+                i -= 1
+                j -= 1
+            }
+            return score
+        }
+
+        return candidates.max { lhs, rhs in
+            let lhsScore = suffixScore(lhs)
+            let rhsScore = suffixScore(rhs)
+            if lhsScore != rhsScore { return lhsScore < rhsScore }
+
+            let lhsDepth = lhs.split(separator: "/").count
+            let rhsDepth = rhs.split(separator: "/").count
+            return lhsDepth > rhsDepth
+        }
     }
 
     /// BlendShape prims can map to mesh entities, so we walk up path ancestry

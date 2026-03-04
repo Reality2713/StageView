@@ -406,7 +406,7 @@ public struct RealityKitStageView: View {
 
         guard let path = path, !path.isEmpty else { return }
 
-        guard let target = runtime.entity(for: path) else { return }
+        guard let target = runtime.selectionEntity(for: path) else { return }
 
         switch configuration.selectionHighlightStyle {
         case .none:
