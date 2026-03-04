@@ -436,7 +436,7 @@ public struct RealityKitStageView: View {
             }
 
             var iblComp = ImageBasedLightComponent(source: .single(resource))
-            iblComp.intensityExponent = Float(configuration.environmentExposure)
+            iblComp.intensityExponent = configuration.realityKitIntensityExponent
             iblComp.inheritsRotation = true
             ibl.components.set(iblComp)
 
@@ -477,14 +477,15 @@ public struct RealityKitStageView: View {
     private func updateIBLExposure(_ exposure: Float) {
         if let ibl = iblEntity,
            var iblComp = ibl.components[ImageBasedLightComponent.self] {
-            iblComp.intensityExponent = exposure
+            iblComp.intensityExponent =
+                RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: exposure)
             iblComp.inheritsRotation = true
             ibl.components.set(iblComp)
         }
 
         if let skybox = skyboxEntity,
            let model = skybox.components[ModelComponent.self] {
-            let intensity = powf(2.0, exposure)
+            let intensity = RealityKitConfiguration.hydraLinearExposureGain(forEV: exposure)
 
             var material = (model.materials.first as? UnlitMaterial) ?? UnlitMaterial()
             let color = PlatformColor(

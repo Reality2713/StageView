@@ -1,7 +1,7 @@
 import CoreGraphics
 import RealityKit
 
-/// IBL handling with proper exposure conversion (fixes the 10x brightness bug).
+/// IBL handling that follows Hydra's EV semantics (linear gain = 2^EV).
 public struct RealityKitIBL {
     @MainActor
     public static func applyEnvironment(
@@ -16,7 +16,7 @@ public struct RealityKitIBL {
         )
 
         var iblComp = ImageBasedLightComponent(source: .single(resource))
-        // FIX: Use converted exposure, not raw 1.0!
+        // Keep parity with Hydra EV model.
         iblComp.intensityExponent = configuration.realityKitIntensityExponent
         iblComp.inheritsRotation = true
         iblEntity.components.set(iblComp)

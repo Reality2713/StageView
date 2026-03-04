@@ -38,7 +38,22 @@ public struct RealityKitConfiguration: Sendable {
         self.outlineConfiguration = outlineConfiguration
     }
 
+    /// Hydra canonical EV model: linear gain = 2^EV.
+    public static func hydraLinearExposureGain(forEV ev: Float) -> Float {
+        powf(2.0, ev)
+    }
+
+    /// RealityKit's `intensityExponent` is EV-like (base-2 exponent), so this
+    /// maps 1:1 from Hydra EV.
+    public static func realityKitIntensityExponent(forHydraEV ev: Float) -> Float {
+        ev
+    }
+
+    public var hydraLinearExposureGain: Float {
+        Self.hydraLinearExposureGain(forEV: environmentExposure)
+    }
+
     public var realityKitIntensityExponent: Float {
-        return environmentExposure
+        Self.realityKitIntensityExponent(forHydraEV: environmentExposure)
     }
 }
