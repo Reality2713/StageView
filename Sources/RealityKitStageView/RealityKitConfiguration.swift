@@ -40,13 +40,22 @@ public struct RealityKitConfiguration: Sendable {
 
     /// Hydra canonical EV model: linear gain = 2^EV.
     public static func hydraLinearExposureGain(forEV ev: Float) -> Float {
-        powf(2.0, ev)
+        let rkEV = realityKitMappedEV(forHydraEV: ev)
+        return powf(2.0, rkEV)
     }
 
     /// RealityKit's `intensityExponent` is EV-like (base-2 exponent), so this
     /// maps 1:1 from Hydra EV.
     public static func realityKitIntensityExponent(forHydraEV ev: Float) -> Float {
-        ev
+        realityKitMappedEV(forHydraEV: ev)
+    }
+
+    /// RealityKit drifts at the slider's top end; compress only the tail while
+    /// keeping the rest aligned with Hydra EV.
+    private static func realityKitMappedEV(forHydraEV ev: Float) -> Float {
+        let softKneeStart: Float = 2.7
+        guard ev > softKneeStart else { return ev }
+        return softKneeStart + (ev - softKneeStart) * 0.5
     }
 
     public var hydraLinearExposureGain: Float {
