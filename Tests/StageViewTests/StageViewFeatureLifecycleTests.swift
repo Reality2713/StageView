@@ -7,57 +7,41 @@ import Testing
 @MainActor
 struct StageViewFeatureLifecycleTests {
     @Test
-    func replaysLastSuccessfulLoadOnViewAppear() async {
-        let url = URL(fileURLWithPath: "/tmp/model.usda")
-        let last = StageViewFeature.LoadCommand(
-            id: UUID(uuidString: "00000000-0000-0000-0000-000000000111")!,
-            mode: .fullLoad,
-            preserveCamera: false,
-            url: url
-        )
-
-        let store = TestStore(
-            initialState: StageViewFeature.State(
-                isLoaded: true,
-                lastCompletedCommandID: last.id,
-                lastSuccessfulLoadCommand: last,
-                modelURL: url
-            )
-        ) {
+    func entityPickDelegatesToAppWithoutMirroringRuntimeState() async {
+        let store = TestStore(initialState: StageViewFeature.State()) {
             StageViewFeature()
-        } withDependencies: {
-            $0.uuid = .incrementing
         }
 
-        await store.send(.viewAppeared) {
-            $0.viewIsMounted = true
-            let replayID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
-            $0.activeLoadCommand = .init(
-                id: replayID,
-                mode: .fullLoad,
-                preserveCamera: false,
-                url: url
-            )
-            $0.loadRequestID = replayID
-        }
+        await store.send(.entityPicked("/World/Cube"))
+        await store.receive(\.delegate)
     }
 
     @Test
-    func clearResetsReplayState() async {
+    func clearResetsOnlyCommandState() async {
         let url = URL(fileURLWithPath: "/tmp/model.usda")
-        let command = StageViewFeature.LoadCommand(
-            id: UUID(uuidString: "00000000-0000-0000-0000-000000000222")!,
-            mode: .fullLoad,
-            preserveCamera: false,
-            url: url
-        )
         let store = TestStore(
             initialState: StageViewFeature.State(
-                isLoaded: true,
-                lastCompletedCommandID: command.id,
-                lastSuccessfulLoadCommand: command,
-                loadRequestID: command.id,
-                modelURL: url
+                activeLoadCommand: .init(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000111")!,
+                    mode: .fullLoad,
+                    preserveCamera: false,
+                    url: url
+                ),
+                cameraResetRequestID: UUID(uuidString: "00000000-0000-0000-0000-000000000222")!,
+                liveTransform: .init(
+                    primPath: "/World/Cube",
+                    position: .zero,
+                    rotationDegrees: .zero,
+                    scale: SIMD3<Double>(repeating: 1)
+                ),
+                liveTransformRequestID: UUID(uuidString: "00000000-0000-0000-0000-000000000333")!,
+                blendShapeRuntimeWeights: [
+                    .init(primPath: "/World/Cube", weightIndex: 0, weight: 0.5)
+                ],
+                blendShapeRuntimeRequestID: UUID(uuidString: "00000000-0000-0000-0000-000000000444")!,
+                loadRequestID: UUID(uuidString: "00000000-0000-0000-0000-000000000555")!,
+                modelURL: url,
+                selectedPrimPath: "/World/Cube"
             )
         ) {
             StageViewFeature()
@@ -68,19 +52,13 @@ struct StageViewFeatureLifecycleTests {
         await store.send(.clearRequested) {
             $0.activeLoadCommand = nil
             $0.cameraResetRequestID = nil
-            $0.isLoaded = false
-            $0.isZUp = false
-            $0.lastSuccessfulLoadCommand = nil
+            $0.liveTransform = nil
+            $0.liveTransformRequestID = nil
+            $0.blendShapeRuntimeWeights = []
+            $0.blendShapeRuntimeRequestID = nil
             $0.loadRequestID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
-            $0.metersPerUnit = 1.0
             $0.modelURL = nil
-            $0.pendingSelection = nil
-            $0.sceneBounds = SceneBounds()
             $0.selectedPrimPath = nil
         }
-
-        #expect(store.state.lastSuccessfulLoadCommand == nil)
-        #expect(store.state.modelURL == nil)
-        #expect(store.state.isLoaded == false)
     }
 }

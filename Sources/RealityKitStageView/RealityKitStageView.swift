@@ -65,8 +65,9 @@ public struct RealityKitStageView: View {
         }
         .task {
             for await snapshot in runtime.observeDiscreteState() {
+                guard snapshot.isUserInteraction else { continue }
                 await MainActor.run {
-                    _ = store.send(.discreteStateReceived(snapshot))
+                    _ = store.send(.entityPicked(snapshot.selectedPrimPath))
                 }
             }
         }
@@ -119,12 +120,6 @@ public struct RealityKitStageView: View {
                 }
                 logger.error("Model load failed: \(error.localizedDescription, privacy: .public)")
             }
-        }
-        .onAppear {
-            _ = store.send(.viewAppeared)
-        }
-        .onDisappear {
-            _ = store.send(.viewDisappeared)
         }
         .onChange(of: store.selectedPrimPath) { _, newPath in
             Task { @MainActor in
@@ -179,14 +174,8 @@ public struct RealityKitStageView: View {
                 .onEnded { value in
                     if let path = runtime.nearestMappedPrimPath(from: value.entity) {
                         runtime.userDidPick(path)
-                        Task { @MainActor in
-                            _ = store.send(.entityPicked(path))
-                        }
                     } else {
                         runtime.userDidPick(nil)
-                        Task { @MainActor in
-                            _ = store.send(.entityPicked(nil))
-                        }
                     }
                 }
         )
@@ -194,9 +183,6 @@ public struct RealityKitStageView: View {
             SpatialTapGesture()
                 .onEnded { _ in
                     runtime.userDidPick(nil)
-                    Task { @MainActor in
-                        _ = store.send(.entityPicked(nil))
-                    }
                 }
         )
     }
