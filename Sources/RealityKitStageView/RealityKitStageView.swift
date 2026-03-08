@@ -17,7 +17,7 @@ private let preflightRealityKitAnimationTimeNotification = Notification.Name("pr
 private let preflightRealityKitAnimationPlaybackNotification = Notification.Name("preflight.realitykit.animation.playback")
 
 public struct RealityKitStageView: View {
-    @State private var runtime: RealityKitProvider
+    let runtime: RealityKitProvider
     var configuration: RealityKitConfiguration
     var store: StoreOf<StageViewFeature>
 
@@ -34,8 +34,12 @@ public struct RealityKitStageView: View {
         return Swift.max(1000.0, extent * 10.0)
     }
 
-    public init(store: StoreOf<StageViewFeature>, configuration: RealityKitConfiguration = RealityKitConfiguration()) {
-        self._runtime = State(initialValue: RealityKitProvider())
+    public init(
+        provider: RealityKitProvider,
+        store: StoreOf<StageViewFeature>,
+        configuration: RealityKitConfiguration = RealityKitConfiguration()
+    ) {
+        self.runtime = provider
         self.configuration = configuration
         self.store = store
     }
