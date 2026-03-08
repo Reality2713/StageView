@@ -27,6 +27,7 @@ public struct RealityKitStageView: View {
     @State private var cameraState = ArcballCameraState()
     @State private var selectionHighlightEntity: Entity?
     @State private var outlinedEntityIDs: Set<Entity.ID> = []
+    @State private var viewportInstanceID = UUID()
 
     private var environmentRadius: Double {
         let extent = Double(runtime.sceneBounds.maxExtent)
@@ -42,6 +43,7 @@ public struct RealityKitStageView: View {
     public var body: some View {
         ZStack {
             RealityView { content in
+                logger.debug("RealityView content mounted for viewport \(self.viewportInstanceID.uuidString, privacy: .public)")
                 let root = makeSceneRoot()
                 content.add(root)
                 self.rootEntity = root
@@ -96,6 +98,7 @@ public struct RealityKitStageView: View {
         .task(id: store.loadRequestID) {
             guard let command = store.activeLoadCommand else {
                 if store.modelURL == nil {
+                    logger.debug("Tearing down viewport \(self.viewportInstanceID.uuidString, privacy: .public) because modelURL is nil")
                     await MainActor.run {
                         runtime.teardown()
                     }
@@ -103,7 +106,9 @@ public struct RealityKitStageView: View {
                 return
             }
 
-            logger.info("Loading model: \(command.url.lastPathComponent, privacy: .public)")
+            logger.info(
+                "Viewport \(self.viewportInstanceID.uuidString, privacy: .public) loading model: \(command.url.lastPathComponent, privacy: .public) [\(String(describing: command.mode), privacy: .public)]"
+            )
             runtime.setPreserveCameraOnNextLoad(command.preserveCamera)
             do {
                 switch command.mode {
@@ -120,6 +125,12 @@ public struct RealityKitStageView: View {
                 }
                 logger.error("Model load failed: \(error.localizedDescription, privacy: .public)")
             }
+        }
+        .onAppear {
+            logger.debug("RealityKit viewport appeared: \(self.viewportInstanceID.uuidString, privacy: .public)")
+        }
+        .onDisappear {
+            logger.debug("RealityKit viewport disappeared: \(self.viewportInstanceID.uuidString, privacy: .public)")
         }
         .onChange(of: store.selectedPrimPath) { _, newPath in
             Task { @MainActor in
