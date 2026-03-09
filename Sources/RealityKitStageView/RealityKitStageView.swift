@@ -89,6 +89,11 @@ public struct RealityKitStageView: View {
 
     @ViewBuilder
     private var observedViewport: some View {
+        observedViewportMetadata
+    }
+
+    @ViewBuilder
+    private var observedViewportLifecycle: some View {
         taskBoundViewport
         .onAppear {
             logger.debug("RealityKit viewport appeared: \(self.viewportInstanceID.uuidString, privacy: .public)")
@@ -119,6 +124,11 @@ public struct RealityKitStageView: View {
         .onChange(of: runtime.selectedPrimPath) { _, newPath in
             updateSelectionHighlight(for: newPath)
         }
+    }
+
+    @ViewBuilder
+    private var observedViewportEnvironment: some View {
+        observedViewportLifecycle
         .onChange(of: configuration.environmentMapURL) { _, newValue in
             Task { await updateEnvironment(newValue) }
         }
@@ -128,7 +138,25 @@ public struct RealityKitStageView: View {
         .onChange(of: configuration.environmentExposure) { _, _ in
             updateIBLLightIntensity()
         }
+        .onChange(of: configuration.environmentRotation) { _, newValue in
+            updateIBLRotation(newValue)
+        }
+    }
+
+    @ViewBuilder
+    private var observedViewportMetadata: some View {
+        observedViewportEnvironment
         .onChange(of: configuration.showGrid) { _, _ in
+            refreshGrid()
+        }
+        .onChange(of: configuration.metersPerUnit) { _, newValue in
+            let safeMetersPerUnit = newValue > 0 ? newValue : 1.0
+            runtime.updateSceneMetadata(metersPerUnit: safeMetersPerUnit, isZUp: configuration.isZUp)
+            refreshGrid()
+            updateCamera(state: cameraState)
+        }
+        .onChange(of: configuration.isZUp) { _, newValue in
+            runtime.updateSceneMetadata(metersPerUnit: configuration.metersPerUnit, isZUp: newValue)
             refreshGrid()
         }
         .onChange(of: runtime.sceneBounds) { _, _ in
@@ -136,9 +164,6 @@ public struct RealityKitStageView: View {
         }
         .onChange(of: colorScheme) { _, _ in
             refreshGrid()
-        }
-        .onChange(of: configuration.environmentRotation) { _, newValue in
-            updateIBLRotation(newValue)
         }
         .onChange(of: cameraState) { _, newState in
             runtime.updateCameraState(rotation: newState.quaternion, distance: newState.distance)
@@ -304,6 +329,10 @@ public struct RealityKitStageView: View {
     @MainActor
     private func makeSceneRoot() -> Entity {
         SelectionOutlineSystem.registerSystem()
+        runtime.updateSceneMetadata(
+            metersPerUnit: configuration.metersPerUnit,
+            isZUp: configuration.isZUp
+        )
 
         let root = Entity()
         root.name = "SceneRoot"

@@ -75,7 +75,7 @@ enum ViewportTuning {
     }
 
     static func gridRadiusMeters(worldExtentMeters: Double) -> Double {
-        Swift.max(5.0, worldExtentMeters * 1.75)
+        Swift.max(0.25, worldExtentMeters * 1.75)
     }
 
     static func minorGridStepMeters(forGridRadius radiusMeters: Double) -> Double {

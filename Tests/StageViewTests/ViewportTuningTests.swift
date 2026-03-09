@@ -33,7 +33,8 @@ struct ViewportTuningTests {
         let smallRadius = ViewportTuning.gridRadiusMeters(worldExtentMeters: 0.05)
         let largeRadius = ViewportTuning.gridRadiusMeters(worldExtentMeters: 20.0)
 
-        #expect(smallRadius >= 5.0)
+        #expect(smallRadius >= 0.25)
+        #expect(smallRadius < 5.0)
         #expect(largeRadius > smallRadius)
         #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 4.0) == 0.1)
         #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 40.0) == 0.5)

@@ -43,13 +43,19 @@ public struct RealityKitGrid {
         gridRoot.position = offsetPosition(upAxis, offset: -Float(0.001 / safeMpu))
 
         let palette = GridPalette(appearance: appearance)
-        let minorThickness = max(Float(0.001 / safeMpu), step * 0.02)
-        let axisThickness = minorThickness * 2.6
+        let axisMarkerLengthMeters = min(
+            max(worldExtent * 1.5, 0.1),
+            radiusMeters * 0.6
+        )
+        let minorThickness = max(Float(0.0002 / safeMpu), min(step * 0.01, extent * 0.0025))
+        let majorThickness = max(minorThickness * 1.6, min(step * 0.016, extent * 0.004))
+        let planeAxisThickness = max(majorThickness * 1.4, min(step * 0.024, extent * 0.006))
+        let upAxisThickness = max(majorThickness, min(step * 0.012, extent * 0.003))
 
         for i in -lineCount...lineCount {
             let offset = Float(i) * step
             let distanceRatio = Float(abs(i)) / Float(max(lineCount, 1))
-            let isAxisLine = i == 0
+            let isAxisLine = false
             let isMajor = (abs(i) % majorEvery) == 0
 
             let lineStyle = material(
@@ -57,7 +63,10 @@ public struct RealityKitGrid {
                 isMajor: isMajor,
                 distanceRatio: distanceRatio,
                 axis: planeAxisA,
-                palette: palette
+                palette: palette,
+                minorThickness: minorThickness,
+                majorThickness: majorThickness,
+                axisThickness: planeAxisThickness
             )
             let lineA = Entity()
             lineA.components.set(ModelComponent(
@@ -72,7 +81,10 @@ public struct RealityKitGrid {
                 isMajor: isMajor,
                 distanceRatio: distanceRatio,
                 axis: planeAxisB,
-                palette: palette
+                palette: palette,
+                minorThickness: minorThickness,
+                majorThickness: majorThickness,
+                axisThickness: planeAxisThickness
             )
             let lineB = Entity()
             lineB.components.set(ModelComponent(
@@ -83,13 +95,26 @@ public struct RealityKitGrid {
             gridRoot.addChild(lineB)
         }
 
-        let upAxisLen = extent * 0.5
+        let axisMarkerLength = Float(axisMarkerLengthMeters / safeMpu)
+        let xAxisEntity = Entity()
+        xAxisEntity.components.set(ModelComponent(
+            mesh: lineMesh(length: axisMarkerLength, thickness: planeAxisThickness, axis: .x),
+            materials: [palette.xAxis]
+        ))
+        gridRoot.addChild(xAxisEntity)
+
+        let floorSecondaryAxisEntity = Entity()
+        floorSecondaryAxisEntity.components.set(ModelComponent(
+            mesh: lineMesh(length: axisMarkerLength, thickness: planeAxisThickness, axis: planeAxisB),
+            materials: [axisMaterial(for: planeAxisB, palette: palette)]
+        ))
+        gridRoot.addChild(floorSecondaryAxisEntity)
+
         let upAxisEntity = Entity()
         upAxisEntity.components.set(ModelComponent(
-            mesh: lineMesh(length: upAxisLen, thickness: axisThickness, axis: upAxis),
+            mesh: lineMesh(length: axisMarkerLength, thickness: upAxisThickness, axis: upAxis),
             materials: [axisMaterial(for: upAxis, palette: palette)]
         ))
-        upAxisEntity.position = offsetPosition(upAxis, offset: upAxisLen / 2)
         gridRoot.addChild(upAxisEntity)
 
         return gridRoot
@@ -100,20 +125,23 @@ public struct RealityKitGrid {
         isMajor: Bool,
         distanceRatio: Float,
         axis: Axis,
-        palette: GridPalette
+        palette: GridPalette,
+        minorThickness: Float,
+        majorThickness: Float,
+        axisThickness: Float
     ) -> (material: UnlitMaterial, thickness: Float) {
         if isAxisLine {
-            return (axisMaterial(for: axis, palette: palette), palette.axisThickness)
+            return (axisMaterial(for: axis, palette: palette), axisThickness)
         }
         if isMajor {
             return (
                 distanceRatio > 0.72 ? palette.majorFar : palette.majorNear,
-                palette.majorThickness
+                majorThickness
             )
         }
         return (
             distanceRatio > 0.72 ? palette.minorFar : palette.minorNear,
-            palette.minorThickness
+            minorThickness
         )
     }
 
@@ -160,15 +188,7 @@ private struct GridPalette {
     let xAxis: UnlitMaterial
     let yAxis: UnlitMaterial
     let zAxis: UnlitMaterial
-    let minorThickness: Float
-    let majorThickness: Float
-    let axisThickness: Float
-
     init(appearance: ViewportAppearance) {
-        minorThickness = 0.002
-        majorThickness = 0.0036
-        axisThickness = 0.0052
-
         switch appearance {
         case .light:
             minorNear = UnlitMaterial(color: PlatformColor(white: 0.42, alpha: 0.18))

@@ -196,6 +196,16 @@ public final class RealityKitProvider {
         updateBoundsFromModel(entity)
         emitDiscreteSnapshotIfNeeded()
     }
+
+    /// Update scene metadata independently from URL/entity load.
+    /// This keeps viewport policy in sync when authored metadata changes mid-session.
+    public func updateSceneMetadata(metersPerUnit: Double, isZUp: Bool) {
+        let safeMetersPerUnit = metersPerUnit > 0 ? metersPerUnit : 1.0
+        guard self.metersPerUnit != safeMetersPerUnit || self.isZUp != isZUp else { return }
+        self.metersPerUnit = safeMetersPerUnit
+        self.isZUp = isZUp
+        emitDiscreteSnapshotIfNeeded()
+    }
     
     /// Clear the current model
     public func teardown() {
