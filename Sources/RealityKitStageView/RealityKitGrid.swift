@@ -1,6 +1,13 @@
 import RealityKit
+#if os(macOS)
+import AppKit
+private typealias PlatformColor = NSColor
+#elseif os(iOS) || os(visionOS)
+import UIKit
+private typealias PlatformColor = UIColor
+#endif
 
-/// Dynamic grid with scale awareness that matches Hydra renderer behavior.
+/// Dynamic grid with fixed real-world major spacing and adaptive extent.
 public struct RealityKitGrid {
     private enum Axis {
         case x
@@ -12,7 +19,8 @@ public struct RealityKitGrid {
     public static func createGridEntity(
         metersPerUnit: Double,
         worldExtent: Double,
-        isZUp: Bool
+        isZUp: Bool,
+        appearance: ViewportAppearance
     ) -> Entity {
         let gridRoot = Entity()
         gridRoot.name = "ReferenceGrid"
@@ -21,82 +29,65 @@ public struct RealityKitGrid {
         let planeAxisA: Axis = .x
         let planeAxisB: Axis = isZUp ? .y : .z
 
-        // Position slightly below ground to prevent z-fighting
-        gridRoot.position = offsetPosition(upAxis, offset: -0.001)
+        let safeMpu = metersPerUnit > 0 ? metersPerUnit : 1.0
+        let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtent)
+        let minorStepMeters = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
+        let majorStepMeters = 1.0
+        let majorEvery = max(1, Int((majorStepMeters / minorStepMeters).rounded()))
+        let lineCount = max(1, Int(ceil(radiusMeters / minorStepMeters)))
 
-        let mpu = metersPerUnit > 0 ? metersPerUnit : 0.01
-        let oneMeter = Float(1.0 / mpu)  // Scene units per real meter
+        let extent = Float(radiusMeters / safeMpu)
+        let step = Float(minorStepMeters / safeMpu)
 
-        // Extend grid based on world size (min 10m, or 1.5x scene)
-        let radiusMeters = Float(max(10.0, worldExtent * mpu * 1.5))
-        let unitCount = Int(ceil(radiusMeters))
-        let axisLen = Float(unitCount) * oneMeter
+        // Position slightly below ground to prevent z-fighting.
+        gridRoot.position = offsetPosition(upAxis, offset: -Float(0.001 / safeMpu))
 
-        // Materials
-        let gridMaterial = UnlitMaterial(color: .gray.withAlphaComponent(0.3))
-        let xAxisMaterial = UnlitMaterial(color: .red.withAlphaComponent(0.8))
-        let yAxisMaterial = UnlitMaterial(color: .green.withAlphaComponent(0.8))
-        let zAxisMaterial = UnlitMaterial(color: .blue.withAlphaComponent(0.8))
+        let palette = GridPalette(appearance: appearance)
+        let minorThickness = max(Float(0.001 / safeMpu), step * 0.02)
+        let axisThickness = minorThickness * 2.6
 
-        let lineThickness: Float = 0.002
-
-        // Grid lines along planeAxisA (offset along planeAxisB)
-        for i in -unitCount...unitCount {
-            let offset = Float(i) * oneMeter
+        for i in -lineCount...lineCount {
+            let offset = Float(i) * step
+            let distanceRatio = Float(abs(i)) / Float(max(lineCount, 1))
             let isAxisLine = i == 0
+            let isMajor = (abs(i) % majorEvery) == 0
 
-            let material = isAxisLine
-                ? axisMaterial(
-                    for: planeAxisA,
-                    xAxisMaterial: xAxisMaterial,
-                    yAxisMaterial: yAxisMaterial,
-                    zAxisMaterial: zAxisMaterial
-                )
-                : gridMaterial
-
-            let entity = Entity()
-            entity.components.set(ModelComponent(
-                mesh: lineMesh(length: axisLen * 2, thickness: lineThickness, axis: planeAxisA),
-                materials: [material]
+            let lineStyle = material(
+                isAxisLine: isAxisLine,
+                isMajor: isMajor,
+                distanceRatio: distanceRatio,
+                axis: planeAxisA,
+                palette: palette
+            )
+            let lineA = Entity()
+            lineA.components.set(ModelComponent(
+                mesh: lineMesh(length: extent * 2, thickness: lineStyle.thickness, axis: planeAxisA),
+                materials: [lineStyle.material]
             ))
-            entity.position = offsetPosition(planeAxisB, offset: offset)
-            gridRoot.addChild(entity)
+            lineA.position = offsetPosition(planeAxisB, offset: offset)
+            gridRoot.addChild(lineA)
+
+            let lineStyleB = material(
+                isAxisLine: isAxisLine,
+                isMajor: isMajor,
+                distanceRatio: distanceRatio,
+                axis: planeAxisB,
+                palette: palette
+            )
+            let lineB = Entity()
+            lineB.components.set(ModelComponent(
+                mesh: lineMesh(length: extent * 2, thickness: lineStyleB.thickness, axis: planeAxisB),
+                materials: [lineStyleB.material]
+            ))
+            lineB.position = offsetPosition(planeAxisA, offset: offset)
+            gridRoot.addChild(lineB)
         }
 
-        // Grid lines along planeAxisB (offset along planeAxisA)
-        for i in -unitCount...unitCount {
-            let offset = Float(i) * oneMeter
-            let isAxisLine = i == 0
-
-            let material = isAxisLine
-                ? axisMaterial(
-                    for: planeAxisB,
-                    xAxisMaterial: xAxisMaterial,
-                    yAxisMaterial: yAxisMaterial,
-                    zAxisMaterial: zAxisMaterial
-                )
-                : gridMaterial
-
-            let entity = Entity()
-            entity.components.set(ModelComponent(
-                mesh: lineMesh(length: axisLen * 2, thickness: lineThickness, axis: planeAxisB),
-                materials: [material]
-            ))
-            entity.position = offsetPosition(planeAxisA, offset: offset)
-            gridRoot.addChild(entity)
-        }
-
-        // Up axis line
-        let upAxisLen = axisLen * 0.5
+        let upAxisLen = extent * 0.5
         let upAxisEntity = Entity()
         upAxisEntity.components.set(ModelComponent(
-            mesh: lineMesh(length: upAxisLen, thickness: lineThickness, axis: upAxis),
-            materials: [axisMaterial(
-                for: upAxis,
-                xAxisMaterial: xAxisMaterial,
-                yAxisMaterial: yAxisMaterial,
-                zAxisMaterial: zAxisMaterial
-            )]
+            mesh: lineMesh(length: upAxisLen, thickness: axisThickness, axis: upAxis),
+            materials: [axisMaterial(for: upAxis, palette: palette)]
         ))
         upAxisEntity.position = offsetPosition(upAxis, offset: upAxisLen / 2)
         gridRoot.addChild(upAxisEntity)
@@ -104,6 +95,29 @@ public struct RealityKitGrid {
         return gridRoot
     }
 
+    private static func material(
+        isAxisLine: Bool,
+        isMajor: Bool,
+        distanceRatio: Float,
+        axis: Axis,
+        palette: GridPalette
+    ) -> (material: UnlitMaterial, thickness: Float) {
+        if isAxisLine {
+            return (axisMaterial(for: axis, palette: palette), palette.axisThickness)
+        }
+        if isMajor {
+            return (
+                distanceRatio > 0.72 ? palette.majorFar : palette.majorNear,
+                palette.majorThickness
+            )
+        }
+        return (
+            distanceRatio > 0.72 ? palette.minorFar : palette.minorNear,
+            palette.minorThickness
+        )
+    }
+
+    @MainActor
     private static func lineMesh(length: Float, thickness: Float, axis: Axis) -> MeshResource {
         switch axis {
         case .x:
@@ -115,19 +129,14 @@ public struct RealityKitGrid {
         }
     }
 
-    private static func axisMaterial(
-        for axis: Axis,
-        xAxisMaterial: UnlitMaterial,
-        yAxisMaterial: UnlitMaterial,
-        zAxisMaterial: UnlitMaterial
-    ) -> UnlitMaterial {
+    private static func axisMaterial(for axis: Axis, palette: GridPalette) -> UnlitMaterial {
         switch axis {
         case .x:
-            return xAxisMaterial
+            return palette.xAxis
         case .y:
-            return yAxisMaterial
+            return palette.yAxis
         case .z:
-            return zAxisMaterial
+            return palette.zAxis
         }
     }
 
@@ -139,6 +148,44 @@ public struct RealityKitGrid {
             return SIMD3<Float>(0, offset, 0)
         case .z:
             return SIMD3<Float>(0, 0, offset)
+        }
+    }
+}
+
+private struct GridPalette {
+    let minorNear: UnlitMaterial
+    let minorFar: UnlitMaterial
+    let majorNear: UnlitMaterial
+    let majorFar: UnlitMaterial
+    let xAxis: UnlitMaterial
+    let yAxis: UnlitMaterial
+    let zAxis: UnlitMaterial
+    let minorThickness: Float
+    let majorThickness: Float
+    let axisThickness: Float
+
+    init(appearance: ViewportAppearance) {
+        minorThickness = 0.002
+        majorThickness = 0.0036
+        axisThickness = 0.0052
+
+        switch appearance {
+        case .light:
+            minorNear = UnlitMaterial(color: PlatformColor(white: 0.42, alpha: 0.18))
+            minorFar = UnlitMaterial(color: PlatformColor(white: 0.58, alpha: 0.08))
+            majorNear = UnlitMaterial(color: PlatformColor(white: 0.28, alpha: 0.26))
+            majorFar = UnlitMaterial(color: PlatformColor(white: 0.38, alpha: 0.14))
+            xAxis = UnlitMaterial(color: PlatformColor(red: 0.74, green: 0.18, blue: 0.18, alpha: 0.82))
+            yAxis = UnlitMaterial(color: PlatformColor(red: 0.18, green: 0.62, blue: 0.18, alpha: 0.82))
+            zAxis = UnlitMaterial(color: PlatformColor(red: 0.18, green: 0.38, blue: 0.82, alpha: 0.82))
+        case .dark:
+            minorNear = UnlitMaterial(color: PlatformColor(white: 0.56, alpha: 0.26))
+            minorFar = UnlitMaterial(color: PlatformColor(white: 0.46, alpha: 0.12))
+            majorNear = UnlitMaterial(color: PlatformColor(white: 0.72, alpha: 0.34))
+            majorFar = UnlitMaterial(color: PlatformColor(white: 0.62, alpha: 0.18))
+            xAxis = UnlitMaterial(color: PlatformColor(red: 0.92, green: 0.24, blue: 0.24, alpha: 0.92))
+            yAxis = UnlitMaterial(color: PlatformColor(red: 0.24, green: 0.82, blue: 0.24, alpha: 0.92))
+            zAxis = UnlitMaterial(color: PlatformColor(red: 0.24, green: 0.46, blue: 0.96, alpha: 0.92))
         }
     }
 }
