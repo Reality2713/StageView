@@ -7,7 +7,8 @@ import UIKit
 private typealias PlatformColor = UIColor
 #endif
 
-/// Dynamic grid with fixed real-world major spacing and adaptive extent.
+/// Dynamic grid with fixed real-world major spacing, smooth distance fade, and
+/// hairline axis markers inspired by Reality Composer Pro / Blender / Plasticity.
 public struct RealityKitGrid {
     private enum Axis {
         case x
@@ -43,76 +44,70 @@ public struct RealityKitGrid {
         gridRoot.position = offsetPosition(upAxis, offset: -Float(0.001 / safeMpu))
 
         let palette = GridPalette(appearance: appearance)
+
+        // Axis markers: proportional but capped to stay subtle.
         let axisMarkerLengthMeters = min(
             max(worldExtent * 1.5, 0.1),
             radiusMeters * 0.6
         )
+
+        // --- Thickness ---
+        // Grid lines: keep existing adaptive logic.
         let minorThickness = max(Float(0.0002 / safeMpu), min(step * 0.01, extent * 0.0025))
         let majorThickness = max(minorThickness * 1.6, min(step * 0.016, extent * 0.004))
-        let planeAxisThickness = max(majorThickness * 1.4, min(step * 0.024, extent * 0.006))
-        let upAxisThickness = max(majorThickness, min(step * 0.012, extent * 0.003))
+        // Axis markers: hairline — just slightly thicker than major grid lines.
+        let axisThickness = max(majorThickness * 1.2, min(step * 0.012, extent * 0.003))
 
+        // --- Grid lines with smooth distance fade ---
+        let fadeBands = palette.fadeBands
         for i in -lineCount...lineCount {
             let offset = Float(i) * step
             let distanceRatio = Float(abs(i)) / Float(max(lineCount, 1))
-            let isAxisLine = false
             let isMajor = (abs(i) % majorEvery) == 0
 
-            let lineStyle = material(
-                isAxisLine: isAxisLine,
+            let thickness = isMajor ? majorThickness : minorThickness
+            let material = fadedMaterial(
                 isMajor: isMajor,
                 distanceRatio: distanceRatio,
-                axis: planeAxisA,
-                palette: palette,
-                minorThickness: minorThickness,
-                majorThickness: majorThickness,
-                axisThickness: planeAxisThickness
+                bands: fadeBands
             )
+
             let lineA = Entity()
             lineA.components.set(ModelComponent(
-                mesh: lineMesh(length: extent * 2, thickness: lineStyle.thickness, axis: planeAxisA),
-                materials: [lineStyle.material]
+                mesh: lineMesh(length: extent * 2, thickness: thickness, axis: planeAxisA),
+                materials: [material]
             ))
             lineA.position = offsetPosition(planeAxisB, offset: offset)
             gridRoot.addChild(lineA)
 
-            let lineStyleB = material(
-                isAxisLine: isAxisLine,
-                isMajor: isMajor,
-                distanceRatio: distanceRatio,
-                axis: planeAxisB,
-                palette: palette,
-                minorThickness: minorThickness,
-                majorThickness: majorThickness,
-                axisThickness: planeAxisThickness
-            )
             let lineB = Entity()
             lineB.components.set(ModelComponent(
-                mesh: lineMesh(length: extent * 2, thickness: lineStyleB.thickness, axis: planeAxisB),
-                materials: [lineStyleB.material]
+                mesh: lineMesh(length: extent * 2, thickness: thickness, axis: planeAxisB),
+                materials: [material]
             ))
             lineB.position = offsetPosition(planeAxisA, offset: offset)
             gridRoot.addChild(lineB)
         }
 
+        // --- Axis markers (hairline, muted) ---
         let axisMarkerLength = Float(axisMarkerLengthMeters / safeMpu)
         let xAxisEntity = Entity()
         xAxisEntity.components.set(ModelComponent(
-            mesh: lineMesh(length: axisMarkerLength, thickness: planeAxisThickness, axis: .x),
+            mesh: lineMesh(length: axisMarkerLength, thickness: axisThickness, axis: .x),
             materials: [palette.xAxis]
         ))
         gridRoot.addChild(xAxisEntity)
 
         let floorSecondaryAxisEntity = Entity()
         floorSecondaryAxisEntity.components.set(ModelComponent(
-            mesh: lineMesh(length: axisMarkerLength, thickness: planeAxisThickness, axis: planeAxisB),
+            mesh: lineMesh(length: axisMarkerLength, thickness: axisThickness, axis: planeAxisB),
             materials: [axisMaterial(for: planeAxisB, palette: palette)]
         ))
         gridRoot.addChild(floorSecondaryAxisEntity)
 
         let upAxisEntity = Entity()
         upAxisEntity.components.set(ModelComponent(
-            mesh: lineMesh(length: axisMarkerLength, thickness: upAxisThickness, axis: upAxis),
+            mesh: lineMesh(length: axisMarkerLength, thickness: axisThickness, axis: upAxis),
             materials: [axisMaterial(for: upAxis, palette: palette)]
         ))
         gridRoot.addChild(upAxisEntity)
@@ -120,30 +115,21 @@ public struct RealityKitGrid {
         return gridRoot
     }
 
-    private static func material(
-        isAxisLine: Bool,
+    // MARK: - Smooth distance fade
+
+    /// Select a material from pre-built fade bands based on distance ratio.
+    private static func fadedMaterial(
         isMajor: Bool,
         distanceRatio: Float,
-        axis: Axis,
-        palette: GridPalette,
-        minorThickness: Float,
-        majorThickness: Float,
-        axisThickness: Float
-    ) -> (material: UnlitMaterial, thickness: Float) {
-        if isAxisLine {
-            return (axisMaterial(for: axis, palette: palette), axisThickness)
-        }
-        if isMajor {
-            return (
-                distanceRatio > 0.72 ? palette.majorFar : palette.majorNear,
-                majorThickness
-            )
-        }
-        return (
-            distanceRatio > 0.72 ? palette.minorFar : palette.minorNear,
-            minorThickness
-        )
+        bands: GridPalette.FadeBands
+    ) -> UnlitMaterial {
+        let materials = isMajor ? bands.major : bands.minor
+        // Map distanceRatio [0..1] → band index.
+        let idx = min(Int(distanceRatio * Float(materials.count)), materials.count - 1)
+        return materials[max(0, idx)]
     }
+
+    // MARK: - Geometry helpers
 
     @MainActor
     private static func lineMesh(length: Float, thickness: Float, axis: Axis) -> MeshResource {
@@ -180,32 +166,57 @@ public struct RealityKitGrid {
     }
 }
 
+// MARK: - Color palette
+
 private struct GridPalette {
-    let minorNear: UnlitMaterial
-    let minorFar: UnlitMaterial
-    let majorNear: UnlitMaterial
-    let majorFar: UnlitMaterial
     let xAxis: UnlitMaterial
     let yAxis: UnlitMaterial
     let zAxis: UnlitMaterial
+
+    /// Pre-built materials for smooth distance-based fade (5 bands from center → edge).
+    let fadeBands: FadeBands
+
+    struct FadeBands {
+        let minor: [UnlitMaterial]
+        let major: [UnlitMaterial]
+    }
+
     init(appearance: ViewportAppearance) {
         switch appearance {
         case .light:
-            minorNear = UnlitMaterial(color: PlatformColor(white: 0.42, alpha: 0.18))
-            minorFar = UnlitMaterial(color: PlatformColor(white: 0.58, alpha: 0.08))
-            majorNear = UnlitMaterial(color: PlatformColor(white: 0.28, alpha: 0.26))
-            majorFar = UnlitMaterial(color: PlatformColor(white: 0.38, alpha: 0.14))
-            xAxis = UnlitMaterial(color: PlatformColor(red: 0.74, green: 0.18, blue: 0.18, alpha: 0.82))
-            yAxis = UnlitMaterial(color: PlatformColor(red: 0.18, green: 0.62, blue: 0.18, alpha: 0.82))
-            zAxis = UnlitMaterial(color: PlatformColor(red: 0.18, green: 0.38, blue: 0.82, alpha: 0.82))
+            // Axis colors: muted, hairline weight — inspired by RCP light mode.
+            xAxis = UnlitMaterial(color: PlatformColor(red: 0.62, green: 0.22, blue: 0.22, alpha: 0.50))
+            yAxis = UnlitMaterial(color: PlatformColor(red: 0.22, green: 0.52, blue: 0.22, alpha: 0.50))
+            zAxis = UnlitMaterial(color: PlatformColor(red: 0.22, green: 0.34, blue: 0.68, alpha: 0.50))
+
+            fadeBands = FadeBands(
+                minor: Self.buildBands(white: 0.42, alphaRange: 0.16...0.02),
+                major: Self.buildBands(white: 0.28, alphaRange: 0.24...0.04)
+            )
+
         case .dark:
-            minorNear = UnlitMaterial(color: PlatformColor(white: 0.56, alpha: 0.26))
-            minorFar = UnlitMaterial(color: PlatformColor(white: 0.46, alpha: 0.12))
-            majorNear = UnlitMaterial(color: PlatformColor(white: 0.72, alpha: 0.34))
-            majorFar = UnlitMaterial(color: PlatformColor(white: 0.62, alpha: 0.18))
-            xAxis = UnlitMaterial(color: PlatformColor(red: 0.92, green: 0.24, blue: 0.24, alpha: 0.92))
-            yAxis = UnlitMaterial(color: PlatformColor(red: 0.24, green: 0.82, blue: 0.24, alpha: 0.92))
-            zAxis = UnlitMaterial(color: PlatformColor(red: 0.24, green: 0.46, blue: 0.96, alpha: 0.92))
+            // Axis colors: softer than before, still readable.
+            xAxis = UnlitMaterial(color: PlatformColor(red: 0.82, green: 0.28, blue: 0.28, alpha: 0.55))
+            yAxis = UnlitMaterial(color: PlatformColor(red: 0.28, green: 0.72, blue: 0.28, alpha: 0.55))
+            zAxis = UnlitMaterial(color: PlatformColor(red: 0.28, green: 0.44, blue: 0.88, alpha: 0.55))
+
+            fadeBands = FadeBands(
+                minor: Self.buildBands(white: 0.54, alphaRange: 0.22...0.03),
+                major: Self.buildBands(white: 0.70, alphaRange: 0.30...0.05)
+            )
+        }
+    }
+
+    /// Build 5 materials with linearly interpolated alpha from center (max) to edge (min).
+    private static func buildBands(
+        white: CGFloat,
+        alphaRange: ClosedRange<CGFloat>,
+        count: Int = 5
+    ) -> [UnlitMaterial] {
+        (0..<count).map { i in
+            let t = CGFloat(i) / CGFloat(max(count - 1, 1))
+            let alpha = alphaRange.lowerBound + (alphaRange.upperBound - alphaRange.lowerBound) * t
+            return UnlitMaterial(color: PlatformColor(white: white, alpha: alpha))
         }
     }
 }
