@@ -29,6 +29,7 @@ public struct RealityKitStageView: View {
     @State private var selectionHighlightEntity: Entity?
     @State private var outlinedEntityIDs: Set<Entity.ID> = []
     @State private var viewportInstanceID = UUID()
+    @State private var gridEntity: Entity?
 
     private var environmentRadius: Double {
         let extent = Double(runtime.sceneBounds.maxExtent)
@@ -355,13 +356,9 @@ public struct RealityKitStageView: View {
         root.addChild(fillLight)
 
         if configuration.showGrid {
-            let grid = RealityKitGrid.createGridEntity(
-                metersPerUnit: configuration.metersPerUnit,
-                worldExtent: Double(runtime.sceneBounds.maxExtent) * configuration.metersPerUnit,
-                isZUp: configuration.isZUp,
-                appearance: colorScheme == .light ? .light : .dark
-            )
-            root.addChild(grid)
+            Task {
+                await loadProceduralGrid(into: root)
+            }
         }
 
         let camera = PerspectiveCamera()
@@ -456,15 +453,48 @@ public struct RealityKitStageView: View {
     @MainActor
     private func refreshGrid() {
         guard let root = rootEntity else { return }
-        root.findEntity(named: "ReferenceGrid")?.removeFromParent()
-        guard configuration.showGrid else { return }
 
-        let grid = RealityKitGrid.createGridEntity(
+        if !configuration.showGrid {
+            gridEntity?.removeFromParent()
+            gridEntity = nil
+            return
+        }
+
+        // If the grid entity already exists, just update its parameters.
+        if let existing = gridEntity {
+            RealityKitGrid.updateProceduralGrid(
+                entity: existing,
+                metersPerUnit: configuration.metersPerUnit,
+                worldExtent: Double(runtime.sceneBounds.maxExtent),
+                isZUp: configuration.isZUp,
+                appearance: colorScheme == .light ? .light : .dark
+            )
+            // Re-parent if needed (e.g. after toggling showGrid off then on).
+            if existing.parent == nil {
+                root.addChild(existing)
+            }
+            return
+        }
+
+        // First time — async load.
+        Task {
+            await loadProceduralGrid(into: root)
+        }
+    }
+
+    @MainActor
+    private func loadProceduralGrid(into root: Entity) async {
+        // Remove any stale grid.
+        root.findEntity(named: "ReferenceGrid")?.removeFromParent()
+
+        guard let grid = await RealityKitGrid.createProceduralGridEntity(
             metersPerUnit: configuration.metersPerUnit,
-            worldExtent: Double(runtime.sceneBounds.maxExtent) * configuration.metersPerUnit,
+            worldExtent: Double(runtime.sceneBounds.maxExtent),
             isZUp: configuration.isZUp,
             appearance: colorScheme == .light ? .light : .dark
-        )
+        ) else { return }
+
+        self.gridEntity = grid
         root.addChild(grid)
     }
 

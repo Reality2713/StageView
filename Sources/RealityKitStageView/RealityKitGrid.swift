@@ -1,4 +1,5 @@
 import RealityKit
+import OSLog
 #if os(macOS)
 import AppKit
 private typealias PlatformColor = NSColor
@@ -7,216 +8,204 @@ import UIKit
 private typealias PlatformColor = UIColor
 #endif
 
-/// Dynamic grid with fixed real-world major spacing, smooth distance fade, and
-/// hairline axis markers inspired by Reality Composer Pro / Blender / Plasticity.
-public struct RealityKitGrid {
-    private enum Axis {
-        case x
-        case y
-        case z
-    }
+private let gridLogger = Logger(subsystem: "RealityKitStageView", category: "Grid")
 
+/// Single-plane procedural grid driven entirely by a MaterialX shader graph.
+/// One quad, zero geometry overhead — the shader computes grid lines, axis
+/// colors, depth-modulated thickness, and fog fade per-fragment.
+public struct RealityKitGrid {
+
+    // MARK: - Public API
+
+    /// Load the procedural grid from the bundled USDA.
+    /// Returns a single entity containing one double-sided plane with a
+    /// `ShaderGraphMaterial` whose parameters can be mutated at runtime.
     @MainActor
-    public static func createGridEntity(
+    public static func createProceduralGridEntity(
         metersPerUnit: Double,
         worldExtent: Double,
         isZUp: Bool,
         appearance: ViewportAppearance
-    ) -> Entity {
-        let gridRoot = Entity()
-        gridRoot.name = "ReferenceGrid"
+    ) async -> Entity? {
+        guard let url = Bundle.module.url(
+            forResource: "ViewportGrid",
+            withExtension: "usda"
+        ) else {
+            gridLogger.error("ViewportGrid.usda not found in bundle.")
+            return nil
+        }
 
-        let upAxis: Axis = isZUp ? .z : .y
-        let planeAxisA: Axis = .x
-        let planeAxisB: Axis = isZUp ? .y : .z
+        do {
+            let entity = try await Entity(contentsOf: url)
+            entity.name = "ReferenceGrid"
 
-        let safeMpu = metersPerUnit > 0 ? metersPerUnit : 1.0
-        let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtent)
-        let minorStepMeters = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
-        let majorStepMeters = 1.0
-        let majorEvery = max(1, Int((majorStepMeters / minorStepMeters).rounded()))
-        let lineCount = max(1, Int(ceil(radiusMeters / minorStepMeters)))
-
-        let extent = Float(radiusMeters / safeMpu)
-        let step = Float(minorStepMeters / safeMpu)
-
-        // Position slightly below ground to prevent z-fighting.
-        gridRoot.position = offsetPosition(upAxis, offset: -Float(0.001 / safeMpu))
-
-        let palette = GridPalette(appearance: appearance)
-
-        // Axis markers: proportional but capped to stay subtle.
-        let axisMarkerLengthMeters = min(
-            max(worldExtent * 1.5, 0.1),
-            radiusMeters * 0.6
-        )
-
-        // --- Thickness ---
-        // Grid lines: keep existing adaptive logic.
-        let minorThickness = max(Float(0.0002 / safeMpu), min(step * 0.01, extent * 0.0025))
-        let majorThickness = max(minorThickness * 1.6, min(step * 0.016, extent * 0.004))
-        // Axis markers: hairline — just slightly thicker than major grid lines.
-        let axisThickness = max(majorThickness * 1.2, min(step * 0.012, extent * 0.003))
-
-        // --- Grid lines with smooth distance fade ---
-        let fadeBands = palette.fadeBands
-        for i in -lineCount...lineCount {
-            let offset = Float(i) * step
-            let distanceRatio = Float(abs(i)) / Float(max(lineCount, 1))
-            let isMajor = (abs(i) % majorEvery) == 0
-
-            let thickness = isMajor ? majorThickness : minorThickness
-            let material = fadedMaterial(
-                isMajor: isMajor,
-                distanceRatio: distanceRatio,
-                bands: fadeBands
+            updateProceduralGrid(
+                entity: entity,
+                metersPerUnit: metersPerUnit,
+                worldExtent: worldExtent,
+                isZUp: isZUp,
+                appearance: appearance
             )
 
-            let lineA = Entity()
-            lineA.components.set(ModelComponent(
-                mesh: lineMesh(length: extent * 2, thickness: thickness, axis: planeAxisA),
-                materials: [material]
-            ))
-            lineA.position = offsetPosition(planeAxisB, offset: offset)
-            gridRoot.addChild(lineA)
+            return entity
+        } catch {
+            gridLogger.error("Failed to load procedural grid: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
 
-            let lineB = Entity()
-            lineB.components.set(ModelComponent(
-                mesh: lineMesh(length: extent * 2, thickness: thickness, axis: planeAxisB),
-                materials: [material]
-            ))
-            lineB.position = offsetPosition(planeAxisA, offset: offset)
-            gridRoot.addChild(lineB)
+    /// Update the grid's shader parameters without recreating the entity.
+    @MainActor
+    public static func updateProceduralGrid(
+        entity: Entity,
+        metersPerUnit: Double,
+        worldExtent: Double,
+        isZUp: Bool,
+        appearance: ViewportAppearance
+    ) {
+        let safeMpu = metersPerUnit > 0 ? metersPerUnit : 1.0
+        let worldExtentMeters = worldExtent * safeMpu
+        let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
+        let minorStep = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
+
+        let minorScale = Float(1.0 / minorStep)
+        let majorScale: Float = 1.0
+
+        // Scale the plane to cover the needed world extent.
+        // The USDA plane is ±50m (100m total). Scale to match the grid radius.
+        let planeHalfExtent: Float = 50.0
+        let neededHalfExtent = Float(radiusMeters / safeMpu)
+        let scaleFactor = max(neededHalfExtent / planeHalfExtent, 0.01)
+        entity.scale = SIMD3<Float>(repeating: scaleFactor)
+
+        // Position slightly below ground to prevent z-fighting.
+        let yOffset = Float(-0.001 / safeMpu)
+        if isZUp {
+            entity.transform.rotation = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
+            entity.position = SIMD3<Float>(0, 0, -yOffset)
+        } else {
+            entity.transform.rotation = .init()
+            entity.position = SIMD3<Float>(0, yOffset, 0)
         }
 
-        // --- Axis markers (hairline, muted) ---
-        let axisMarkerLength = Float(axisMarkerLengthMeters / safeMpu)
-        let xAxisEntity = Entity()
-        xAxisEntity.components.set(ModelComponent(
-            mesh: lineMesh(length: axisMarkerLength, thickness: axisThickness, axis: .x),
-            materials: [palette.xAxis]
-        ))
-        gridRoot.addChild(xAxisEntity)
+        // Resolve colors for appearance.
+        let palette = ProceduralGridPalette(appearance: appearance)
 
-        let floorSecondaryAxisEntity = Entity()
-        floorSecondaryAxisEntity.components.set(ModelComponent(
-            mesh: lineMesh(length: axisMarkerLength, thickness: axisThickness, axis: planeAxisB),
-            materials: [axisMaterial(for: planeAxisB, palette: palette)]
-        ))
-        gridRoot.addChild(floorSecondaryAxisEntity)
-
-        let upAxisEntity = Entity()
-        upAxisEntity.components.set(ModelComponent(
-            mesh: lineMesh(length: axisMarkerLength, thickness: axisThickness, axis: upAxis),
-            materials: [axisMaterial(for: upAxis, palette: palette)]
-        ))
-        gridRoot.addChild(upAxisEntity)
-
-        return gridRoot
+        // Walk entity tree and set ShaderGraphMaterial parameters.
+        setMaterialParameters(
+            on: entity,
+            minorScale: minorScale,
+            majorScale: majorScale,
+            fogDensity: palette.fogDensity,
+            fogMax: palette.fogMax,
+            minorColor: palette.minorColor,
+            majorColor: palette.majorColor,
+            xAxisColor: palette.xAxisColor,
+            zAxisColor: palette.zAxisColor,
+            baseOpacity: palette.baseOpacity,
+            lineOpacityScale: palette.lineOpacityScale
+        )
     }
 
-    // MARK: - Smooth distance fade
-
-    /// Select a material from pre-built fade bands based on distance ratio.
-    private static func fadedMaterial(
-        isMajor: Bool,
-        distanceRatio: Float,
-        bands: GridPalette.FadeBands
-    ) -> UnlitMaterial {
-        let materials = isMajor ? bands.major : bands.minor
-        // Map distanceRatio [0..1] → band index.
-        let idx = min(Int(distanceRatio * Float(materials.count)), materials.count - 1)
-        return materials[max(0, idx)]
-    }
-
-    // MARK: - Geometry helpers
+    // MARK: - Material parameter wiring
 
     @MainActor
-    private static func lineMesh(length: Float, thickness: Float, axis: Axis) -> MeshResource {
-        switch axis {
-        case .x:
-            return MeshResource.generateBox(width: length, height: thickness, depth: thickness)
-        case .y:
-            return MeshResource.generateBox(width: thickness, height: length, depth: thickness)
-        case .z:
-            return MeshResource.generateBox(width: thickness, height: thickness, depth: length)
+    private static func setMaterialParameters(
+        on entity: Entity,
+        minorScale: Float,
+        majorScale: Float,
+        fogDensity: Float,
+        fogMax: Float,
+        minorColor: SIMD3<Float>,
+        majorColor: SIMD3<Float>,
+        xAxisColor: SIMD3<Float>,
+        zAxisColor: SIMD3<Float>,
+        baseOpacity: Float,
+        lineOpacityScale: Float
+    ) {
+        guard var model = entity.components[ModelComponent.self] else {
+            for child in entity.children {
+                setMaterialParameters(
+                    on: child,
+                    minorScale: minorScale,
+                    majorScale: majorScale,
+                    fogDensity: fogDensity,
+                    fogMax: fogMax,
+                    minorColor: minorColor,
+                    majorColor: majorColor,
+                    xAxisColor: xAxisColor,
+                    zAxisColor: zAxisColor,
+                    baseOpacity: baseOpacity,
+                    lineOpacityScale: lineOpacityScale
+                )
+            }
+            return
         }
+
+        var materials = model.materials
+        for i in materials.indices {
+            guard var sgMaterial = materials[i] as? ShaderGraphMaterial else { continue }
+
+            do {
+                try sgMaterial.setParameter(name: "minorScale", value: .float(minorScale))
+                try sgMaterial.setParameter(name: "majorScale", value: .float(majorScale))
+                try sgMaterial.setParameter(name: "fogDensity", value: .float(fogDensity))
+                try sgMaterial.setParameter(name: "fogMax", value: .float(fogMax))
+                try sgMaterial.setParameter(name: "baseOpacity", value: .float(baseOpacity))
+                try sgMaterial.setParameter(name: "lineOpacityScale", value: .float(lineOpacityScale))
+                try sgMaterial.setParameter(name: "minorColor", value: .color(cgColor(minorColor)))
+                try sgMaterial.setParameter(name: "majorColor", value: .color(cgColor(majorColor)))
+                try sgMaterial.setParameter(name: "xAxisColor", value: .color(cgColor(xAxisColor)))
+                try sgMaterial.setParameter(name: "zAxisColor", value: .color(cgColor(zAxisColor)))
+            } catch {
+                gridLogger.warning("Failed to set grid material parameter: \(error.localizedDescription, privacy: .public)")
+            }
+
+            materials[i] = sgMaterial
+        }
+
+        model.materials = materials
+        entity.components.set(model)
     }
 
-    private static func axisMaterial(for axis: Axis, palette: GridPalette) -> UnlitMaterial {
-        switch axis {
-        case .x:
-            return palette.xAxis
-        case .y:
-            return palette.yAxis
-        case .z:
-            return palette.zAxis
-        }
-    }
-
-    private static func offsetPosition(_ axis: Axis, offset: Float) -> SIMD3<Float> {
-        switch axis {
-        case .x:
-            return SIMD3<Float>(offset, 0, 0)
-        case .y:
-            return SIMD3<Float>(0, offset, 0)
-        case .z:
-            return SIMD3<Float>(0, 0, offset)
-        }
+    private static func cgColor(_ v: SIMD3<Float>) -> CGColor {
+        CGColor(red: CGFloat(v.x), green: CGFloat(v.y), blue: CGFloat(v.z), alpha: 1)
     }
 }
 
 // MARK: - Color palette
 
-private struct GridPalette {
-    let xAxis: UnlitMaterial
-    let yAxis: UnlitMaterial
-    let zAxis: UnlitMaterial
-
-    /// Pre-built materials for smooth distance-based fade (5 bands from center → edge).
-    let fadeBands: FadeBands
-
-    struct FadeBands {
-        let minor: [UnlitMaterial]
-        let major: [UnlitMaterial]
-    }
+struct ProceduralGridPalette {
+    let minorColor: SIMD3<Float>
+    let majorColor: SIMD3<Float>
+    let xAxisColor: SIMD3<Float>
+    let zAxisColor: SIMD3<Float>
+    let fogDensity: Float
+    let fogMax: Float
+    let baseOpacity: Float
+    let lineOpacityScale: Float
 
     init(appearance: ViewportAppearance) {
         switch appearance {
-        case .light:
-            // Axis colors: muted, hairline weight — inspired by RCP light mode.
-            xAxis = UnlitMaterial(color: PlatformColor(red: 0.62, green: 0.22, blue: 0.22, alpha: 0.50))
-            yAxis = UnlitMaterial(color: PlatformColor(red: 0.22, green: 0.52, blue: 0.22, alpha: 0.50))
-            zAxis = UnlitMaterial(color: PlatformColor(red: 0.22, green: 0.34, blue: 0.68, alpha: 0.50))
-
-            fadeBands = FadeBands(
-                minor: Self.buildBands(white: 0.42, alphaRange: 0.16...0.02),
-                major: Self.buildBands(white: 0.28, alphaRange: 0.24...0.04)
-            )
-
         case .dark:
-            // Axis colors: softer than before, still readable.
-            xAxis = UnlitMaterial(color: PlatformColor(red: 0.82, green: 0.28, blue: 0.28, alpha: 0.55))
-            yAxis = UnlitMaterial(color: PlatformColor(red: 0.28, green: 0.72, blue: 0.28, alpha: 0.55))
-            zAxis = UnlitMaterial(color: PlatformColor(red: 0.28, green: 0.44, blue: 0.88, alpha: 0.55))
+            minorColor = SIMD3<Float>(0.34, 0.37, 0.42)
+            majorColor = SIMD3<Float>(0.50, 0.53, 0.57)
+            xAxisColor = SIMD3<Float>(0.32, 0.58, 0.87)
+            zAxisColor = SIMD3<Float>(0.72, 0.49, 0.31)
+            fogDensity = 0.065
+            fogMax = 0.90
+            baseOpacity = 0.014
+            lineOpacityScale = 0.99
 
-            fadeBands = FadeBands(
-                minor: Self.buildBands(white: 0.54, alphaRange: 0.22...0.03),
-                major: Self.buildBands(white: 0.70, alphaRange: 0.30...0.05)
-            )
-        }
-    }
-
-    /// Build 5 materials with linearly interpolated alpha from center (max) to edge (min).
-    private static func buildBands(
-        white: CGFloat,
-        alphaRange: ClosedRange<CGFloat>,
-        count: Int = 5
-    ) -> [UnlitMaterial] {
-        (0..<count).map { i in
-            let t = CGFloat(i) / CGFloat(max(count - 1, 1))
-            let alpha = alphaRange.lowerBound + (alphaRange.upperBound - alphaRange.lowerBound) * t
-            return UnlitMaterial(color: PlatformColor(white: white, alpha: alpha))
+        case .light:
+            minorColor = SIMD3<Float>(0.55, 0.58, 0.62)
+            majorColor = SIMD3<Float>(0.42, 0.45, 0.49)
+            xAxisColor = SIMD3<Float>(0.37, 0.61, 0.83)
+            zAxisColor = SIMD3<Float>(0.72, 0.54, 0.40)
+            fogDensity = 0.038
+            fogMax = 0.68
+            baseOpacity = 0.012
+            lineOpacityScale = 0.99
         }
     }
 }
