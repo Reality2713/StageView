@@ -2,6 +2,16 @@ import Foundation
 import RealityKit
 import SwiftUI
 
+/// Selection visualization mode.
+public enum SelectionHighlightStyle: Sendable, Equatable {
+    /// Inverted-hull mesh outline based on surface normals.
+    case outline
+    /// Axis-aligned wireframe bounds cage around the selected entity/subtree.
+    case boundingBox
+    /// Disable selection highlighting.
+    case none
+}
+
 /// Configuration for the RealityKit viewport.
 public struct RealityKitConfiguration: Sendable {
     public var showGrid: Bool = true
@@ -15,6 +25,8 @@ public struct RealityKitConfiguration: Sendable {
 
     /// Appearance for selection outlines.
     public var outlineConfiguration: OutlineConfiguration = .init()
+    /// Rendering mode for selection visualization.
+    public var selectionHighlightStyle: SelectionHighlightStyle = .boundingBox
 
     public init(
         showGrid: Bool = true,
@@ -25,7 +37,8 @@ public struct RealityKitConfiguration: Sendable {
         environmentExposure: Float = 0.0,
         environmentRotation: Float = 0.0,
         showEnvironmentBackground: Bool = true,
-        outlineConfiguration: OutlineConfiguration = .init()
+        outlineConfiguration: OutlineConfiguration = .init(),
+        selectionHighlightStyle: SelectionHighlightStyle = .boundingBox
     ) {
         self.showGrid = showGrid
         self.showAxes = showAxes
@@ -36,6 +49,7 @@ public struct RealityKitConfiguration: Sendable {
         self.environmentRotation = environmentRotation
         self.showEnvironmentBackground = showEnvironmentBackground
         self.outlineConfiguration = outlineConfiguration
+        self.selectionHighlightStyle = selectionHighlightStyle
     }
 
     /// Hydra canonical EV model: linear gain = 2^EV.

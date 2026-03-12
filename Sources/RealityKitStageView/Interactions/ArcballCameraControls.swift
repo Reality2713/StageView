@@ -50,6 +50,7 @@ public struct ArcballCameraState: Equatable, Sendable {
 public struct ArcballCameraControls: ViewModifier {
     @Binding var state: ArcballCameraState
     let sceneBounds: SceneBounds
+    let metersPerUnit: Double
     let maxDistanceOverride: Float?
 
     @State private var startDistance: Float?
@@ -62,10 +63,12 @@ public struct ArcballCameraControls: ViewModifier {
     public init(
         state: Binding<ArcballCameraState>,
         sceneBounds: SceneBounds,
+        metersPerUnit: Double = 1.0,
         maxDistance: Float? = nil
     ) {
         self._state = state
         self.sceneBounds = sceneBounds
+        self.metersPerUnit = metersPerUnit
         self.maxDistanceOverride = maxDistance
     }
 
@@ -117,9 +120,8 @@ public struct ArcballCameraControls: ViewModifier {
                     // Consume scroll events in the viewport so parent scroll views
                     // (and other SwiftUI controls) don't react at the same time.
                     if event.modifierFlags.contains(.option) {
-                        let sensitivity: Float = 0.005
-                        let delta = Float(event.scrollingDeltaY) * sensitivity
-                        let newDistance = state.distance * (1.0 - delta)
+                        let delta = Float(event.scrollingDeltaY)
+                        let newDistance = state.distance * exp(delta * 0.01)
                         state.distance = clampDistance(newDistance)
                     } else {
                         let multiplier: Float = event.modifierFlags.contains(.shift) ? 5.0 : 1.0
@@ -142,14 +144,15 @@ public struct ArcballCameraControls: ViewModifier {
     }
 
     private let clampEpsilon: Float = 0.0001
-    private var minDistance: Float { 0.01 }
+    private var minDistance: Float {
+        ViewportTuning.minimumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
+    }
 
     private var maxDistanceValue: Float {
         if let override = maxDistanceOverride {
             return Swift.max(override, minDistance)
         }
-        let extent = Swift.max(Float(sceneBounds.maxExtent), 0.001)
-        return Swift.max(1000.0, extent * 100000.0)
+        return ViewportTuning.maximumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
     }
 
     private func clampDistance(_ value: Float) -> Float {
@@ -193,12 +196,20 @@ public struct ArcballCameraControls: ViewModifier {
     private func handlePanDrag(_ value: DragGesture.Value) {
         let deltaX = Float(value.translation.width - (previousPanValue?.translation.width ?? 0))
         let deltaY = Float(value.translation.height - (previousPanValue?.translation.height ?? 0))
-        let scale = state.distance * 0.001
+        let scale = ViewportTuning.panScale(
+            distance: state.distance,
+            sceneBounds: sceneBounds,
+            metersPerUnit: metersPerUnit
+        )
         handlePan(deltaX: deltaX, deltaY: -deltaY, scale: scale)
     }
 
     private func handlePan(deltaX: Float, deltaY: Float, scale: Float? = nil) {
-        let panScale = scale ?? (state.distance * 0.001)
+        let panScale = scale ?? ViewportTuning.panScale(
+            distance: state.distance,
+            sceneBounds: sceneBounds,
+            metersPerUnit: metersPerUnit
+        )
         let rotX = simd_quatf(angle: state.rotation.x, axis: [1, 0, 0])
         let rotY = simd_quatf(angle: state.rotation.y, axis: [0, 1, 0])
         let orientation = rotY * rotX
@@ -232,6 +243,7 @@ public struct ArcballCameraControls: ViewModifier {
 public struct ArcballCameraControls: ViewModifier {
     @Binding var state: ArcballCameraState
     let sceneBounds: SceneBounds
+    let metersPerUnit: Double
     let maxDistanceOverride: Float?
 
     @State private var startDistance: Float?
@@ -242,10 +254,12 @@ public struct ArcballCameraControls: ViewModifier {
     public init(
         state: Binding<ArcballCameraState>,
         sceneBounds: SceneBounds,
+        metersPerUnit: Double = 1.0,
         maxDistance: Float? = nil
     ) {
         self._state = state
         self.sceneBounds = sceneBounds
+        self.metersPerUnit = metersPerUnit
         self.maxDistanceOverride = maxDistance
     }
 
@@ -295,14 +309,15 @@ public struct ArcballCameraControls: ViewModifier {
     }
 
     private let clampEpsilon: Float = 0.0001
-    private var minDistance: Float { 0.01 }
+    private var minDistance: Float {
+        ViewportTuning.minimumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
+    }
 
     private var maxDistanceValue: Float {
         if let override = maxDistanceOverride {
             return Swift.max(override, minDistance)
         }
-        let extent = Swift.max(Float(sceneBounds.maxExtent), 0.001)
-        return Swift.max(1000.0, extent * 100000.0)
+        return ViewportTuning.maximumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
     }
 
     private func clampDistance(_ value: Float) -> Float {
@@ -344,7 +359,11 @@ public struct ArcballCameraControls: ViewModifier {
     }
 
     private func handlePan(deltaX: Float, deltaY: Float) {
-        let scale = state.distance * 0.001
+        let scale = ViewportTuning.panScale(
+            distance: state.distance,
+            sceneBounds: sceneBounds,
+            metersPerUnit: metersPerUnit
+        )
         let rotX = simd_quatf(angle: state.rotation.x, axis: [1, 0, 0])
         let rotY = simd_quatf(angle: state.rotation.y, axis: [0, 1, 0])
         let orientation = rotY * rotX

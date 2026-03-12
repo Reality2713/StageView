@@ -1,0 +1,828 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "StageView Procedural Viewport Grid"
+    }
+    defaultPrim = "Root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Mesh "GridPlane" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Root/Looks/ViewportGridMaterial>
+        bool doubleSided = true
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 1, 0)] (
+            interpolation = "uniform"
+        )
+        point3f[] points = [(-50, 0, -50), (50, 0, -50), (50, 0, 50), (-50, 0, 50)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Scope "Looks"
+    {
+        def Material "ViewportGridMaterial"
+        {
+            # ── Exposed parameters (settable via ShaderGraphMaterial.setParameter) ──
+            float inputs:minorScale = 10 (
+                doc = "1.0 / minorSpacingMeters. Default 10 = 0.1m grid."
+            )
+            float inputs:majorScale = 1 (
+                doc = "1.0 / majorSpacingMeters. Default 1 = 1.0m grid."
+            )
+            float inputs:minorBaseThickness = 0.0032
+            float inputs:majorBaseThickness = 0.0082
+            float inputs:minorDepthFactor = 0.002
+            float inputs:majorDepthFactor = 0.0017
+            float inputs:minorThicknessMax = 0.016
+            float inputs:majorThicknessMax = 0.032
+            float inputs:axisExtraThickness = 0.002
+            float inputs:fogDensity = 0.065
+            float inputs:fogMax = 0.9
+            color3f inputs:minorColor = (0.34, 0.37, 0.42)
+            color3f inputs:majorColor = (0.50, 0.53, 0.57)
+            color3f inputs:xAxisColor = (0.32, 0.58, 0.87)
+            color3f inputs:zAxisColor = (0.72, 0.49, 0.31)
+            float inputs:baseOpacity = 0.014
+            float inputs:lineOpacityScale = 0.99
+
+            token outputs:mtlx:surface.connect = </Root/Looks/ViewportGridMaterial/UnlitSurface.outputs:out>
+            token outputs:realitykit:vertex
+
+            # ── Surface ──
+
+            def Shader "UnlitSurface"
+            {
+                uniform token info:id = "ND_realitykit_unlit_surfaceshader"
+                color3f inputs:color.connect = </Root/Looks/ViewportGridMaterial/LineColor.outputs:out>
+                float inputs:opacity.connect = </Root/Looks/ViewportGridMaterial/Opacity.outputs:out>
+                bool inputs:hasPremultipliedAlpha = false
+                token outputs:out
+            }
+
+            # ── World position ──
+
+            def Shader "WorldPosition"
+            {
+                uniform token info:id = "ND_position_vector3"
+                string inputs:space = "world"
+                vector3f outputs:out
+            }
+
+            def Shader "WorldPositionChannels"
+            {
+                uniform token info:id = "ND_separate3_vector3"
+                vector3f inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPosition.outputs:out>
+                float outputs:outx
+                float outputs:outy
+                float outputs:outz
+            }
+
+            # ── Minor grid: scale → frac → inverse ──
+
+            def Shader "MinorXScaled"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:minorScale>
+                float outputs:out
+            }
+
+            def Shader "MinorZScaled"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:minorScale>
+                float outputs:out
+            }
+
+            def Shader "MinorXFractional"
+            {
+                uniform token info:id = "ND_realitykit_fractional_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MinorXScaled.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorZFractional"
+            {
+                uniform token info:id = "ND_realitykit_fractional_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MinorZScaled.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorXInverse"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorXFractional.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorZInverse"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorZFractional.outputs:out>
+                float outputs:out
+            }
+
+            # ── Major grid: scale → frac → inverse ──
+
+            def Shader "MajorXScaled"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:majorScale>
+                float outputs:out
+            }
+
+            def Shader "MajorZScaled"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:majorScale>
+                float outputs:out
+            }
+
+            def Shader "MajorXFractional"
+            {
+                uniform token info:id = "ND_realitykit_fractional_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MajorXScaled.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorZFractional"
+            {
+                uniform token info:id = "ND_realitykit_fractional_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MajorZScaled.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorXInverse"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorXFractional.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorZInverse"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorZFractional.outputs:out>
+                float outputs:out
+            }
+
+            # ── View depth ──
+
+            def Shader "WorldToView"
+            {
+                uniform token info:id = "ND_realitykit_surface_world_to_view"
+                matrix44d outputs:worldToView
+            }
+
+            def Shader "ViewPosition"
+            {
+                uniform token info:id = "ND_transformmatrix_vector3M4"
+                vector3f inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPosition.outputs:out>
+                matrix44d inputs:mat.connect = </Root/Looks/ViewportGridMaterial/WorldToView.outputs:worldToView>
+                vector3f outputs:out
+            }
+
+            def Shader "ViewPositionChannels"
+            {
+                uniform token info:id = "ND_separate3_vector3"
+                vector3f inputs:in.connect = </Root/Looks/ViewportGridMaterial/ViewPosition.outputs:out>
+                float outputs:outx
+                float outputs:outy
+                float outputs:outz
+            }
+
+            def Shader "ViewDepth"
+            {
+                uniform token info:id = "ND_absval_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/ViewPositionChannels.outputs:outz>
+                float outputs:out
+            }
+
+            # ── Line thickness (depth-modulated, clamped) ──
+
+            def Shader "MinorDepthThickness"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/ViewDepth.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:minorDepthFactor>
+                float outputs:out
+            }
+
+            def Shader "MinorThicknessUnclamped"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial.inputs:minorBaseThickness>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorDepthThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorThickness"
+            {
+                uniform token info:id = "ND_min_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorThicknessUnclamped.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:minorThicknessMax>
+                float outputs:out
+            }
+
+            def Shader "MajorDepthThickness"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/ViewDepth.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:majorDepthFactor>
+                float outputs:out
+            }
+
+            def Shader "MajorThicknessUnclamped"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial.inputs:majorBaseThickness>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorDepthThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorThickness"
+            {
+                uniform token info:id = "ND_min_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorThicknessUnclamped.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:majorThicknessMax>
+                float outputs:out
+            }
+
+            def Shader "AxisThickness"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:axisExtraThickness>
+                float outputs:out
+            }
+
+            # ── Minor step masks ──
+
+            def Shader "MinorXLowStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MinorXFractional.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorXHighStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MinorXInverse.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorXLowMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorXLowStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorXHighMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorXHighStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorXMask"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorXLowMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorXHighMask.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorZLowStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MinorZFractional.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorZHighStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MinorZInverse.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorZLowMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorZLowStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorZHighMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorZHighStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorZMask"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorZLowMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorZHighMask.outputs:out>
+                float outputs:out
+            }
+
+            # ── Major step masks ──
+
+            def Shader "MajorXLowStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MajorXFractional.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorXHighStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MajorXInverse.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorXLowMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorXLowStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorXHighMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorXHighStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorXMask"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorXLowMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorXHighMask.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorZLowStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MajorZFractional.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorZHighStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MajorZInverse.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorZLowMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorZLowStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorZHighMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorZHighStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorZMask"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorZLowMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorZHighMask.outputs:out>
+                float outputs:out
+            }
+
+            # ── Axis masks ──
+
+            def Shader "AxisXAbs"
+            {
+                uniform token info:id = "ND_absval_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float outputs:out
+            }
+
+            def Shader "AxisXThresholdStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/AxisXAbs.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/AxisThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisXMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisXThresholdStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisZAbs"
+            {
+                uniform token info:id = "ND_absval_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float outputs:out
+            }
+
+            def Shader "AxisZThresholdStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/AxisZAbs.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/AxisThickness.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisZMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZThresholdStep.outputs:out>
+                float outputs:out
+            }
+
+            # ── Combined grid masks ──
+
+            def Shader "MinorGridMask"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorXMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorZMask.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorGridMask"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorXMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorZMask.outputs:out>
+                float outputs:out
+            }
+
+            # ── Fog / distance fade ──
+
+            def Shader "FogRaw"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/ViewDepth.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:fogDensity>
+                float outputs:out
+            }
+
+            def Shader "FogAmount"
+            {
+                uniform token info:id = "ND_min_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/FogRaw.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:fogMax>
+                float outputs:out
+            }
+
+            def Shader "FogFactor"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/FogAmount.outputs:out>
+                float outputs:out
+            }
+
+            # ── Fog-attenuated masks ──
+
+            def Shader "MinorMaskVisible"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorGridMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/FogFactor.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorMaskVisible"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorGridMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/FogFactor.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisXVisible"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/FogFactor.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisZVisible"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/FogFactor.outputs:out>
+                float outputs:out
+            }
+
+            # ── Color decomposition ──
+
+            def Shader "MinorColorChannels"
+            {
+                uniform token info:id = "ND_separate3_color3"
+                color3f inputs:in.connect = </Root/Looks/ViewportGridMaterial.inputs:minorColor>
+                float outputs:outr
+                float outputs:outg
+                float outputs:outb
+            }
+
+            def Shader "MajorColorChannels"
+            {
+                uniform token info:id = "ND_separate3_color3"
+                color3f inputs:in.connect = </Root/Looks/ViewportGridMaterial.inputs:majorColor>
+                float outputs:outr
+                float outputs:outg
+                float outputs:outb
+            }
+
+            def Shader "XAxisColorChannels"
+            {
+                uniform token info:id = "ND_separate3_color3"
+                color3f inputs:in.connect = </Root/Looks/ViewportGridMaterial.inputs:xAxisColor>
+                float outputs:outr
+                float outputs:outg
+                float outputs:outb
+            }
+
+            def Shader "ZAxisColorChannels"
+            {
+                uniform token info:id = "ND_separate3_color3"
+                color3f inputs:in.connect = </Root/Looks/ViewportGridMaterial.inputs:zAxisColor>
+                float outputs:outr
+                float outputs:outg
+                float outputs:outb
+            }
+
+            # ── Per-channel color × mask ──
+
+            def Shader "MinorRed"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outr>
+                float outputs:out
+            }
+
+            def Shader "MinorGreen"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outg>
+                float outputs:out
+            }
+
+            def Shader "MinorBlue"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outb>
+                float outputs:out
+            }
+
+            def Shader "MajorRed"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorColorChannels.outputs:outr>
+                float outputs:out
+            }
+
+            def Shader "MajorGreen"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorColorChannels.outputs:outg>
+                float outputs:out
+            }
+
+            def Shader "MajorBlue"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorColorChannels.outputs:outb>
+                float outputs:out
+            }
+
+            def Shader "AxisXRed"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/XAxisColorChannels.outputs:outr>
+                float outputs:out
+            }
+
+            def Shader "AxisXGreen"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/XAxisColorChannels.outputs:outg>
+                float outputs:out
+            }
+
+            def Shader "AxisXBlue"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/XAxisColorChannels.outputs:outb>
+                float outputs:out
+            }
+
+            def Shader "AxisZRed"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/ZAxisColorChannels.outputs:outr>
+                float outputs:out
+            }
+
+            def Shader "AxisZGreen"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/ZAxisColorChannels.outputs:outg>
+                float outputs:out
+            }
+
+            def Shader "AxisZBlue"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/ZAxisColorChannels.outputs:outb>
+                float outputs:out
+            }
+
+            # ── Channel compositing ──
+
+            def Shader "RedMinorMajor"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorRed.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorRed.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "RedAxis"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXRed.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZRed.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "RedChannel"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/RedMinorMajor.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/RedAxis.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "GreenMinorMajor"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorGreen.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorGreen.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "GreenAxis"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXGreen.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZGreen.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "GreenChannel"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/GreenMinorMajor.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/GreenAxis.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "BlueMinorMajor"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorBlue.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorBlue.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "BlueAxis"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXBlue.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZBlue.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "BlueChannel"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/BlueMinorMajor.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/BlueAxis.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "LineColor"
+            {
+                uniform token info:id = "ND_combine3_color3"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/RedChannel.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/GreenChannel.outputs:out>
+                float inputs:in3.connect = </Root/Looks/ViewportGridMaterial/BlueChannel.outputs:out>
+                color3f outputs:out
+            }
+
+            # ── Opacity compositing ──
+
+            def Shader "AnyVisibleMinorMajor"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorMaskVisible.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AnyVisibleAxis"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AnyVisibleLine"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AnyVisibleMinorMajor.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AnyVisibleAxis.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "LineOpacityScaled"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AnyVisibleLine.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:lineOpacityScale>
+                float outputs:out
+            }
+
+            def Shader "Opacity"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial.inputs:baseOpacity>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/LineOpacityScaled.outputs:out>
+                float outputs:out
+            }
+        }
+    }
+}

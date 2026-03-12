@@ -62,58 +62,34 @@ public struct StageViewFeature {
     public struct State: Equatable {
         public var activeLoadCommand: LoadCommand?
         public var cameraResetRequestID: UUID?
-        public var isLoaded: Bool
-        public var isZUp: Bool
-        public var lastCompletedCommandID: UUID?
         public var liveTransform: LiveTransformData?
         public var liveTransformRequestID: UUID?
         public var blendShapeRuntimeWeights: [BlendShapeRuntimeWeight]
         public var blendShapeRuntimeRequestID: UUID?
-        public var lastSuccessfulLoadCommand: LoadCommand?
         public var loadRequestID: UUID
-        public var metersPerUnit: Double
         public var modelURL: URL?
-        public var pendingSelection: String?
-        public var sceneBounds: SceneBounds
         public var selectedPrimPath: String?
-        public var viewIsMounted: Bool
 
         public init(
             activeLoadCommand: LoadCommand? = nil,
             cameraResetRequestID: UUID? = nil,
-            isLoaded: Bool = false,
-            isZUp: Bool = false,
-            lastCompletedCommandID: UUID? = nil,
             liveTransform: LiveTransformData? = nil,
             liveTransformRequestID: UUID? = nil,
             blendShapeRuntimeWeights: [BlendShapeRuntimeWeight] = [],
             blendShapeRuntimeRequestID: UUID? = nil,
-            lastSuccessfulLoadCommand: LoadCommand? = nil,
             loadRequestID: UUID = UUID(),
-            metersPerUnit: Double = 1.0,
             modelURL: URL? = nil,
-            pendingSelection: String? = nil,
-            sceneBounds: SceneBounds = SceneBounds(),
-            selectedPrimPath: String? = nil,
-            viewIsMounted: Bool = false
+            selectedPrimPath: String? = nil
         ) {
             self.activeLoadCommand = activeLoadCommand
             self.cameraResetRequestID = cameraResetRequestID
-            self.isLoaded = isLoaded
-            self.isZUp = isZUp
-            self.lastCompletedCommandID = lastCompletedCommandID
             self.liveTransform = liveTransform
             self.liveTransformRequestID = liveTransformRequestID
             self.blendShapeRuntimeWeights = blendShapeRuntimeWeights
             self.blendShapeRuntimeRequestID = blendShapeRuntimeRequestID
-            self.lastSuccessfulLoadCommand = lastSuccessfulLoadCommand
             self.loadRequestID = loadRequestID
-            self.metersPerUnit = metersPerUnit
             self.modelURL = modelURL
-            self.pendingSelection = pendingSelection
-            self.sceneBounds = sceneBounds
             self.selectedPrimPath = selectedPrimPath
-            self.viewIsMounted = viewIsMounted
         }
     }
 
@@ -125,7 +101,7 @@ public struct StageViewFeature {
         /// Apply runtime blend-shape weights to the viewport (not persisted to USD)
         case applyBlendShapeWeights([BlendShapeRuntimeWeight])
         case clearRequested
-        case discreteStateReceived(RealityKitDiscreteSnapshot)
+        case delegate(Delegate)
         case entityPicked(String?)
         case frameRequested
         case loadCommandCompleted(UUID)
@@ -134,8 +110,10 @@ public struct StageViewFeature {
         case refreshRequested(commandID: UUID, url: URL, preserveCamera: Bool)
         case resetCameraRequested
         case selectionChanged(String?)
-        case viewAppeared
-        case viewDisappeared
+
+        public enum Delegate: Equatable {
+            case userPickedPrim(String?)
+        }
     }
 
     public var body: some ReducerOf<Self> {
@@ -154,34 +132,17 @@ public struct StageViewFeature {
             case .clearRequested:
                 state.activeLoadCommand = nil
                 state.cameraResetRequestID = nil
-                state.isLoaded = false
-                state.isZUp = false
-                state.lastSuccessfulLoadCommand = nil
                 state.loadRequestID = uuid()
+                state.liveTransform = nil
+                state.liveTransformRequestID = nil
                 state.blendShapeRuntimeWeights = []
                 state.blendShapeRuntimeRequestID = nil
-                state.metersPerUnit = 1.0
                 state.modelURL = nil
-                state.pendingSelection = nil
-                state.sceneBounds = SceneBounds()
                 state.selectedPrimPath = nil
                 return .none
 
-            case let .discreteStateReceived(snapshot):
-                state.isLoaded = snapshot.isLoaded
-                state.isZUp = snapshot.isZUp
-                state.metersPerUnit = snapshot.metersPerUnit
-                state.sceneBounds = snapshot.sceneBounds
-                if snapshot.isUserInteraction {
-                    state.pendingSelection = snapshot.selectedPrimPath
-                    state.selectedPrimPath = snapshot.selectedPrimPath
-                }
-                return .none
-
             case let .entityPicked(path):
-                state.pendingSelection = path
-                state.selectedPrimPath = path
-                return .none
+                return .send(.delegate(.userPickedPrim(path)))
 
             case .frameRequested:
                 return .none
@@ -190,10 +151,7 @@ public struct StageViewFeature {
                 guard state.activeLoadCommand?.id == commandID else {
                     return .none
                 }
-                state.lastSuccessfulLoadCommand = state.activeLoadCommand
                 state.activeLoadCommand = nil
-                state.isLoaded = true
-                state.lastCompletedCommandID = commandID
                 return .none
 
             case let .loadCommandFailed(commandID, _):
@@ -201,7 +159,6 @@ public struct StageViewFeature {
                     return .none
                 }
                 state.activeLoadCommand = nil
-                state.isLoaded = false
                 return .none
 
             case let .loadRequested(commandID, url, preserveCamera):
@@ -211,7 +168,6 @@ public struct StageViewFeature {
                     preserveCamera: preserveCamera,
                     url: url
                 )
-                state.isLoaded = false
                 state.loadRequestID = commandID
                 state.modelURL = url
                 return .none
@@ -223,7 +179,6 @@ public struct StageViewFeature {
                     preserveCamera: preserveCamera,
                     url: url
                 )
-                state.isLoaded = false
                 state.loadRequestID = commandID
                 state.modelURL = url
                 return .none
@@ -233,30 +188,10 @@ public struct StageViewFeature {
                 return .none
 
             case let .selectionChanged(path):
-                state.pendingSelection = path
                 state.selectedPrimPath = path
                 return .none
 
-            case .viewAppeared:
-                state.viewIsMounted = true
-                guard state.activeLoadCommand == nil else { return .none }
-                guard state.isLoaded else { return .none }
-                guard let command = state.lastSuccessfulLoadCommand else { return .none }
-
-                let replayID = uuid()
-                state.activeLoadCommand = LoadCommand(
-                    id: replayID,
-                    mode: .fullLoad,
-                    // Remounting creates a fresh RealityView/camera instance, so preserving
-                    // camera on replay can retain an unfitted default pose.
-                    preserveCamera: false,
-                    url: command.url
-                )
-                state.loadRequestID = replayID
-                return .none
-
-            case .viewDisappeared:
-                state.viewIsMounted = false
+            case .delegate:
                 return .none
             }
         }

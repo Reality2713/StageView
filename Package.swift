@@ -16,7 +16,8 @@ let package = Package(
             dependencies: [
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
             ],
-            exclude: ["SelectionOutline/Shaders/OutlineShaders.metal"]
+            exclude: ["SelectionOutline/Shaders/OutlineShaders.metal"],
+            resources: [.process("Resources")]
         ),
         .testTarget(
             name: "StageViewTests",
