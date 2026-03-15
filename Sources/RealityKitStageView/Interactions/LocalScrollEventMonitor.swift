@@ -26,6 +26,29 @@ final class LocalScrollEventMonitor {
     }
 }
 
+@MainActor
+final class LocalMouseEventMonitor {
+    nonisolated(unsafe) private let monitor: Any?
+
+    init(handler: @escaping (NSEvent) -> NSEvent?) {
+        self.monitor = NSEvent.addLocalMonitorForEvents(
+            matching: [
+                .leftMouseDown, .leftMouseDragged, .leftMouseUp,
+                .rightMouseDown, .rightMouseDragged, .rightMouseUp,
+                .otherMouseDown, .otherMouseDragged, .otherMouseUp,
+            ]
+        ) { event in
+            handler(event)
+        }
+    }
+
+    deinit {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
+}
+
 /// A non-interactive AppKit view we can use as a geometry anchor for filtering events.
 struct EventRegionView: NSViewRepresentable {
     var onResolveView: (NSView) -> Void

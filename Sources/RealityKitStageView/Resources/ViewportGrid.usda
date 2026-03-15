@@ -10,7 +10,7 @@
 
 def Xform "Root"
 {
-    def Mesh "GridPlane" (
+    def Mesh "GridPlaneTop" (
         prepend apiSchemas = ["MaterialBindingAPI"]
     )
     {
@@ -23,6 +23,24 @@ def Xform "Root"
         )
         point3f[] points = [(-50, 0, -50), (50, 0, -50), (50, 0, 50), (-50, 0, 50)]
         texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "GridPlaneBottom" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Root/Looks/ViewportGridMaterial>
+        bool doubleSided = true
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 3, 2, 1]
+        normal3f[] normals = [(0, -1, 0)] (
+            interpolation = "uniform"
+        )
+        point3f[] points = [(-50, -0.0001, -50), (50, -0.0001, -50), (50, -0.0001, 50), (-50, -0.0001, 50)]
+        texCoord2f[] primvars:st = [(0, 0), (0, 1), (1, 1), (1, 0)] (
             interpolation = "vertex"
         )
         uniform token subdivisionScheme = "none"
@@ -48,6 +66,8 @@ def Xform "Root"
             float inputs:axisExtraThickness = 0.002
             float inputs:fogDensity = 0.065
             float inputs:fogMax = 0.9
+            float inputs:edgeFadeStart = 1
+            float inputs:edgeFadeReciprocalRange = 1
             color3f inputs:minorColor = (0.34, 0.37, 0.42)
             color3f inputs:majorColor = (0.50, 0.53, 0.57)
             color3f inputs:xAxisColor = (0.32, 0.58, 0.87)
@@ -74,7 +94,7 @@ def Xform "Root"
             def Shader "WorldPosition"
             {
                 uniform token info:id = "ND_position_vector3"
-                string inputs:space = "world"
+                token inputs:space = "world"
                 vector3f outputs:out
             }
 
@@ -529,6 +549,70 @@ def Xform "Root"
                 float outputs:out
             }
 
+            # ── Edge fade ──
+
+            def Shader "EdgeXAbs"
+            {
+                uniform token info:id = "ND_absval_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float outputs:out
+            }
+
+            def Shader "EdgeZAbs"
+            {
+                uniform token info:id = "ND_absval_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float outputs:out
+            }
+
+            def Shader "EdgeDistance"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeXAbs.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/EdgeZAbs.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "EdgeDistancePastStart"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeDistance.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:edgeFadeStart>
+                float outputs:out
+            }
+
+            def Shader "EdgeFadeUnclamped"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeDistancePastStart.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:edgeFadeReciprocalRange>
+                float outputs:out
+            }
+
+            def Shader "EdgeFadeNonNegative"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeFadeUnclamped.outputs:out>
+                float inputs:in2 = 0
+                float outputs:out
+            }
+
+            def Shader "EdgeFadeClamped"
+            {
+                uniform token info:id = "ND_min_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeFadeNonNegative.outputs:out>
+                float inputs:in2 = 1
+                float outputs:out
+            }
+
+            def Shader "EdgeFadeFactor"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/EdgeFadeClamped.outputs:out>
+                float outputs:out
+            }
+
             # ── Fog-attenuated masks ──
 
             def Shader "MinorMaskVisible"
@@ -560,6 +644,38 @@ def Xform "Root"
                 uniform token info:id = "ND_multiply_float"
                 float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZMask.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/FogFactor.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorMaskFaded"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/EdgeFadeFactor.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorMaskFaded"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/EdgeFadeFactor.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisXFaded"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/EdgeFadeFactor.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisZFaded"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/EdgeFadeFactor.outputs:out>
                 float outputs:out
             }
 
@@ -606,7 +722,7 @@ def Xform "Root"
             def Shader "MinorRed"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outr>
                 float outputs:out
             }
@@ -614,7 +730,7 @@ def Xform "Root"
             def Shader "MinorGreen"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outg>
                 float outputs:out
             }
@@ -622,7 +738,7 @@ def Xform "Root"
             def Shader "MinorBlue"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outb>
                 float outputs:out
             }
@@ -630,7 +746,7 @@ def Xform "Root"
             def Shader "MajorRed"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorColorChannels.outputs:outr>
                 float outputs:out
             }
@@ -638,7 +754,7 @@ def Xform "Root"
             def Shader "MajorGreen"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorColorChannels.outputs:outg>
                 float outputs:out
             }
@@ -646,7 +762,7 @@ def Xform "Root"
             def Shader "MajorBlue"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorColorChannels.outputs:outb>
                 float outputs:out
             }
@@ -654,7 +770,7 @@ def Xform "Root"
             def Shader "AxisXRed"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/XAxisColorChannels.outputs:outr>
                 float outputs:out
             }
@@ -662,7 +778,7 @@ def Xform "Root"
             def Shader "AxisXGreen"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/XAxisColorChannels.outputs:outg>
                 float outputs:out
             }
@@ -670,7 +786,7 @@ def Xform "Root"
             def Shader "AxisXBlue"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/XAxisColorChannels.outputs:outb>
                 float outputs:out
             }
@@ -678,7 +794,7 @@ def Xform "Root"
             def Shader "AxisZRed"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/ZAxisColorChannels.outputs:outr>
                 float outputs:out
             }
@@ -686,7 +802,7 @@ def Xform "Root"
             def Shader "AxisZGreen"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/ZAxisColorChannels.outputs:outg>
                 float outputs:out
             }
@@ -694,7 +810,7 @@ def Xform "Root"
             def Shader "AxisZBlue"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/ZAxisColorChannels.outputs:outb>
                 float outputs:out
             }
@@ -787,16 +903,16 @@ def Xform "Root"
             def Shader "AnyVisibleMinorMajor"
             {
                 uniform token info:id = "ND_max_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskVisible.outputs:out>
-                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorMaskVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskFaded.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorMaskFaded.outputs:out>
                 float outputs:out
             }
 
             def Shader "AnyVisibleAxis"
             {
                 uniform token info:id = "ND_max_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
-                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXFaded.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZFaded.outputs:out>
                 float outputs:out
             }
 

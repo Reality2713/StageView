@@ -27,6 +27,7 @@ public struct RealityKitConfiguration: Sendable {
     public var outlineConfiguration: OutlineConfiguration = .init()
     /// Rendering mode for selection visualization.
     public var selectionHighlightStyle: SelectionHighlightStyle = .boundingBox
+    public var navigationMapping: RealityKitNavigationMapping = .apple
 
     public init(
         showGrid: Bool = true,
@@ -38,7 +39,8 @@ public struct RealityKitConfiguration: Sendable {
         environmentRotation: Float = 0.0,
         showEnvironmentBackground: Bool = true,
         outlineConfiguration: OutlineConfiguration = .init(),
-        selectionHighlightStyle: SelectionHighlightStyle = .boundingBox
+        selectionHighlightStyle: SelectionHighlightStyle = .boundingBox,
+        navigationMapping: RealityKitNavigationMapping = .apple
     ) {
         self.showGrid = showGrid
         self.showAxes = showAxes
@@ -50,6 +52,7 @@ public struct RealityKitConfiguration: Sendable {
         self.showEnvironmentBackground = showEnvironmentBackground
         self.outlineConfiguration = outlineConfiguration
         self.selectionHighlightStyle = selectionHighlightStyle
+        self.navigationMapping = navigationMapping
     }
 
     /// Hydra canonical EV model: linear gain = 2^EV.

@@ -181,7 +181,8 @@ public struct RealityKitStageView: View {
             state: $cameraState,
             sceneBounds: runtime.sceneBounds,
             metersPerUnit: configuration.metersPerUnit,
-            maxDistance: Float(environmentRadius * 0.9)
+            maxDistance: Float(environmentRadius * 0.9),
+            navigationMapping: configuration.navigationMapping
         ))
         #endif
         .gesture(selectionGesture)

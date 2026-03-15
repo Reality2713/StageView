@@ -75,7 +75,9 @@ enum ViewportTuning {
     }
 
     static func gridRadiusMeters(worldExtentMeters: Double) -> Double {
-        Swift.max(0.25, worldExtentMeters * 1.75)
+        // Keep a generous floor plane even for tiny assets so depth cues and
+        // fog remain legible at normal editing camera distances.
+        Swift.max(3.0, worldExtentMeters * 12.0)
     }
 
     static func minorGridStepMeters(forGridRadius radiusMeters: Double) -> Double {
