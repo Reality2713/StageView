@@ -269,7 +269,10 @@ public struct ArcballCameraControls: ViewModifier {
         if startDistance == nil { startDistance = state.distance }
         guard let start = startDistance else { return }
         guard magnification > 0 else { return }
-        let newDistance = start / Float(magnification)
+        let effective = navigationMapping.invertZoomDirection
+            ? 1.0 / magnification
+            : magnification
+        let newDistance = start / Float(effective)
         state.distance = clampDistance(newDistance)
     }
 
