@@ -63,6 +63,7 @@ public struct ArcballCameraControls: ViewModifier {
     @State private var mouseMonitor: LocalMouseEventMonitor?
     @State private var activeMouseInteraction: MouseInteraction?
     @State private var lastMousePoint: CGPoint?
+    @State private var currentMapping: RealityKitNavigationMapping = .apple
 
     public init(
         state: Binding<ArcballCameraState>,
@@ -118,8 +119,13 @@ public struct ArcballCameraControls: ViewModifier {
             .background(EventRegionView { view in
                 self.eventRegionView = view
             })
-            .onAppear { installMonitors() }
-            .onChange(of: navigationMapping) { _, _ in installMonitors() }
+            .onAppear {
+                currentMapping = navigationMapping
+                installMonitors()
+            }
+            .onChange(of: navigationMapping) { _, newValue in
+                currentMapping = newValue
+            }
             .onDisappear {
                 scrollMonitor = nil
                 mouseMonitor = nil
@@ -132,11 +138,11 @@ public struct ArcballCameraControls: ViewModifier {
                 return event
             }
 
-            let scrollInvert: Float = navigationMapping.invertScrollDirection ? -1 : 1
-            let zoomInvert: Float = navigationMapping.invertZoomDirection ? -1 : 1
+            let scrollInvert: Float = currentMapping.invertScrollDirection ? -1 : 1
+            let zoomInvert: Float = currentMapping.invertZoomDirection ? -1 : 1
             let action = event.modifierFlags.contains(.option)
-                ? navigationMapping.optionScrollAction
-                : navigationMapping.scrollAction
+                ? currentMapping.optionScrollAction
+                : currentMapping.scrollAction
             switch action {
             case .zoom:
                 let delta = Float(event.scrollingDeltaY) * zoomInvert
@@ -166,7 +172,7 @@ public struct ArcballCameraControls: ViewModifier {
         panDrag: Pan,
         magnifyGesture: Magnify
     ) -> some View {
-        if navigationMapping.useSwiftUIGestures {
+        if currentMapping.useSwiftUIGestures {
             content
                 .gesture(orbitDrag)
                 .gesture(panDrag)
@@ -269,7 +275,7 @@ public struct ArcballCameraControls: ViewModifier {
         if startDistance == nil { startDistance = state.distance }
         guard let start = startDistance else { return }
         guard magnification > 0 else { return }
-        let effective = navigationMapping.invertZoomDirection
+        let effective = currentMapping.invertZoomDirection
             ? 1.0 / magnification
             : magnification
         let newDistance = start / Float(effective)
@@ -289,7 +295,7 @@ public struct ArcballCameraControls: ViewModifier {
 
     @MainActor
     private func handleMouseEvent(_ event: NSEvent) -> NSEvent? {
-        guard !navigationMapping.useSwiftUIGestures else { return event }
+        guard !currentMapping.useSwiftUIGestures else { return event }
         guard shouldHandleMouseEvent(event) else { return event }
 
         guard let view = eventRegionView else { return event }
@@ -314,7 +320,7 @@ public struct ArcballCameraControls: ViewModifier {
             case .pan:
                 handlePan(deltaX: deltaX, deltaY: -deltaY)
             case .zoom:
-                let zoomInvert: Float = navigationMapping.invertZoomDirection ? -1 : 1
+                let zoomInvert: Float = currentMapping.invertZoomDirection ? -1 : 1
                 let newDistance = state.distance * exp(deltaY * 0.01 * zoomInvert)
                 state.distance = clampDistance(newDistance)
             }
@@ -346,16 +352,16 @@ public struct ArcballCameraControls: ViewModifier {
         let button = event.buttonNumber
         let mods = event.modifierFlags
 
-        if button == navigationMapping.orbit.button
-            && mods.contains(navigationMapping.orbit.modifiers) {
+        if button == currentMapping.orbit.button
+            && mods.contains(currentMapping.orbit.modifiers) {
             return .orbit
         }
-        if button == navigationMapping.zoom.button
-            && mods.contains(navigationMapping.zoom.modifiers) {
+        if button == currentMapping.zoom.button
+            && mods.contains(currentMapping.zoom.modifiers) {
             return .zoom
         }
-        if button == navigationMapping.pan.button
-            && mods.contains(navigationMapping.pan.modifiers) {
+        if button == currentMapping.pan.button
+            && mods.contains(currentMapping.pan.modifiers) {
             return .pan
         }
         return nil
