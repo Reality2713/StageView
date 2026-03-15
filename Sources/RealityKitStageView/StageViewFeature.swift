@@ -68,6 +68,7 @@ public struct StageViewFeature {
         public var blendShapeRuntimeRequestID: UUID?
         public var loadRequestID: UUID
         public var modelURL: URL?
+        public var navigationMapping: RealityKitNavigationMapping
         public var selectedPrimPath: String?
 
         public init(
@@ -79,6 +80,7 @@ public struct StageViewFeature {
             blendShapeRuntimeRequestID: UUID? = nil,
             loadRequestID: UUID = UUID(),
             modelURL: URL? = nil,
+            navigationMapping: RealityKitNavigationMapping = .apple,
             selectedPrimPath: String? = nil
         ) {
             self.activeLoadCommand = activeLoadCommand
@@ -89,6 +91,7 @@ public struct StageViewFeature {
             self.blendShapeRuntimeRequestID = blendShapeRuntimeRequestID
             self.loadRequestID = loadRequestID
             self.modelURL = modelURL
+            self.navigationMapping = navigationMapping
             self.selectedPrimPath = selectedPrimPath
         }
     }
@@ -110,6 +113,7 @@ public struct StageViewFeature {
         case refreshRequested(commandID: UUID, url: URL, preserveCamera: Bool)
         case resetCameraRequested
         case selectionChanged(String?)
+        case updateNavigationMapping(RealityKitNavigationMapping)
 
         public enum Delegate: Equatable {
             case userPickedPrim(String?)
@@ -189,6 +193,10 @@ public struct StageViewFeature {
 
             case let .selectionChanged(path):
                 state.selectedPrimPath = path
+                return .none
+
+            case let .updateNavigationMapping(mapping):
+                state.navigationMapping = mapping
                 return .none
 
             case .delegate:

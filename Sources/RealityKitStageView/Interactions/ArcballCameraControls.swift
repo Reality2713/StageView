@@ -47,6 +47,227 @@ public struct ArcballCameraState: Equatable, Sendable {
 }
 
 #if os(macOS)
+
+// MARK: - Event Controller (reference type for stable closure captures)
+
+/// Owns NSEvent monitors and all mutable state they read.
+/// Closures capture this class instance by reference, so property
+/// updates (mapping, camera state, view region) are always visible
+/// at event time — no struct-copy staleness.
+@MainActor
+final class ArcballEventController {
+    var navigationMapping: RealityKitNavigationMapping = .apple
+    var cameraState: ArcballCameraState = .init()
+    var sceneBounds: SceneBounds = .init()
+    var metersPerUnit: Double = 1.0
+    var maxDistanceOverride: Float?
+
+    var eventRegionView: NSView?
+
+    // Written back to the ViewModifier's @Binding each frame
+    var onCameraStateChanged: ((ArcballCameraState) -> Void)?
+
+    private(set) var scrollMonitor: LocalScrollEventMonitor?
+    private(set) var mouseMonitor: LocalMouseEventMonitor?
+
+    private var activeMouseInteraction: MouseInteraction?
+    private var lastMousePoint: CGPoint?
+    private var lastClampedEdge: ClampEdge?
+
+    private enum ClampEdge { case min, max }
+    enum MouseInteraction { case orbit, pan, zoom }
+
+    // MARK: - Lifecycle
+
+    func installMonitors() {
+        scrollMonitor = LocalScrollEventMonitor { [weak self] event in
+            self?.handleScrollEvent(event)
+        }
+        mouseMonitor = LocalMouseEventMonitor { [weak self] event in
+            self?.handleMouseEvent(event)
+        }
+    }
+
+    func tearDown() {
+        scrollMonitor = nil
+        mouseMonitor = nil
+    }
+
+    // MARK: - Scroll
+
+    private func handleScrollEvent(_ event: NSEvent) -> NSEvent? {
+        guard isEventInsideViewport(event) else { return event }
+
+        let scrollInvert: Float = navigationMapping.invertScrollDirection ? -1 : 1
+        let zoomInvert: Float = navigationMapping.invertZoomDirection ? -1 : 1
+        let action = event.modifierFlags.contains(.option)
+            ? navigationMapping.optionScrollAction
+            : navigationMapping.scrollAction
+
+        switch action {
+        case .zoom:
+            let delta = Float(event.scrollingDeltaY) * zoomInvert
+            let newDistance = cameraState.distance * exp(delta * 0.01)
+            cameraState.distance = clampDistance(newDistance)
+        case .pan:
+            let multiplier: Float = event.modifierFlags.contains(.shift) ? 5.0 : 1.0
+            let deltaX = Float(event.scrollingDeltaX) * multiplier * scrollInvert
+            let deltaY = Float(event.scrollingDeltaY) * multiplier * scrollInvert
+            applyPan(deltaX: deltaX, deltaY: deltaY)
+        case .orbit:
+            let deltaX = Float(event.scrollingDeltaX) * scrollInvert
+            let deltaY = Float(event.scrollingDeltaY) * scrollInvert
+            applyOrbit(deltaX: deltaX, deltaY: deltaY)
+        }
+        publishState()
+        return nil
+    }
+
+    // MARK: - Mouse
+
+    private func handleMouseEvent(_ event: NSEvent) -> NSEvent? {
+        guard !navigationMapping.useSwiftUIGestures else { return event }
+        guard shouldHandleMouseEvent(event) else { return event }
+        guard let view = eventRegionView else { return event }
+
+        let localPoint = view.convert(event.locationInWindow, from: nil)
+
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            guard let interaction = interaction(for: event) else { return event }
+            activeMouseInteraction = interaction
+            lastMousePoint = localPoint
+            return nil
+
+        case .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
+            guard let interaction = activeMouseInteraction else { return event }
+            let previous = lastMousePoint ?? localPoint
+            let deltaX = Float(localPoint.x - previous.x)
+            let deltaY = Float(localPoint.y - previous.y)
+
+            switch interaction {
+            case .orbit:
+                applyOrbit(deltaX: deltaX, deltaY: deltaY)
+            case .pan:
+                applyPan(deltaX: deltaX, deltaY: -deltaY)
+            case .zoom:
+                let zoomInvert: Float = navigationMapping.invertZoomDirection ? -1 : 1
+                let newDistance = cameraState.distance * exp(deltaY * 0.01 * zoomInvert)
+                cameraState.distance = clampDistance(newDistance)
+            }
+
+            lastMousePoint = localPoint
+            publishState()
+            return nil
+
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp:
+            let handled = activeMouseInteraction != nil
+            activeMouseInteraction = nil
+            lastMousePoint = nil
+            return handled ? nil : event
+
+        default:
+            return event
+        }
+    }
+
+    private func shouldHandleMouseEvent(_ event: NSEvent) -> Bool {
+        if activeMouseInteraction != nil {
+            guard let view = eventRegionView else { return false }
+            return event.window === view.window
+        }
+        return isEventInsideViewport(event)
+    }
+
+    func interaction(for event: NSEvent) -> MouseInteraction? {
+        let button = event.buttonNumber
+        let mods = event.modifierFlags
+
+        if button == navigationMapping.orbit.button
+            && mods.contains(navigationMapping.orbit.modifiers) {
+            return .orbit
+        }
+        if button == navigationMapping.zoom.button
+            && mods.contains(navigationMapping.zoom.modifiers) {
+            return .zoom
+        }
+        if button == navigationMapping.pan.button
+            && mods.contains(navigationMapping.pan.modifiers) {
+            return .pan
+        }
+        return nil
+    }
+
+    // MARK: - Viewport hit test
+
+    func isEventInsideViewport(_ event: NSEvent) -> Bool {
+        guard let view = eventRegionView else { return false }
+        guard let window = view.window, window == event.window else { return false }
+        let viewRectInWindow = view.convert(view.bounds, to: nil)
+        let viewRectOnScreen = window.convertToScreen(viewRectInWindow)
+        return viewRectOnScreen.contains(NSEvent.mouseLocation)
+    }
+
+    // MARK: - Camera operations
+
+    func applyOrbit(deltaX: Float, deltaY: Float) {
+        let sensitivity: Float = 0.01
+        cameraState.rotation.y -= deltaX * sensitivity
+        cameraState.rotation.x -= deltaY * sensitivity
+        cameraState.rotation.x = Swift.max(-.pi / 2 + 0.01, Swift.min(.pi / 2 - 0.01, cameraState.rotation.x))
+    }
+
+    func applyPan(deltaX: Float, deltaY: Float, scale: Float? = nil) {
+        let panScale = scale ?? ViewportTuning.panScale(
+            distance: cameraState.distance,
+            sceneBounds: sceneBounds,
+            metersPerUnit: metersPerUnit
+        )
+        let rotX = simd_quatf(angle: cameraState.rotation.x, axis: [1, 0, 0])
+        let rotY = simd_quatf(angle: cameraState.rotation.y, axis: [0, 1, 0])
+        let orientation = rotY * rotX
+        let right = orientation.act([1, 0, 0])
+        let up = orientation.act([0, 1, 0])
+        cameraState.focus += (right * (-deltaX * panScale)) + (up * (deltaY * panScale))
+    }
+
+    func clampDistance(_ value: Float) -> Float {
+        let minDist = ViewportTuning.minimumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
+        let maxDist: Float
+        if let override = maxDistanceOverride {
+            maxDist = Swift.max(override, minDist)
+        } else {
+            maxDist = ViewportTuning.maximumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
+        }
+
+        let epsilon: Float = 0.0001
+        let clamped = Swift.min(Swift.max(value, minDist), maxDist)
+        let edge: ClampEdge?
+
+        if clamped <= minDist + epsilon {
+            edge = .min
+        } else if clamped >= maxDist - epsilon {
+            edge = .max
+        } else {
+            edge = nil
+        }
+
+        if edge != lastClampedEdge {
+            if edge != nil {
+                NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            }
+            lastClampedEdge = edge
+        }
+        return clamped
+    }
+
+    private func publishState() {
+        onCameraStateChanged?(cameraState)
+    }
+}
+
+// MARK: - ViewModifier (thin shell)
+
 public struct ArcballCameraControls: ViewModifier {
     @Binding var state: ArcballCameraState
     let sceneBounds: SceneBounds
@@ -54,16 +275,10 @@ public struct ArcballCameraControls: ViewModifier {
     let maxDistanceOverride: Float?
     let navigationMapping: RealityKitNavigationMapping
 
+    @State private var controller = ArcballEventController()
     @State private var startDistance: Float?
     @State private var previousOrbitValue: DragGesture.Value?
     @State private var previousPanValue: DragGesture.Value?
-    @State private var lastClampedEdge: ClampEdge?
-    @State private var eventRegionView: NSView?
-    @State private var scrollMonitor: LocalScrollEventMonitor?
-    @State private var mouseMonitor: LocalMouseEventMonitor?
-    @State private var activeMouseInteraction: MouseInteraction?
-    @State private var lastMousePoint: CGPoint?
-    @State private var currentMapping: RealityKitNavigationMapping = .apple
 
     public init(
         state: Binding<ArcballCameraState>,
@@ -115,54 +330,33 @@ public struct ArcballCameraControls: ViewModifier {
             panDrag: panDrag,
             magnifyGesture: magnifyGesture
         )
-            // Geometry anchor used to filter scroll events to just this viewport.
-            .background(EventRegionView { view in
-                self.eventRegionView = view
-            })
-            .onAppear {
-                currentMapping = navigationMapping
-                installMonitors()
+        .background(EventRegionView { view in
+            controller.eventRegionView = view
+        })
+        .onAppear {
+            syncController()
+            controller.onCameraStateChanged = { newState in
+                state = newState
             }
-            .onChange(of: navigationMapping) { _, newValue in
-                currentMapping = newValue
-            }
-            .onDisappear {
-                scrollMonitor = nil
-                mouseMonitor = nil
-            }
+            controller.installMonitors()
+        }
+        .onChange(of: navigationMapping) { _, _ in syncController() }
+        .onChange(of: sceneBounds) { _, _ in syncController() }
+        .onChange(of: metersPerUnit) { _, _ in syncController() }
+        .onChange(of: state) { _, newState in
+            controller.cameraState = newState
+        }
+        .onDisappear {
+            controller.tearDown()
+        }
     }
 
-    private func installMonitors() {
-        scrollMonitor = LocalScrollEventMonitor { event in
-            guard shouldHandleViewportEvent(event) else {
-                return event
-            }
-
-            let scrollInvert: Float = currentMapping.invertScrollDirection ? -1 : 1
-            let zoomInvert: Float = currentMapping.invertZoomDirection ? -1 : 1
-            let action = event.modifierFlags.contains(.option)
-                ? currentMapping.optionScrollAction
-                : currentMapping.scrollAction
-            switch action {
-            case .zoom:
-                let delta = Float(event.scrollingDeltaY) * zoomInvert
-                let newDistance = state.distance * exp(delta * 0.01)
-                state.distance = clampDistance(newDistance)
-            case .pan:
-                let multiplier: Float = event.modifierFlags.contains(.shift) ? 5.0 : 1.0
-                let deltaX = Float(event.scrollingDeltaX) * multiplier * scrollInvert
-                let deltaY = Float(event.scrollingDeltaY) * multiplier * scrollInvert
-                handlePan(deltaX: deltaX, deltaY: deltaY)
-            case .orbit:
-                let deltaX = Float(event.scrollingDeltaX) * scrollInvert
-                let deltaY = Float(event.scrollingDeltaY) * scrollInvert
-                handleOrbit(deltaX: deltaX, deltaY: deltaY)
-            }
-            return nil
-        }
-        mouseMonitor = LocalMouseEventMonitor { event in
-            handleMouseEvent(event)
-        }
+    private func syncController() {
+        controller.navigationMapping = navigationMapping
+        controller.sceneBounds = sceneBounds
+        controller.metersPerUnit = metersPerUnit
+        controller.maxDistanceOverride = maxDistanceOverride
+        controller.cameraState = state
     }
 
     @ViewBuilder
@@ -172,7 +366,7 @@ public struct ArcballCameraControls: ViewModifier {
         panDrag: Pan,
         magnifyGesture: Magnify
     ) -> some View {
-        if currentMapping.useSwiftUIGestures {
+        if navigationMapping.useSwiftUIGestures {
             content
                 .gesture(orbitDrag)
                 .gesture(panDrag)
@@ -183,65 +377,13 @@ public struct ArcballCameraControls: ViewModifier {
         }
     }
 
-    private enum ClampEdge {
-        case min
-        case max
-    }
-
-    private enum MouseInteraction {
-        case orbit
-        case pan
-        case zoom
-    }
-
-    private let clampEpsilon: Float = 0.0001
-    private var minDistance: Float {
-        ViewportTuning.minimumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
-    }
-
-    private var maxDistanceValue: Float {
-        if let override = maxDistanceOverride {
-            return Swift.max(override, minDistance)
-        }
-        return ViewportTuning.maximumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
-    }
-
-    private func clampDistance(_ value: Float) -> Float {
-        let maxDistance = maxDistanceValue
-        let clamped = Swift.min(Swift.max(value, minDistance), maxDistance)
-        let edge: ClampEdge?
-
-        if clamped <= minDistance + clampEpsilon {
-            edge = .min
-        } else if clamped >= maxDistance - clampEpsilon {
-            edge = .max
-        } else {
-            edge = nil
-        }
-
-        if edge != lastClampedEdge {
-            if edge != nil {
-                performHapticFeedback()
-            }
-            lastClampedEdge = edge
-        }
-
-        return clamped
-    }
-
-    private func performHapticFeedback() {
-        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-    }
+    // MARK: - SwiftUI gesture handlers (use controller for shared logic)
 
     private func handleOrbitDrag(_ value: DragGesture.Value) {
-        let sensitivity: Float = 0.01
         let deltaX = Float(value.translation.width - (previousOrbitValue?.translation.width ?? 0))
         let deltaY = Float(value.translation.height - (previousOrbitValue?.translation.height ?? 0))
-        var newRotation = state.rotation
-        newRotation.y -= deltaX * sensitivity
-        newRotation.x -= deltaY * sensitivity
-        newRotation.x = Swift.max(-.pi / 2 + 0.01, Swift.min(.pi / 2 - 0.01, newRotation.x))
-        state.rotation = newRotation
+        controller.applyOrbit(deltaX: deltaX, deltaY: deltaY)
+        state = controller.cameraState
     }
 
     private func handlePanDrag(_ value: DragGesture.Value) {
@@ -252,128 +394,20 @@ public struct ArcballCameraControls: ViewModifier {
             sceneBounds: sceneBounds,
             metersPerUnit: metersPerUnit
         )
-        handlePan(deltaX: deltaX, deltaY: -deltaY, scale: scale)
-    }
-
-    private func handlePan(deltaX: Float, deltaY: Float, scale: Float? = nil) {
-        let panScale = scale ?? ViewportTuning.panScale(
-            distance: state.distance,
-            sceneBounds: sceneBounds,
-            metersPerUnit: metersPerUnit
-        )
-        let rotX = simd_quatf(angle: state.rotation.x, axis: [1, 0, 0])
-        let rotY = simd_quatf(angle: state.rotation.y, axis: [0, 1, 0])
-        let orientation = rotY * rotX
-
-        let right = orientation.act([1, 0, 0])
-        let up = orientation.act([0, 1, 0])
-
-        state.focus += (right * (-deltaX * panScale)) + (up * (deltaY * panScale))
+        controller.applyPan(deltaX: deltaX, deltaY: -deltaY, scale: scale)
+        state = controller.cameraState
     }
 
     private func handleMagnification(_ magnification: CGFloat) {
         if startDistance == nil { startDistance = state.distance }
         guard let start = startDistance else { return }
         guard magnification > 0 else { return }
-        let effective = currentMapping.invertZoomDirection
+        let effective = controller.navigationMapping.invertZoomDirection
             ? 1.0 / magnification
             : magnification
         let newDistance = start / Float(effective)
-        state.distance = clampDistance(newDistance)
-    }
-
-    @MainActor
-    private func shouldHandleViewportEvent(_ event: NSEvent) -> Bool {
-        guard let view = eventRegionView else { return false }
-        guard let window = view.window, window == event.window else { return false }
-
-        let viewRectInWindow = view.convert(view.bounds, to: nil)
-        let viewRectOnScreen = window.convertToScreen(viewRectInWindow)
-        let mouseOnScreen = NSEvent.mouseLocation
-        return viewRectOnScreen.contains(mouseOnScreen)
-    }
-
-    @MainActor
-    private func handleMouseEvent(_ event: NSEvent) -> NSEvent? {
-        guard !currentMapping.useSwiftUIGestures else { return event }
-        guard shouldHandleMouseEvent(event) else { return event }
-
-        guard let view = eventRegionView else { return event }
-        let localPoint = view.convert(event.locationInWindow, from: nil)
-
-        switch event.type {
-        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
-            guard let interaction = interaction(for: event) else { return event }
-            activeMouseInteraction = interaction
-            lastMousePoint = localPoint
-            return nil
-
-        case .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
-            guard let interaction = activeMouseInteraction else { return event }
-            let previousPoint = lastMousePoint ?? localPoint
-            let deltaX = Float(localPoint.x - previousPoint.x)
-            let deltaY = Float(localPoint.y - previousPoint.y)
-
-            switch interaction {
-            case .orbit:
-                handleOrbit(deltaX: deltaX, deltaY: deltaY)
-            case .pan:
-                handlePan(deltaX: deltaX, deltaY: -deltaY)
-            case .zoom:
-                let zoomInvert: Float = currentMapping.invertZoomDirection ? -1 : 1
-                let newDistance = state.distance * exp(deltaY * 0.01 * zoomInvert)
-                state.distance = clampDistance(newDistance)
-            }
-
-            lastMousePoint = localPoint
-            return nil
-
-        case .leftMouseUp, .rightMouseUp, .otherMouseUp:
-            let handled = activeMouseInteraction != nil
-            activeMouseInteraction = nil
-            lastMousePoint = nil
-            return handled ? nil : event
-
-        default:
-            return event
-        }
-    }
-
-    @MainActor
-    private func shouldHandleMouseEvent(_ event: NSEvent) -> Bool {
-        if activeMouseInteraction != nil {
-            guard let view = eventRegionView else { return false }
-            return event.window === view.window
-        }
-        return shouldHandleViewportEvent(event)
-    }
-
-    private func interaction(for event: NSEvent) -> MouseInteraction? {
-        let button = event.buttonNumber
-        let mods = event.modifierFlags
-
-        if button == currentMapping.orbit.button
-            && mods.contains(currentMapping.orbit.modifiers) {
-            return .orbit
-        }
-        if button == currentMapping.zoom.button
-            && mods.contains(currentMapping.zoom.modifiers) {
-            return .zoom
-        }
-        if button == currentMapping.pan.button
-            && mods.contains(currentMapping.pan.modifiers) {
-            return .pan
-        }
-        return nil
-    }
-
-    private func handleOrbit(deltaX: Float, deltaY: Float) {
-        let sensitivity: Float = 0.01
-        var newRotation = state.rotation
-        newRotation.y -= deltaX * sensitivity
-        newRotation.x -= deltaY * sensitivity
-        newRotation.x = Swift.max(-.pi / 2 + 0.01, Swift.min(.pi / 2 - 0.01, newRotation.x))
-        state.rotation = newRotation
+        controller.cameraState.distance = controller.clampDistance(newDistance)
+        state = controller.cameraState
     }
 }
 #else
