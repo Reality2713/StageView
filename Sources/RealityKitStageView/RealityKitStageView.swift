@@ -401,7 +401,8 @@ public struct RealityKitStageView: View {
 			let clip = ViewportTuning.clippingRange(
 				distance: cameraState.distance,
 				sceneBounds: runtime.sceneBounds,
-				metersPerUnit: configuration.metersPerUnit
+				metersPerUnit: configuration.metersPerUnit,
+				environmentRadius: Float(environmentRadius)
 			)
 			component.near = clip.near
 			component.far = clip.far
@@ -476,7 +477,8 @@ public struct RealityKitStageView: View {
 			let clip = ViewportTuning.clippingRange(
 				distance: state.distance,
 				sceneBounds: runtime.sceneBounds,
-				metersPerUnit: configuration.metersPerUnit
+				metersPerUnit: configuration.metersPerUnit,
+				environmentRadius: Float(environmentRadius)
 			)
 			if Swift.abs(component.near - clip.near) > 0.0001
 				|| Swift.abs(component.far - clip.far) > 0.01
@@ -778,6 +780,10 @@ public struct RealityKitStageView: View {
 					mesh: .generateSphere(radius: Float(environmentRadius)),
 					materials: [material]
 				))
+				// X-flip inverts winding order so inside faces become front-facing.
+				// This avoids back-face UV seam artifacts and preserves correct
+				// panorama orientation and rotation direction from inside — matching
+				// IBL rotation when the same quaternion is applied to both entities.
 				skybox.scale *= .init(x: -1, y: 1, z: 1)
 				rootEntity?.addChild(skybox)
 				self.skyboxEntity = skybox
@@ -794,13 +800,26 @@ public struct RealityKitStageView: View {
 	private func makeSkyboxTexture(from cgImage: CGImage, name: String) throws -> TextureResource {
 		// HDR images loaded with kCGImageSourceShouldAllowFloat are 128-bit RGBA float.
 		// TextureResource(image:) only accepts standard bit-depth images for materials.
-		// Use CIContext to render to 8-bit, which clamps HDR values to displayable range.
+		// Using CGContext avoids tile banding artifacts that CIContext can sometimes introduce.
 		if cgImage.bitsPerComponent > 8 {
-			let ci = CIImage(cgImage: cgImage)
-			let context = CIContext()
-			let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
-			if let ldr = context.createCGImage(ci, from: ci.extent, format: .RGBA8, colorSpace: srgb) {
-				return try TextureResource(image: ldr, withName: name + "_skybox", options: .init(semantic: .color))
+			let width = cgImage.width
+			let height = cgImage.height
+			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+			let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+			
+			if let context = CGContext(
+				data: nil,
+				width: width,
+				height: height,
+				bitsPerComponent: 8,
+				bytesPerRow: width * 4,
+				space: colorSpace,
+				bitmapInfo: bitmapInfo
+			) {
+				context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+				if let ldr = context.makeImage() {
+					return try TextureResource(image: ldr, withName: name + "_skybox", options: .init(semantic: .color))
+				}
 			}
 		}
 		return try TextureResource(image: cgImage, withName: name + "_skybox", options: .init(semantic: .color))
@@ -867,8 +886,10 @@ public struct RealityKitStageView: View {
 		}
 
 		if let skyboxEntity {
-			let axis: SIMD3<Float> = runtime.isZUp ? [0, 0, 1] : [0, 1, 0]
-			skyboxEntity.transform.rotation = simd_quatf(angle: radians, axis: axis)
+			// X-flip on the sphere means inside faces are front-facing, and the UV longitude
+			// is mirrored such that applying the same orientation as the IBL entity produces
+			// matching apparent rotation from inside the sphere.
+			skyboxEntity.transform.rotation = orientation
 		}
 	}
 
