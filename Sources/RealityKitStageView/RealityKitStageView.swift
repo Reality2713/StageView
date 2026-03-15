@@ -138,18 +138,11 @@ public struct RealityKitStageView: View {
 			}
 	}
 
-	/// Combined trigger: fires only when both environment request and IBL entity are ready.
-	/// Using the request ID string (not UUID?) so the task doesn't fire when iblEntity is nil.
-	private var environmentTaskTrigger: String? {
-		guard let requestID = store.environmentRequestID, iblEntity != nil else { return nil }
-		return requestID.uuidString
-	}
-
 	@ViewBuilder
 	private var observedViewportEnvironment: some View {
 		observedViewportLifecycle
-			.task(id: environmentTaskTrigger) {
-				guard environmentTaskTrigger != nil else { return }
+			.task(id: store.environmentRequestID) {
+				guard store.environmentRequestID != nil else { return }
 				await updateEnvironment(store.environmentURL)
 			}
 			.onChange(of: configuration.showEnvironmentBackground) { _, newValue in
@@ -419,6 +412,24 @@ public struct RealityKitStageView: View {
 		ibl.name = "ImageBasedLight"
 		root.addChild(ibl)
 		self.iblEntity = ibl
+
+		// Skybox sphere — created once, texture updated when environment changes.
+		// Visibility controlled via isEnabled (synchronous, no race).
+		do {
+			let skybox = Entity()
+			skybox.name = "SkyboxSphere"
+			skybox.components.set(ModelComponent(
+				mesh: try Self.makeSkyboxSphere(radius: Float(environmentRadius)),
+				materials: [UnlitMaterial()]
+			))
+			// X-flip inverts winding order so inside faces become front-facing.
+			skybox.scale = .init(x: -1, y: 1, z: 1)
+			skybox.isEnabled = false
+			root.addChild(skybox)
+			self.skyboxEntity = skybox
+		} catch {
+			logger.error("Skybox mesh creation failed: \(error.localizedDescription, privacy: .public)")
+		}
 
 		return root
 	}
@@ -732,11 +743,14 @@ public struct RealityKitStageView: View {
 	private func updateEnvironment(_ url: URL?) async {
 		guard let ibl = iblEntity else { return }
 
+		// Clear existing IBL; skybox stays (just update its material).
 		ibl.components.remove(ImageBasedLightComponent.self)
-		skyboxEntity?.removeFromParent()
-		skyboxEntity = nil
 
-		guard let url = url else { return }
+		guard let url = url else {
+			// No environment — hide skybox, clear its texture.
+			skyboxEntity?.isEnabled = false
+			return
+		}
 
 		let resourceName =
 			url.deletingLastPathComponent().lastPathComponent + "_"
@@ -769,31 +783,23 @@ public struct RealityKitStageView: View {
 			logger.error("Environment IBL failed: \(error.localizedDescription, privacy: .public)")
 		}
 
-		// Skybox background sphere — always created alongside IBL so the texture
-		// is ready when toggled on. Visibility is controlled synchronously via
-		// isEnabled (no async race). task(id:) cancels stale loads automatically.
-		do {
-			let texture = try TextureResource.load(
-				contentsOf: url,
-				withName: resourceName + "_skybox",
-				options: .init(semantic: .color)
-			)
-			var material = UnlitMaterial()
-			material.color = .init(texture: .init(texture))
-
-			let skybox = Entity()
-			skybox.name = "SkyboxSphere"
-			skybox.components.set(ModelComponent(
-				mesh: try Self.makeSkyboxSphere(radius: Float(environmentRadius)),
-				materials: [material]
-			))
-			// X-flip inverts winding order so inside faces become front-facing.
-			skybox.scale *= .init(x: -1, y: 1, z: 1)
-			skybox.isEnabled = configuration.showEnvironmentBackground
-			rootEntity?.addChild(skybox)
-			self.skyboxEntity = skybox
-		} catch {
-			logger.error("Environment skybox failed: \(error.localizedDescription, privacy: .public)")
+		// Update skybox texture on the existing sphere entity.
+		if let skybox = skyboxEntity {
+			do {
+				let texture = try await TextureResource(
+					contentsOf: url,
+					options: .init(semantic: .color)
+				)
+				var material = UnlitMaterial()
+				material.color = .init(texture: .init(texture))
+				skybox.components.set(ModelComponent(
+					mesh: skybox.components[ModelComponent.self]!.mesh,
+					materials: [material]
+				))
+				skybox.isEnabled = configuration.showEnvironmentBackground
+			} catch {
+				logger.error("Environment skybox texture failed: \(error.localizedDescription, privacy: .public)")
+			}
 		}
 
 		updateIBLRotation(configuration.environmentRotation)
