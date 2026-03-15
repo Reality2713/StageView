@@ -133,21 +133,23 @@ public struct RealityKitStageView: View {
 					loadModel(entity)
 				}
 			}
-			.onChange(of: rootEntity.map { ObjectIdentifier($0) }) { _, newId in
-				guard newId != nil else { return }
-				// Trigger environment reload via store so the task(id:) picks it up
-				store.send(.updateEnvironmentURL(store.environmentURL))
-			}
-			.onChange(of: runtime.selectedPrimPath) { _, newPath in
+				.onChange(of: runtime.selectedPrimPath) { _, newPath in
 				updateSelectionHighlight(for: newPath)
 			}
+	}
+
+	/// Combined trigger: fires only when both environment request and IBL entity are ready.
+	/// Using the request ID string (not UUID?) so the task doesn't fire when iblEntity is nil.
+	private var environmentTaskTrigger: String? {
+		guard let requestID = store.environmentRequestID, iblEntity != nil else { return nil }
+		return requestID.uuidString
 	}
 
 	@ViewBuilder
 	private var observedViewportEnvironment: some View {
 		observedViewportLifecycle
-			.task(id: store.environmentRequestID) {
-				guard store.environmentRequestID != nil else { return }
+			.task(id: environmentTaskTrigger) {
+				guard environmentTaskTrigger != nil else { return }
 				await updateEnvironment(store.environmentURL)
 			}
 			.onChange(of: configuration.showEnvironmentBackground) { _, newValue in
