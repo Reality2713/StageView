@@ -118,49 +118,45 @@ public struct ArcballCameraControls: ViewModifier {
             .background(EventRegionView { view in
                 self.eventRegionView = view
             })
-            .onAppear {
-                if scrollMonitor == nil {
-                    scrollMonitor = LocalScrollEventMonitor { event in
-                        guard shouldHandleViewportEvent(event) else {
-                            return event
-                        }
-
-                        // Consume scroll events in the viewport so parent scroll views
-                        // (and other SwiftUI controls) don't react at the same time.
-                        let scrollInvert: Float = navigationMapping.invertScrollDirection ? -1 : 1
-                        let zoomInvert: Float = navigationMapping.invertZoomDirection ? -1 : 1
-                        let action = event.modifierFlags.contains(.option)
-                            ? navigationMapping.optionScrollAction
-                            : navigationMapping.scrollAction
-                        switch action {
-                        case .zoom:
-                            let delta = Float(event.scrollingDeltaY) * zoomInvert
-                            let newDistance = state.distance * exp(delta * 0.01)
-                            state.distance = clampDistance(newDistance)
-                        case .pan:
-                            let multiplier: Float = event.modifierFlags.contains(.shift) ? 5.0 : 1.0
-                            let deltaX = Float(event.scrollingDeltaX) * multiplier * scrollInvert
-                            let deltaY = Float(event.scrollingDeltaY) * multiplier * scrollInvert
-                            handlePan(deltaX: deltaX, deltaY: deltaY)
-                        case .orbit:
-                            let deltaX = Float(event.scrollingDeltaX) * scrollInvert
-                            let deltaY = Float(event.scrollingDeltaY) * scrollInvert
-                            handleOrbit(deltaX: deltaX, deltaY: deltaY)
-                        }
-                        return nil
-                    }
-                }
-                if mouseMonitor == nil {
-                    mouseMonitor = LocalMouseEventMonitor { event in
-                        handleMouseEvent(event)
-                    }
-                }
-            }
+            .onAppear { installMonitors() }
+            .onChange(of: navigationMapping) { _, _ in installMonitors() }
             .onDisappear {
-                // Tear down the monitor when the viewport goes away.
                 scrollMonitor = nil
                 mouseMonitor = nil
             }
+    }
+
+    private func installMonitors() {
+        scrollMonitor = LocalScrollEventMonitor { event in
+            guard shouldHandleViewportEvent(event) else {
+                return event
+            }
+
+            let scrollInvert: Float = navigationMapping.invertScrollDirection ? -1 : 1
+            let zoomInvert: Float = navigationMapping.invertZoomDirection ? -1 : 1
+            let action = event.modifierFlags.contains(.option)
+                ? navigationMapping.optionScrollAction
+                : navigationMapping.scrollAction
+            switch action {
+            case .zoom:
+                let delta = Float(event.scrollingDeltaY) * zoomInvert
+                let newDistance = state.distance * exp(delta * 0.01)
+                state.distance = clampDistance(newDistance)
+            case .pan:
+                let multiplier: Float = event.modifierFlags.contains(.shift) ? 5.0 : 1.0
+                let deltaX = Float(event.scrollingDeltaX) * multiplier * scrollInvert
+                let deltaY = Float(event.scrollingDeltaY) * multiplier * scrollInvert
+                handlePan(deltaX: deltaX, deltaY: deltaY)
+            case .orbit:
+                let deltaX = Float(event.scrollingDeltaX) * scrollInvert
+                let deltaY = Float(event.scrollingDeltaY) * scrollInvert
+                handleOrbit(deltaX: deltaX, deltaY: deltaY)
+            }
+            return nil
+        }
+        mouseMonitor = LocalMouseEventMonitor { event in
+            handleMouseEvent(event)
+        }
     }
 
     @ViewBuilder
