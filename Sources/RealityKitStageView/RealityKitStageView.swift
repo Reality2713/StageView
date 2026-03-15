@@ -424,20 +424,16 @@ public struct RealityKitStageView: View {
 
 		// Skybox sphere — created once, texture updated when environment changes.
 		// Visibility controlled via isEnabled (synchronous, no race).
-		do {
-			let skybox = Entity()
-			skybox.name = "SkyboxSphere"
-			skybox.components.set(ModelComponent(
-				mesh: try Self.makeSkyboxSphere(radius: Float(environmentRadius)),
-				materials: [UnlitMaterial()]
-			))
-			// X-flip inverts winding order so inside faces become front-facing.
-			skybox.scale = .init(x: -1, y: 1, z: 1)
-			skybox.isEnabled = false
-			root.addChild(skybox)
-		} catch {
-			logger.error("Skybox mesh creation failed: \(error.localizedDescription, privacy: .public)")
-		}
+		let skybox = Entity()
+		skybox.name = "SkyboxSphere"
+		skybox.components.set(ModelComponent(
+			mesh: .generateSphere(radius: Float(environmentRadius)),
+			materials: [UnlitMaterial()]
+		))
+		// X-flip inverts winding order so inside faces become front-facing.
+		skybox.scale = .init(x: -1, y: 1, z: 1)
+		skybox.isEnabled = false
+		root.addChild(skybox)
 
 		return root
 	}
@@ -792,22 +788,28 @@ public struct RealityKitStageView: View {
 		}
 
 		// Update skybox texture on the existing sphere entity.
-		if let skybox = skyboxEntity {
+		if let skybox = skyboxEntity,
+		   let existingModel = skybox.components[ModelComponent.self]
+		{
 			do {
-				let texture = try await TextureResource(
-					image: cgImage,
+				let texture = try TextureResource.load(
+					contentsOf: url,
+					withName: resourceName + "_skybox",
 					options: .init(semantic: .color)
 				)
 				var material = UnlitMaterial()
 				material.color = .init(texture: .init(texture))
 				skybox.components.set(ModelComponent(
-					mesh: skybox.components[ModelComponent.self]!.mesh,
+					mesh: existingModel.mesh,
 					materials: [material]
 				))
 				skybox.isEnabled = configuration.showEnvironmentBackground
+				logger.debug("Skybox updated: enabled=\(configuration.showEnvironmentBackground)")
 			} catch {
-				logger.error("Environment skybox texture failed: \(error.localizedDescription, privacy: .public)")
+				logger.error("Skybox texture load failed: \(error.localizedDescription, privacy: .public)")
 			}
+		} else {
+			logger.warning("Skybox entity not found or has no ModelComponent")
 		}
 
 		updateIBLRotation(configuration.environmentRotation)
@@ -895,89 +897,6 @@ public struct RealityKitStageView: View {
 		for child in entity.children {
 			applyIBLReceiver(to: child)
 		}
-	}
-
-	/// High-tessellation UV sphere for skybox use. Poles use triangle fans to
-	/// avoid degenerate zero-area quads that cause MeshResource.generate to fail.
-	/// 128 longitude segments eliminate the faceted banding visible with
-	/// `.generateSphere()`'s ~36 segments at large radii.
-	private static func makeSkyboxSphere(
-		radius: Float,
-		lonSegments: Int = 128,
-		latSegments: Int = 64
-	) throws -> MeshResource {
-		// Vertex layout: 1 north pole + (latSegments-1) rings of (lonSegments+1) + 1 south pole
-		let ringVerts = lonSegments + 1 // +1 for UV seam duplication
-		let vertexCount = 2 + (latSegments - 1) * ringVerts
-
-		var positions = [SIMD3<Float>]()
-		var normals = [SIMD3<Float>]()
-		var uvs = [SIMD2<Float>]()
-		positions.reserveCapacity(vertexCount)
-		normals.reserveCapacity(vertexCount)
-		uvs.reserveCapacity(vertexCount)
-
-		// North pole (index 0)
-		positions.append(SIMD3<Float>(0, radius, 0))
-		normals.append(SIMD3<Float>(0, 1, 0))
-		uvs.append(SIMD2<Float>(0.5, 0))
-
-		// Body rings (lat 1 … latSegments-1)
-		for lat in 1..<latSegments {
-			let v = Float(lat) / Float(latSegments)
-			let theta = v * .pi
-			let sinT = sin(theta)
-			let cosT = cos(theta)
-			for lon in 0...lonSegments {
-				let u = Float(lon) / Float(lonSegments)
-				let phi = u * 2.0 * .pi
-				let x = sinT * cos(phi)
-				let y = cosT
-				let z = sinT * sin(phi)
-				positions.append(SIMD3<Float>(x, y, z) * radius)
-				normals.append(SIMD3<Float>(x, y, z))
-				uvs.append(SIMD2<Float>(u, v))
-			}
-		}
-
-		// South pole (last index)
-		let southIndex = UInt32(positions.count)
-		positions.append(SIMD3<Float>(0, -radius, 0))
-		normals.append(SIMD3<Float>(0, -1, 0))
-		uvs.append(SIMD2<Float>(0.5, 1))
-
-		var indices = [UInt32]()
-
-		// North pole fan: pole (0) → first ring (indices 1…lonSegments)
-		for lon in 0..<UInt32(lonSegments) {
-			indices.append(contentsOf: [0, 1 + lon, 1 + lon + 1])
-		}
-
-		// Body quads: ring pairs
-		for lat in 0..<(latSegments - 2) {
-			let ringStart = UInt32(1 + lat * ringVerts)
-			let nextRingStart = ringStart + UInt32(ringVerts)
-			for lon in 0..<UInt32(lonSegments) {
-				let tl = ringStart + lon
-				let tr = tl + 1
-				let bl = nextRingStart + lon
-				let br = bl + 1
-				indices.append(contentsOf: [tl, bl, tr, tr, bl, br])
-			}
-		}
-
-		// South pole fan: last ring → pole
-		let lastRingStart = UInt32(1 + (latSegments - 2) * ringVerts)
-		for lon in 0..<UInt32(lonSegments) {
-			indices.append(contentsOf: [lastRingStart + lon, southIndex, lastRingStart + lon + 1])
-		}
-
-		var descriptor = MeshDescriptor(name: "SkyboxSphere")
-		descriptor.positions = MeshBuffer(positions)
-		descriptor.normals = MeshBuffer(normals)
-		descriptor.textureCoordinates = MeshBuffer(uvs)
-		descriptor.primitives = .triangles(indices)
-		return try MeshResource.generate(from: [descriptor])
 	}
 
 	@MainActor
