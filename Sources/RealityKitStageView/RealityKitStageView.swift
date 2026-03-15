@@ -30,13 +30,15 @@ public struct RealityKitStageView: View {
 	var store: StoreOf<StageViewFeature>
 
 	@State private var rootEntity: Entity?
-	@State private var iblEntity: Entity?
-	@State private var skyboxEntity: Entity?
 	@State private var cameraState = ArcballCameraState()
 	@State private var selectionHighlightEntity: Entity?
 	@State private var outlinedEntityIDs: Set<Entity.ID> = []
 	@State private var viewportInstanceID = UUID()
 	@State private var gridEntity: Entity?
+
+	/// Looked up by name from rootEntity — always available after makeSceneRoot().
+	private var iblEntity: Entity? { rootEntity?.findEntity(named: "ImageBasedLight") }
+	private var skyboxEntity: Entity? { rootEntity?.findEntity(named: "SkyboxSphere") }
 
 	private var environmentRadius: Double {
 		let extent = Double(runtime.sceneBounds.maxExtent)
@@ -138,11 +140,19 @@ public struct RealityKitStageView: View {
 			}
 	}
 
+	/// Combined task ID: fires when the environment request changes AND rootEntity exists.
+	/// rootEntity is @State — SwiftUI re-evaluates the body when it transitions from nil
+	/// to a value, causing this ID to change from nil → UUID string → task fires.
+	private var environmentTaskID: String? {
+		guard let requestID = store.environmentRequestID, rootEntity != nil else { return nil }
+		return requestID.uuidString
+	}
+
 	@ViewBuilder
 	private var observedViewportEnvironment: some View {
 		observedViewportLifecycle
-			.task(id: store.environmentRequestID) {
-				guard store.environmentRequestID != nil else { return }
+			.task(id: environmentTaskID) {
+				guard environmentTaskID != nil else { return }
 				await updateEnvironment(store.environmentURL)
 			}
 			.onChange(of: configuration.showEnvironmentBackground) { _, newValue in
@@ -411,7 +421,6 @@ public struct RealityKitStageView: View {
 		let ibl = Entity()
 		ibl.name = "ImageBasedLight"
 		root.addChild(ibl)
-		self.iblEntity = ibl
 
 		// Skybox sphere — created once, texture updated when environment changes.
 		// Visibility controlled via isEnabled (synchronous, no race).
@@ -426,7 +435,6 @@ public struct RealityKitStageView: View {
 			skybox.scale = .init(x: -1, y: 1, z: 1)
 			skybox.isEnabled = false
 			root.addChild(skybox)
-			self.skyboxEntity = skybox
 		} catch {
 			logger.error("Skybox mesh creation failed: \(error.localizedDescription, privacy: .public)")
 		}
@@ -787,7 +795,7 @@ public struct RealityKitStageView: View {
 		if let skybox = skyboxEntity {
 			do {
 				let texture = try await TextureResource(
-					contentsOf: url,
+					image: cgImage,
 					options: .init(semantic: .color)
 				)
 				var material = UnlitMaterial()
