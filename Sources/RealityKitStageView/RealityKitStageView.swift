@@ -1,5 +1,4 @@
 import ComposableArchitecture
-import CoreImage
 import ImageIO
 import OSLog
 import RealityKit
@@ -149,8 +148,8 @@ public struct RealityKitStageView: View {
 			.onChange(of: configuration.environmentMapURL) { _, newValue in
 				Task { await updateEnvironment(newValue) }
 			}
-			.onChange(of: configuration.showEnvironmentBackground) { _, _ in
-				Task { await updateEnvironment(configuration.environmentMapURL) }
+			.onChange(of: configuration.showEnvironmentBackground) { _, newValue in
+				skyboxEntity?.isEnabled = newValue
 			}
 			.onChange(of: configuration.environmentExposure) { _, _ in
 				updateIBLLightIntensity()
@@ -766,64 +765,36 @@ public struct RealityKitStageView: View {
 			logger.error("Environment IBL failed: \(error.localizedDescription, privacy: .public)")
 		}
 
-		// Skybox background sphere — independent of IBL; uses an 8-bit conversion
-		// because TextureResource does not accept 32-bit float CGImages.
-		if configuration.showEnvironmentBackground {
-			do {
-				let texture = try makeSkyboxTexture(from: cgImage, name: resourceName)
-				var material = UnlitMaterial()
-				material.color = .init(texture: .init(texture))
+		// Skybox background sphere — always created alongside IBL so the texture
+		// is ready when toggled on. Visibility is controlled synchronously via
+		// isEnabled to avoid race conditions between concurrent onChange Tasks.
+		do {
+			let texture = try TextureResource.load(
+				contentsOf: url,
+				withName: resourceName + "_skybox",
+				options: .init(semantic: .color)
+			)
+			var material = UnlitMaterial()
+			material.color = .init(texture: .init(texture))
 
-				let skybox = Entity()
-				skybox.name = "SkyboxSphere"
-				skybox.components.set(ModelComponent(
-					mesh: .generateSphere(radius: Float(environmentRadius)),
-					materials: [material]
-				))
-				// X-flip inverts winding order so inside faces become front-facing.
-				// This avoids back-face UV seam artifacts and preserves correct
-				// panorama orientation and rotation direction from inside — matching
-				// IBL rotation when the same quaternion is applied to both entities.
-				skybox.scale *= .init(x: -1, y: 1, z: 1)
-				rootEntity?.addChild(skybox)
-				self.skyboxEntity = skybox
-			} catch {
-				logger.error("Environment skybox failed: \(error.localizedDescription, privacy: .public)")
-			}
+			let skybox = Entity()
+			skybox.name = "SkyboxSphere"
+			skybox.components.set(ModelComponent(
+				mesh: .generateSphere(radius: Float(environmentRadius)),
+				materials: [material]
+			))
+			// X-flip inverts winding order so inside faces become front-facing.
+			skybox.scale *= .init(x: -1, y: 1, z: 1)
+			skybox.isEnabled = configuration.showEnvironmentBackground
+			rootEntity?.addChild(skybox)
+			self.skyboxEntity = skybox
+		} catch {
+			logger.error("Environment skybox failed: \(error.localizedDescription, privacy: .public)")
 		}
 
 		updateIBLRotation(configuration.environmentRotation)
 	}
 
-	/// Converts an HDR float CGImage to a standard 8-bit TextureResource suitable
-	/// for use as an UnlitMaterial texture on the skybox sphere.
-	private func makeSkyboxTexture(from cgImage: CGImage, name: String) throws -> TextureResource {
-		// HDR images loaded with kCGImageSourceShouldAllowFloat are 128-bit RGBA float.
-		// TextureResource(image:) only accepts standard bit-depth images for materials.
-		// Using CGContext avoids tile banding artifacts that CIContext can sometimes introduce.
-		if cgImage.bitsPerComponent > 8 {
-			let width = cgImage.width
-			let height = cgImage.height
-			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-			let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
-			
-			if let context = CGContext(
-				data: nil,
-				width: width,
-				height: height,
-				bitsPerComponent: 8,
-				bytesPerRow: width * 4,
-				space: colorSpace,
-				bitmapInfo: bitmapInfo
-			) {
-				context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-				if let ldr = context.makeImage() {
-					return try TextureResource(image: ldr, withName: name + "_skybox", options: .init(semantic: .color))
-				}
-			}
-		}
-		return try TextureResource(image: cgImage, withName: name + "_skybox", options: .init(semantic: .color))
-	}
 
 	@MainActor
 	private func updateIBLExposure(_ exposure: Float) {
@@ -863,13 +834,18 @@ public struct RealityKitStageView: View {
 
 	@MainActor
 	private func updateIBLRotation(_ degrees: Float) {
-		let radians = degrees * .pi / 180.0
+		// Hydra Storm and RealityKit map the equirectangular zero-meridian to
+		// opposite world directions. Adding π aligns both engines so the same
+		// rotation slider value produces matching panorama orientation.
+		let radians = degrees * .pi / 180.0 + .pi
 
 		let orientation: simd_quatf
 		if runtime.isZUp {
-			let spin = simd_quatf(angle: radians, axis: [0, 0, 1])
+			// Match Hydra's USD XformCommonAPI: Rx(90°) * Rz(rotation°)
+			// In quaternion multiply order: tilt * spin applies spin first, then tilt
 			let tilt = simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
-			orientation = spin * tilt
+			let spin = simd_quatf(angle: radians, axis: [0, 0, 1])
+			orientation = tilt * spin
 		} else {
 			orientation = simd_quatf(angle: radians, axis: [0, 1, 0])
 		}
@@ -914,6 +890,7 @@ public struct RealityKitStageView: View {
 			fill.light.intensity = useIBL ? 0 : 1000
 		}
 	}
+
 }
 
 extension SIMD4 where Scalar == Float {

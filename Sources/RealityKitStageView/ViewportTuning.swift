@@ -47,7 +47,8 @@ enum ViewportTuning {
     static func clippingRange(
         distance: Float,
         sceneBounds: SceneBounds,
-        metersPerUnit: Double
+        metersPerUnit: Double,
+        environmentRadius: Float? = nil
     ) -> ViewportCameraClipping {
         let safeMetersPerUnit = metersPerUnit > 0 ? metersPerUnit : 1.0
         let radiusUnits = sceneRadiusUnits(sceneBounds: sceneBounds, metersPerUnit: safeMetersPerUnit)
@@ -69,6 +70,10 @@ enum ViewportTuning {
         }
         if farClip <= nearClip {
             farClip = nearClip + 1.0
+        }
+
+        if let envRadius = environmentRadius {
+            farClip = Swift.max(farClip, envRadius * 1.05)
         }
 
         return ViewportCameraClipping(near: nearClip, far: farClip)
