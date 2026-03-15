@@ -135,7 +135,8 @@ public struct RealityKitStageView: View {
 			}
 			.onChange(of: rootEntity.map { ObjectIdentifier($0) }) { _, newId in
 				guard newId != nil else { return }
-				Task { await updateEnvironment(configuration.environmentMapURL) }
+				// Trigger environment reload via store so the task(id:) picks it up
+				store.send(.updateEnvironmentURL(store.environmentURL))
 			}
 			.onChange(of: runtime.selectedPrimPath) { _, newPath in
 				updateSelectionHighlight(for: newPath)
@@ -145,8 +146,9 @@ public struct RealityKitStageView: View {
 	@ViewBuilder
 	private var observedViewportEnvironment: some View {
 		observedViewportLifecycle
-			.onChange(of: configuration.environmentMapURL) { _, newValue in
-				Task { await updateEnvironment(newValue) }
+			.task(id: store.environmentRequestID) {
+				guard store.environmentRequestID != nil else { return }
+				await updateEnvironment(store.environmentURL)
 			}
 			.onChange(of: configuration.showEnvironmentBackground) { _, newValue in
 				skyboxEntity?.isEnabled = newValue
@@ -767,14 +769,7 @@ public struct RealityKitStageView: View {
 
 		// Skybox background sphere — always created alongside IBL so the texture
 		// is ready when toggled on. Visibility is controlled synchronously via
-		// isEnabled to avoid race conditions between concurrent onChange Tasks.
-		// Remove any stale skybox that a concurrent Task may have created
-		// while we were awaiting the IBL resource above.
-		skyboxEntity?.removeFromParent()
-		skyboxEntity = nil
-		rootEntity?.children
-			.filter { $0.name == "SkyboxSphere" }
-			.forEach { $0.removeFromParent() }
+		// isEnabled (no async race). task(id:) cancels stale loads automatically.
 		do {
 			let texture = try TextureResource.load(
 				contentsOf: url,
@@ -972,7 +967,7 @@ public struct RealityKitStageView: View {
 	@MainActor
 	private func updateIBLLightIntensity() {
 		guard let root = rootEntity else { return }
-		let useIBL = configuration.environmentMapURL != nil
+		let useIBL = store.environmentURL != nil
 		if let key = root.findEntity(named: "KeyLight") as? DirectionalLight {
 			key.light.intensity = useIBL ? 0 : 2000
 		}

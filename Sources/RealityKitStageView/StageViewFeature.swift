@@ -62,6 +62,8 @@ public struct StageViewFeature {
     public struct State: Equatable {
         public var activeLoadCommand: LoadCommand?
         public var cameraResetRequestID: UUID?
+        public var environmentRequestID: UUID?
+        public var environmentURL: URL?
         public var liveTransform: LiveTransformData?
         public var liveTransformRequestID: UUID?
         public var blendShapeRuntimeWeights: [BlendShapeRuntimeWeight]
@@ -74,6 +76,8 @@ public struct StageViewFeature {
         public init(
             activeLoadCommand: LoadCommand? = nil,
             cameraResetRequestID: UUID? = nil,
+            environmentRequestID: UUID? = nil,
+            environmentURL: URL? = nil,
             liveTransform: LiveTransformData? = nil,
             liveTransformRequestID: UUID? = nil,
             blendShapeRuntimeWeights: [BlendShapeRuntimeWeight] = [],
@@ -85,6 +89,8 @@ public struct StageViewFeature {
         ) {
             self.activeLoadCommand = activeLoadCommand
             self.cameraResetRequestID = cameraResetRequestID
+            self.environmentRequestID = environmentRequestID
+            self.environmentURL = environmentURL
             self.liveTransform = liveTransform
             self.liveTransformRequestID = liveTransformRequestID
             self.blendShapeRuntimeWeights = blendShapeRuntimeWeights
@@ -113,6 +119,7 @@ public struct StageViewFeature {
         case refreshRequested(commandID: UUID, url: URL, preserveCamera: Bool)
         case resetCameraRequested
         case selectionChanged(String?)
+        case updateEnvironmentURL(URL?)
         case updateNavigationMapping(RealityKitNavigationMapping)
 
         public enum Delegate: Equatable {
@@ -136,6 +143,8 @@ public struct StageViewFeature {
             case .clearRequested:
                 state.activeLoadCommand = nil
                 state.cameraResetRequestID = nil
+                state.environmentRequestID = nil
+                state.environmentURL = nil
                 state.loadRequestID = uuid()
                 state.liveTransform = nil
                 state.liveTransformRequestID = nil
@@ -193,6 +202,11 @@ public struct StageViewFeature {
 
             case let .selectionChanged(path):
                 state.selectedPrimPath = path
+                return .none
+
+            case let .updateEnvironmentURL(url):
+                state.environmentURL = url
+                state.environmentRequestID = uuid()
                 return .none
 
             case let .updateNavigationMapping(mapping):
