@@ -424,14 +424,15 @@ public struct RealityKitStageView: View {
 
 		// Skybox sphere — created once, texture updated when environment changes.
 		// Visibility controlled via isEnabled (synchronous, no race).
-		// applyPostProcessToneMap: false bypasses RealityKit's tone-mapping pipeline
-		// so the HDR texture and exposure tint are displayed at their true linear values,
-		// matching Hydra's skybox rendering.
+		// Tone mapping is left ON (default) so the HDR panorama is compressed
+		// into displayable range the same way RealityKit tone-maps lit objects,
+		// producing consistent exposure between background and foreground — and
+		// closer parity with Hydra Storm, which also tone-maps its dome output.
 		let skybox = Entity()
 		skybox.name = "SkyboxSphere"
 		skybox.components.set(ModelComponent(
 			mesh: .generateSphere(radius: Float(environmentRadius)),
-			materials: [UnlitMaterial(applyPostProcessToneMap: false)]
+			materials: [UnlitMaterial()]
 		))
 		// X-flip inverts winding order so inside faces become front-facing.
 		skybox.scale = .init(x: -1, y: 1, z: 1)
@@ -800,7 +801,7 @@ public struct RealityKitStageView: View {
 					withName: resourceName + "_skybox",
 					options: .init(semantic: .color)
 				)
-				var material = UnlitMaterial(applyPostProcessToneMap: false)
+				var material = UnlitMaterial()
 				material.color = .init(texture: .init(texture))
 				skybox.components.set(ModelComponent(
 					mesh: existingModel.mesh,
@@ -848,7 +849,7 @@ public struct RealityKitStageView: View {
 			let tint = CGFloat(min(max(gain, 0), 7.5))
 
 			let existingTexture = (model.materials.first as? UnlitMaterial)?.color.texture
-			var material = UnlitMaterial(applyPostProcessToneMap: false)
+			var material = UnlitMaterial()
 			let color = PlatformColor(red: tint, green: tint, blue: tint, alpha: 1.0)
 			material.color = .init(tint: color, texture: existingTexture)
 
