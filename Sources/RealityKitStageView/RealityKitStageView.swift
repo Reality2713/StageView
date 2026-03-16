@@ -832,13 +832,12 @@ public struct RealityKitStageView: View {
 		if let skybox = skyboxEntity,
 			let model = skybox.components[ModelComponent.self]
 		{
-			// Skybox brightness = 2^EV, clamped to [0, 4] (EV ≤ +2).
-			// UnlitMaterial tint produces rendering artifacts above ~4.0
-			// (undefined wrap/clamp at high extended-range values).
-			// IBL intensityExponent still uses the full unclamped EV for
-			// correct object lighting at all exposure levels.
+			// Skybox brightness = 2^EV, clamped to [0, 7.5].
+			// RealityKit tone-maps UnlitMaterial output — tint values above ~7.5
+			// cause visual discontinuities (tested: 7.46 OK, 8.0 breaks).
+			// IBL intensityExponent is unclamped for correct object lighting.
 			let gain = RealityKitConfiguration.hydraLinearExposureGain(forEV: exposure)
-			let tint = CGFloat(min(max(gain, 0), 4))
+			let tint = CGFloat(min(max(gain, 0), 7.5))
 
 			var material =
 				(model.materials.first as? UnlitMaterial) ?? UnlitMaterial()
