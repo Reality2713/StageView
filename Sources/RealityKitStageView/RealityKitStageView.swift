@@ -158,8 +158,8 @@ public struct RealityKitStageView: View {
 			.onChange(of: configuration.showEnvironmentBackground) { _, newValue in
 				skyboxEntity?.isEnabled = newValue
 			}
-			.onChange(of: configuration.environmentExposure) { _, _ in
-				updateIBLLightIntensity()
+			.onChange(of: configuration.environmentExposure) { _, newValue in
+				updateIBLExposure(newValue)
 			}
 			.onChange(of: configuration.environmentRotation) { _, newValue in
 				updateIBLRotation(newValue)
