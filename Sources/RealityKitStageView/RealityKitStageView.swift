@@ -864,9 +864,10 @@ public struct RealityKitStageView: View {
 		// files on load. The IBL entity therefore lives in Y-up space regardless of
 		// the source file's up-axis, so we always rotate around world Y.
 		//
-		// The +π offset compensates for RealityKit's IBL zero-meridian being 180°
-		// opposite to Hydra Storm's, so the same slider value matches both viewports.
-		let radians = degrees * .pi / 180.0 + .pi
+		// The offset compensates for RealityKit's IBL zero-meridian differing from
+		// Hydra Storm's. Empirically both Y-up and Z-up scenes are consistently 270°
+		// (3π/2) off without correction, so we add 3π/2.
+		let radians = degrees * .pi / 180.0 + 3 * .pi / 2
 		let orientation = simd_quatf(angle: radians, axis: [0, 1, 0])
 
 		if let iblEntity {
