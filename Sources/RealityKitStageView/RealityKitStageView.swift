@@ -860,23 +860,14 @@ public struct RealityKitStageView: View {
 
 	@MainActor
 	private func updateIBLRotation(_ degrees: Float) {
-		// Hydra Storm and RealityKit map the equirectangular zero-meridian to
-		// opposite world directions. Adding π aligns both engines so the same
-		// rotation slider value produces matching panorama orientation.
+		// RealityKit always renders in Y-up world space — it converts Z-up source
+		// files on load. The IBL entity therefore lives in Y-up space regardless of
+		// the source file's up-axis, so we always rotate around world Y.
+		//
+		// The +π offset compensates for RealityKit's IBL zero-meridian being 180°
+		// opposite to Hydra Storm's, so the same slider value matches both viewports.
 		let radians = degrees * .pi / 180.0 + .pi
-
-		let orientation: simd_quatf
-		if runtime.isZUp {
-			// Hydra Z-Up: XformCommonAPI XYZ order = matrix Rz(rotation) * Rx(90°)
-			// meaning: first tilt the HDRI (Rx 90°) to align Y-up→Z-up, then spin (Rz).
-			// In simd, `p * q` applies p after q, so `spin * tilt` = Rx first, then Rz
-			// which produces matrix Rz * Rx — matching Hydra's composition order.
-			let tilt = simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
-			let spin = simd_quatf(angle: radians, axis: [0, 0, 1])
-			orientation = spin * tilt
-		} else {
-			orientation = simd_quatf(angle: radians, axis: [0, 1, 0])
-		}
+		let orientation = simd_quatf(angle: radians, axis: [0, 1, 0])
 
 		if let iblEntity {
 			iblEntity.transform.rotation = orientation
