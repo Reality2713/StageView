@@ -842,9 +842,10 @@ public struct RealityKitStageView: View {
 		{
 			// Skybox brightness = 2^EV applied as a linear tint multiplier.
 			// applyPostProcessToneMap: false bypasses RealityKit's tone pipeline,
-			// so extended-range tint values (> 1.0) work correctly and match Hydra.
+			// but tint values above ~7.5 still trigger a RealityKit rendering bug
+			// (visual discontinuity / artifact) even without tone mapping.
 			let gain = RealityKitConfiguration.hydraLinearExposureGain(forEV: exposure)
-			let tint = CGFloat(max(gain, 0))
+			let tint = CGFloat(min(max(gain, 0), 7.5))
 
 			let existingTexture = (model.materials.first as? UnlitMaterial)?.color.texture
 			var material = UnlitMaterial(applyPostProcessToneMap: false)
