@@ -832,14 +832,17 @@ public struct RealityKitStageView: View {
 		if let skybox = skyboxEntity,
 			let model = skybox.components[ModelComponent.self]
 		{
-			// Match Hydra: skybox brightness = 2^EV (linear gain).
-			// NSColor supports extended range (> 1.0) in sRGB, and UnlitMaterial
-			// preserves HDR tint values for bright skyboxes at positive EV.
-			let gain = CGFloat(max(RealityKitConfiguration.hydraLinearExposureGain(forEV: exposure), 0))
+			// Skybox brightness = 2^EV, clamped to [0, 4] (EV ≤ +2).
+			// UnlitMaterial tint produces rendering artifacts above ~4.0
+			// (undefined wrap/clamp at high extended-range values).
+			// IBL intensityExponent still uses the full unclamped EV for
+			// correct object lighting at all exposure levels.
+			let gain = RealityKitConfiguration.hydraLinearExposureGain(forEV: exposure)
+			let tint = CGFloat(min(max(gain, 0), 4))
 
 			var material =
 				(model.materials.first as? UnlitMaterial) ?? UnlitMaterial()
-			let color = PlatformColor(red: gain, green: gain, blue: gain, alpha: 1.0)
+			let color = PlatformColor(red: tint, green: tint, blue: tint, alpha: 1.0)
 			material.color = .init(tint: color, texture: material.color.texture)
 
 			var newModel = model
