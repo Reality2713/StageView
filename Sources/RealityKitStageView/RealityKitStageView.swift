@@ -832,15 +832,14 @@ public struct RealityKitStageView: View {
 		if let skybox = skyboxEntity,
 			let model = skybox.components[ModelComponent.self]
 		{
-			// Skybox tint only dims (negative EV). Positive EV can't exceed the
-			// source HDR values — UnlitMaterial tint clamps to [0,1]. IBL handles
-			// the actual lighting boost for objects via intensityExponent.
-			let gain = RealityKitConfiguration.hydraLinearExposureGain(forEV: exposure)
-			let tint = CGFloat(min(max(gain, 0), 1))
+			// Match Hydra: skybox brightness = 2^EV (linear gain).
+			// NSColor supports extended range (> 1.0) in sRGB, and UnlitMaterial
+			// preserves HDR tint values for bright skyboxes at positive EV.
+			let gain = CGFloat(max(RealityKitConfiguration.hydraLinearExposureGain(forEV: exposure), 0))
 
 			var material =
 				(model.materials.first as? UnlitMaterial) ?? UnlitMaterial()
-			let color = PlatformColor(red: tint, green: tint, blue: tint, alpha: 1.0)
+			let color = PlatformColor(red: gain, green: gain, blue: gain, alpha: 1.0)
 			material.color = .init(tint: color, texture: material.color.texture)
 
 			var newModel = model
