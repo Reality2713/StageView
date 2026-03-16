@@ -867,11 +867,13 @@ public struct RealityKitStageView: View {
 
 		let orientation: simd_quatf
 		if runtime.isZUp {
-			// Match Hydra's USD XformCommonAPI: Rx(90°) * Rz(rotation°)
-			// In quaternion multiply order: tilt * spin applies spin first, then tilt
+			// Hydra Z-Up: XformCommonAPI XYZ order = matrix Rz(rotation) * Rx(90°)
+			// meaning: first tilt the HDRI (Rx 90°) to align Y-up→Z-up, then spin (Rz).
+			// In simd, `p * q` applies p after q, so `spin * tilt` = Rx first, then Rz
+			// which produces matrix Rz * Rx — matching Hydra's composition order.
 			let tilt = simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
 			let spin = simd_quatf(angle: radians, axis: [0, 0, 1])
-			orientation = tilt * spin
+			orientation = spin * tilt
 		} else {
 			orientation = simd_quatf(angle: radians, axis: [0, 1, 0])
 		}
