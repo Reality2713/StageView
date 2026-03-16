@@ -812,7 +812,12 @@ public struct RealityKitStageView: View {
 			logger.warning("Skybox entity not found or has no ModelComponent")
 		}
 
+		// Apply all current visual state immediately — don't wait for the next
+		// syncIBLState() call from the update: closure, which would cause a
+		// brief flash at default exposure after every environment reload.
+		updateIBLExposure(configuration.environmentExposure)
 		updateIBLRotation(configuration.environmentRotation)
+		updateIBLLightIntensity()
 	}
 
 
