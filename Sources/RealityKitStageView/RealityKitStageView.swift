@@ -424,11 +424,14 @@ public struct RealityKitStageView: View {
 
 		// Skybox sphere — created once, texture updated when environment changes.
 		// Visibility controlled via isEnabled (synchronous, no race).
+		// applyPostProcessToneMap: false bypasses RealityKit's tone-mapping pipeline
+		// so the HDR texture and exposure tint are displayed at their true linear values,
+		// matching Hydra's skybox rendering.
 		let skybox = Entity()
 		skybox.name = "SkyboxSphere"
 		skybox.components.set(ModelComponent(
 			mesh: .generateSphere(radius: Float(environmentRadius)),
-			materials: [UnlitMaterial()]
+			materials: [UnlitMaterial(applyPostProcessToneMap: false)]
 		))
 		// X-flip inverts winding order so inside faces become front-facing.
 		skybox.scale = .init(x: -1, y: 1, z: 1)
@@ -797,7 +800,7 @@ public struct RealityKitStageView: View {
 					withName: resourceName + "_skybox",
 					options: .init(semantic: .color)
 				)
-				var material = UnlitMaterial()
+				var material = UnlitMaterial(applyPostProcessToneMap: false)
 				material.color = .init(texture: .init(texture))
 				skybox.components.set(ModelComponent(
 					mesh: existingModel.mesh,
@@ -837,17 +840,16 @@ public struct RealityKitStageView: View {
 		if let skybox = skyboxEntity,
 			let model = skybox.components[ModelComponent.self]
 		{
-			// Skybox brightness = 2^EV, clamped to [0, 7.5].
-			// RealityKit tone-maps UnlitMaterial output — tint values above ~7.5
-			// cause visual discontinuities (tested: 7.46 OK, 8.0 breaks).
-			// IBL intensityExponent is unclamped for correct object lighting.
+			// Skybox brightness = 2^EV applied as a linear tint multiplier.
+			// applyPostProcessToneMap: false bypasses RealityKit's tone pipeline,
+			// so extended-range tint values (> 1.0) work correctly and match Hydra.
 			let gain = RealityKitConfiguration.hydraLinearExposureGain(forEV: exposure)
-			let tint = CGFloat(min(max(gain, 0), 7.5))
+			let tint = CGFloat(max(gain, 0))
 
-			var material =
-				(model.materials.first as? UnlitMaterial) ?? UnlitMaterial()
+			let existingTexture = (model.materials.first as? UnlitMaterial)?.color.texture
+			var material = UnlitMaterial(applyPostProcessToneMap: false)
 			let color = PlatformColor(red: tint, green: tint, blue: tint, alpha: 1.0)
-			material.color = .init(tint: color, texture: material.color.texture)
+			material.color = .init(tint: color, texture: existingTexture)
 
 			var newModel = model
 			newModel.materials = [material]
