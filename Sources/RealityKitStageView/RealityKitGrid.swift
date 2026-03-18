@@ -219,8 +219,8 @@ struct ProceduralGridPalette {
         case .dark:
             minorColor = SIMD3<Float>(0.34, 0.37, 0.42)
             majorColor = SIMD3<Float>(0.44, 0.47, 0.51)
-            xAxisColor = SIMD3<Float>(0.30, 0.72, 0.98)
-            zAxisColor = SIMD3<Float>(0.95, 0.62, 0.34)
+            xAxisColor = SIMD3<Float>(0.84, 0.24, 0.24) // Red-ish
+            zAxisColor = SIMD3<Float>(0.24, 0.50, 0.84) // Blue-ish
             minorBaseThickness = 0.0024
             majorBaseThickness = 0.0056
             axisExtraThickness = 0.00018
@@ -232,8 +232,8 @@ struct ProceduralGridPalette {
         case .light:
             minorColor = SIMD3<Float>(0.50, 0.53, 0.57)
             majorColor = SIMD3<Float>(0.39, 0.42, 0.46)
-            xAxisColor = SIMD3<Float>(0.36, 0.68, 0.92)
-            zAxisColor = SIMD3<Float>(0.86, 0.58, 0.28)
+            xAxisColor = SIMD3<Float>(0.84, 0.24, 0.24) // Red-ish
+            zAxisColor = SIMD3<Float>(0.24, 0.50, 0.84) // Blue-ish
             minorBaseThickness = 0.0021
             majorBaseThickness = 0.0048
             axisExtraThickness = 0.00015
