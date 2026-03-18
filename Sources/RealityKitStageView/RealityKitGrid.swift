@@ -93,14 +93,18 @@ public struct RealityKitGrid {
         // Resolve colors for appearance.
         let palette = ProceduralGridPalette(appearance: appearance)
 
+        // Scale thicknesses relative to the grid resolution.
+        // The palette base values are balanced for a 1m grid.
+        let thicknessScale = Float(minorStep)
+        
         // Walk entity tree and set ShaderGraphMaterial parameters.
         setMaterialParameters(
             on: entity,
             minorScale: minorScale,
             majorScale: majorScale,
-            minorBaseThickness: palette.minorBaseThickness,
-            majorBaseThickness: palette.majorBaseThickness,
-            axisExtraThickness: palette.axisExtraThickness,
+            minorBaseThickness: palette.minorBaseThickness * thicknessScale,
+            majorBaseThickness: palette.majorBaseThickness * thicknessScale,
+            axisExtraThickness: palette.axisExtraThickness * thicknessScale,
             fogDensity: palette.fogDensity,
             fogMax: palette.fogMax,
             edgeFadeStart: edgeFadeStart,
