@@ -63,26 +63,25 @@ public struct RealityKitGrid {
         isZUp: Bool,
         appearance: ViewportAppearance
     ) {
-        let safeMpu = metersPerUnit > 0 ? metersPerUnit : 1.0
-        let worldExtentMeters = worldExtent * safeMpu
+        let worldExtentMeters = worldExtent // Already in Meters from runtime
         let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
         let minorStep = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
 
         let minorScale = Float(1.0 / minorStep)
         let majorScale: Float = 1.0
-        let edgeFadeStart = max(Float(radiusMeters * 0.78 / safeMpu), minorScale > 0 ? (1 / minorScale) * 12 : 1.0)
-        let edgeFadeEnd = max(Float(radiusMeters * 0.995 / safeMpu), edgeFadeStart + 0.5)
+        let edgeFadeStart = Float(radiusMeters * 0.8)
+        let edgeFadeEnd = Float(radiusMeters * 0.995)
         let edgeFadeReciprocalRange = 1 / max(edgeFadeEnd - edgeFadeStart, 0.0001)
 
         // Scale the plane to cover the needed world extent.
         // The USDA plane is ±50m (100m total). Scale to match the grid radius.
         let planeHalfExtent: Float = 50.0
-        let neededHalfExtent = Float(radiusMeters / safeMpu)
-        let scaleFactor = max(neededHalfExtent / planeHalfExtent, 0.01)
+        let neededHalfExtent = Float(radiusMeters)
+        let scaleFactor = max(neededHalfExtent / planeHalfExtent, 0.001)
         entity.scale = SIMD3<Float>(repeating: scaleFactor)
 
         // Position slightly below ground to prevent z-fighting.
-        let yOffset = Float(-0.001 / safeMpu)
+        let yOffset = Float(-0.001)
         if isZUp {
             entity.transform.rotation = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
             entity.position = SIMD3<Float>(0, 0, -yOffset)

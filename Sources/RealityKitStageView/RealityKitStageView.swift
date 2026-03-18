@@ -456,18 +456,18 @@ public struct RealityKitStageView: View {
 			runtime.startEmbeddedAnimationsIfAvailable(autoPlay: false)
 
 			prepareForPicking(entity)
+			runtime.updateSceneBoundsFromAttachedEntity(entity)
 			refreshGrid()
 
 			if !preserveCamera, rootEntity?.findEntity(named: "MainCamera") != nil {
-				let bounds = entity.visualBounds(relativeTo: nil)
-				let center = bounds.center
+				let bounds = runtime.sceneBounds
 				let distance = ViewportTuning.defaultCameraDistance(
-					sceneBounds: runtime.sceneBounds,
+					sceneBounds: bounds,
 					metersPerUnit: configuration.metersPerUnit
 				)
 
 				var newState = cameraState
-				newState.focus = center
+				newState.focus = bounds.center
 				newState.distance = distance
 				newState.rotation = SIMD3<Float>(-20 * .pi / 180, 0, 0)
 				cameraState = newState

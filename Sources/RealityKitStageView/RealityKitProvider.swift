@@ -145,7 +145,7 @@ public final class RealityKitProvider {
             self.modelEntity = entity
             self.isLoaded = true
             buildPrimPathMapping(root: entity)
-            updateBoundsFromModel(entity)
+            updateSceneBoundsFromAttachedEntity(entity)
             emitDiscreteSnapshotIfNeeded()
         } catch {
             // Discard if generation changed
@@ -193,7 +193,7 @@ public final class RealityKitProvider {
         self.isZUp = isZUp
         self.isLoaded = true
         buildPrimPathMapping(root: entity)
-        updateBoundsFromModel(entity)
+        updateSceneBoundsFromAttachedEntity(entity)
         emitDiscreteSnapshotIfNeeded()
     }
 
@@ -251,11 +251,18 @@ public final class RealityKitProvider {
         self.cameraDistance = distance
     }
     
-    private func updateBoundsFromModel(_ entity: Entity) {
+    internal func updateSceneBoundsFromAttachedEntity(_ entity: Entity) {
         let bounds = entity.visualBounds(relativeTo: nil)
-        self.sceneBounds = SceneBounds(min: bounds.min, max: bounds.max)
+        
+        let extents = bounds.extents
+        if extents.x.isFinite, extents.y.isFinite, extents.z.isFinite, bounds.max != bounds.min {
+            self.sceneBounds = SceneBounds(min: bounds.min, max: bounds.max)
+        } else {
+            self.sceneBounds = SceneBounds()
+        }
         emitDiscreteSnapshotIfNeeded()
     }
+
     
     // MARK: - Live Transform (Runtime Only)
     
