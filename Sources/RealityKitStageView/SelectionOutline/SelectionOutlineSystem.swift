@@ -19,6 +19,15 @@ public final class SelectionOutlineSystem: System {
 
     @MainActor
     public func update(context: SceneUpdateContext) {
+        // Early exit: skip expensive work if no entities have selection outline component
+        // This saves significant CPU when viewport is idle with no selection
+        var hasEntities = false
+        for _ in context.entities(matching: Self.query, updatingSystemWhen: .rendering) {
+            hasEntities = true
+            break
+        }
+        guard hasEntities else { return }
+        
         let cameraPosition: SIMD3<Float>? = findCameraWorldPosition(in: context.scene)
 
         for entity in context.entities(matching: Self.query, updatingSystemWhen: .rendering) {

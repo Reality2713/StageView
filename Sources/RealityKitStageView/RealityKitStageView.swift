@@ -35,6 +35,12 @@ public struct RealityKitStageView: View {
 	@State private var outlinedEntityIDs: Set<Entity.ID> = []
 	@State private var viewportInstanceID = UUID()
 	@State private var gridEntity: Entity?
+	
+	// Grid throttling: track last update time and bounds to avoid excessive refreshes
+	@State private var lastGridUpdateTime: Date = Date.distantPast
+	@State private var lastGridBoundsExtent: Double = 0
+	private static let gridUpdateInterval: TimeInterval = 0.5 // Max 2 updates per second
+	private static let gridBoundsThreshold: Double = 0.05 // 5% change threshold
 
 	/// Looked up by name from rootEntity — always available after makeSceneRoot().
 	private var iblEntity: Entity? { rootEntity?.findEntity(named: "ImageBasedLight") }
@@ -188,8 +194,20 @@ public struct RealityKitStageView: View {
 				)
 				refreshGrid()
 			}
-			.onChange(of: runtime.sceneBounds) { _, _ in
-				refreshGrid()
+			.onChange(of: runtime.sceneBounds) { _, newBounds in
+				// Throttle grid updates based on time and significant bounds changes
+				let now = Date()
+				let timeSinceLastUpdate = now.timeIntervalSince(lastGridUpdateTime)
+				let newExtent = Double(newBounds.maxExtent)
+				let extentDelta = abs(newExtent - lastGridBoundsExtent)
+				let extentChangeRatio = lastGridBoundsExtent > 0 ? extentDelta / lastGridBoundsExtent : 1.0
+				
+				// Update if: enough time passed OR significant bounds change
+				if timeSinceLastUpdate >= Self.gridUpdateInterval || extentChangeRatio >= Self.gridBoundsThreshold {
+					lastGridUpdateTime = now
+					lastGridBoundsExtent = newExtent
+					refreshGrid()
+				}
 			}
 			.onChange(of: colorScheme) { _, _ in
 				refreshGrid()
