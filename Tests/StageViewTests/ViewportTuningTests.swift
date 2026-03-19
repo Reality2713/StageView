@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import RealityKitStageView
 
@@ -38,5 +39,24 @@ struct ViewportTuningTests {
         #expect(largeRadius > smallRadius)
         #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 4.0) == 0.1)
         #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 40.0) == 0.5)
+    }
+
+    @Test
+    func realityKitExposureAppliesBaselineCalibration() {
+        #expect(RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 0.0) == -1.0)
+        #expect(RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 1.0) == 0.0)
+        #expect(RealityKitConfiguration.hydraLinearExposureGain(forEV: 1.0) == 1.0)
+    }
+
+    @Test
+    func realityKitExposureIsMonotonicAndCappedAtTopEnd() {
+        let midpoint = RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 1.5)
+        let high = RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 3.0)
+        let maxed = RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 10.0)
+
+        #expect(midpoint < high)
+        #expect(high <= 1.8)
+        #expect(maxed == 1.8)
+        #expect(RealityKitConfiguration.hydraLinearExposureGain(forEV: 10.0) <= Float(pow(2.0, 1.8)))
     }
 }
