@@ -104,6 +104,7 @@ public final class RealityKitProvider {
     internal var _resetCameraRequested: Bool = false
     internal var _frameSelectionRequested: Bool = false
     internal var _preserveCameraOnNextLoad: Bool = false
+    private var activeViewportID: UUID?
     private var animationController: AnimationPlaybackController?
     public private(set) var hasEmbeddedAnimation: Bool = false
     private var discreteStateObservers = DiscreteStateObservers()
@@ -118,18 +119,38 @@ public final class RealityKitProvider {
     private(set) var entityIDToPrimPath: [Entity.ID: String] = [:]
     
     public init() {}
+
+    public func activateViewport(_ id: UUID) {
+        activeViewportID = id
+    }
+
+    public func deactivateViewport(_ id: UUID) {
+        guard activeViewportID == id else { return }
+        activeViewportID = nil
+    }
+
+    public func isActiveViewport(_ id: UUID) -> Bool {
+        activeViewportID == id
+    }
     
     // MARK: - Lifecycle
     
     /// Load a model (call this or set modelEntity directly)
     /// Uses generation-based stale-result detection
     public func load(_ url: URL) async throws {
+        guard let activeViewportID else { return }
+        try await load(url, viewportID: activeViewportID)
+    }
+
+    public func load(_ url: URL, viewportID: UUID) async throws {
+        guard activeViewportID == viewportID else { return }
+
         // Increment generation to invalidate any pending loads
         let generation = currentLoadGeneration &+ 1
         currentLoadGeneration = generation
         
         // Clear immediately to show empty viewport
-        teardown()
+        teardownState()
         emitDiscreteSnapshotIfNeeded()
         
         currentFileURL = url
@@ -138,7 +159,7 @@ public final class RealityKitProvider {
             let entity = try await loadEntityAsync(url)
             
             // Discard if generation changed (cancelled/stale)
-            guard currentLoadGeneration == generation else {
+            guard currentLoadGeneration == generation, activeViewportID == viewportID else {
                 return
             }
             
@@ -149,7 +170,7 @@ public final class RealityKitProvider {
             emitDiscreteSnapshotIfNeeded()
         } catch {
             // Discard if generation changed
-            guard currentLoadGeneration == generation else {
+            guard currentLoadGeneration == generation, activeViewportID == viewportID else {
                 return
             }
             
@@ -209,6 +230,17 @@ public final class RealityKitProvider {
     
     /// Clear the current model
     public func teardown() {
+        activeViewportID = nil
+        teardownState()
+    }
+
+    public func teardown(viewportID: UUID) {
+        guard activeViewportID == viewportID else { return }
+        activeViewportID = nil
+        teardownState()
+    }
+
+    private func teardownState() {
         stopEmbeddedAnimations()
         modelEntity = nil
         currentFileURL = nil
@@ -243,6 +275,11 @@ public final class RealityKitProvider {
     // MARK: - Internal Updates
     
     internal func updateRootEntity(_ entity: Entity) {
+        self.rootEntity = entity
+    }
+
+    internal func updateRootEntity(_ entity: Entity, viewportID: UUID) {
+        guard activeViewportID == viewportID else { return }
         self.rootEntity = entity
     }
     

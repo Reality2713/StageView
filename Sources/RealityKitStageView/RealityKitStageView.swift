@@ -114,11 +114,13 @@ public struct RealityKitStageView: View {
 	private var observedViewportLifecycle: some View {
 		taskBoundViewport
 			.onAppear {
+				runtime.activateViewport(viewportInstanceID)
 				logger.debug(
 					"RealityKit viewport appeared: \(self.viewportInstanceID.uuidString, privacy: .public)"
 				)
 			}
 			.onDisappear {
+				runtime.deactivateViewport(viewportInstanceID)
 				logger.debug(
 					"RealityKit viewport disappeared: \(self.viewportInstanceID.uuidString, privacy: .public)"
 				)
@@ -257,9 +259,9 @@ public struct RealityKitStageView: View {
 			let root = makeSceneRoot()
 			content.add(root)
 			self.rootEntity = root
-			runtime.updateRootEntity(root)
+			runtime.updateRootEntity(root, viewportID: viewportInstanceID)
 
-			if let entity = runtime.modelEntity {
+			if runtime.isActiveViewport(viewportInstanceID), let entity = runtime.modelEntity {
 				loadModel(entity)
 			}
 		} update: { _ in
@@ -300,11 +302,13 @@ public struct RealityKitStageView: View {
 					"Tearing down viewport \(self.viewportInstanceID.uuidString, privacy: .public) because modelURL is nil"
 				)
 				await MainActor.run {
-					runtime.teardown()
+					runtime.teardown(viewportID: viewportInstanceID)
 				}
 			}
 			return
 		}
+
+		guard runtime.isActiveViewport(viewportInstanceID) else { return }
 
 		logger.info(
 			"Viewport \(self.viewportInstanceID.uuidString, privacy: .public) loading model: \(command.url.lastPathComponent, privacy: .public) [\(String(describing: command.mode), privacy: .public)]"
@@ -313,13 +317,15 @@ public struct RealityKitStageView: View {
 		do {
 			switch command.mode {
 			case .fullLoad:
-				try await runtime.load(command.url)
+				try await runtime.load(command.url, viewportID: viewportInstanceID)
 			case .refresh:
-				try await runtime.load(command.url)
+				try await runtime.load(command.url, viewportID: viewportInstanceID)
 			}
+			guard runtime.isActiveViewport(viewportInstanceID) else { return }
 			_ = await MainActor.run { store.send(.loadCommandCompleted(command.id)) }
 			logger.info("Model loaded successfully")
 		} catch {
+			guard runtime.isActiveViewport(viewportInstanceID) else { return }
 			_ = await MainActor.run {
 				store.send(.loadCommandFailed(command.id, error.localizedDescription))
 			}
