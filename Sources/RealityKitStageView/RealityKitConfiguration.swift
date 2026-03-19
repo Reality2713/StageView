@@ -52,15 +52,28 @@ public struct RealityKitConfiguration: Sendable {
         self.selectionHighlightStyle = selectionHighlightStyle
     }
 
-    /// Linear gain from EV: 2^EV. Used for skybox tint.
-    public static func hydraLinearExposureGain(forEV ev: Float) -> Float {
-        powf(2.0, ev)
+    /// RealityKit currently renders hotter than Hydra for the same EV slider
+    /// value, so both the IBL exponent and visible skybox gain need the same
+    /// calibration before applying the base-2 multiplier.
+    private static func realityKitMappedEV(forHydraEV ev: Float) -> Float {
+        let baselineOffset: Float = -1.0
+        let calibratedEV = ev + baselineOffset
+
+        // Keep the previous high-end protection so the top of the slider
+        // still does not run away once the baseline is corrected.
+        let softKneeStart: Float = 2.7
+        guard calibratedEV > softKneeStart else { return calibratedEV }
+        return softKneeStart + (calibratedEV - softKneeStart) * 0.5
     }
 
-    /// RealityKit's `intensityExponent` is a base-2 exponent (same as Hydra EV).
-    /// Straight pass-through — both engines use `2^EV` as the effective multiplier.
+    /// Linear gain from EV after RealityKit-specific calibration. Used for skybox tint.
+    public static func hydraLinearExposureGain(forEV ev: Float) -> Float {
+        powf(2.0, realityKitMappedEV(forHydraEV: ev))
+    }
+
+    /// RealityKit's `intensityExponent` is a base-2 exponent.
     public static func realityKitIntensityExponent(forHydraEV ev: Float) -> Float {
-        ev
+        realityKitMappedEV(forHydraEV: ev)
     }
 
     public var hydraLinearExposureGain: Float {
