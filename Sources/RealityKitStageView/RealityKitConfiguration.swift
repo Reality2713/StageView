@@ -62,8 +62,18 @@ public struct RealityKitConfiguration: Sendable {
         // Keep the previous high-end protection so the top of the slider
         // still does not run away once the baseline is corrected.
         let softKneeStart: Float = 2.7
-        guard calibratedEV > softKneeStart else { return calibratedEV }
-        return softKneeStart + (calibratedEV - softKneeStart) * 0.5
+        let kneeAdjustedEV: Float
+        if calibratedEV > softKneeStart {
+            kneeAdjustedEV = softKneeStart + (calibratedEV - softKneeStart) * 0.5
+        } else {
+            kneeAdjustedEV = calibratedEV
+        }
+
+        // RealityKit becomes unstable near the top of the slider and can
+        // effectively reset exposure, so cap the mapped exponent below that
+        // threshold for both the IBL and visible skybox.
+        let maxStableEV: Float = 1.8
+        return min(kneeAdjustedEV, maxStableEV)
     }
 
     /// Linear gain from EV after RealityKit-specific calibration. Used for skybox tint.
