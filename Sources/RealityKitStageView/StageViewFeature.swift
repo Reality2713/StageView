@@ -205,6 +205,7 @@ public struct StageViewFeature {
                 return .none
 
             case let .updateEnvironmentURL(url):
+                guard state.environmentURL != url else { return .none }
                 state.environmentURL = url
                 state.environmentRequestID = uuid()
                 return .none
