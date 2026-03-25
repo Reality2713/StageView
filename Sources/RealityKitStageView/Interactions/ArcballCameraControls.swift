@@ -66,6 +66,8 @@ final class ArcballEventController {
 
     // Written back to the ViewModifier's @Binding each frame
     var onCameraStateChanged: ((ArcballCameraState) -> Void)?
+    /// Called with (location in view coords y-down, view size) when a click is detected.
+    var onPick: ((CGPoint, CGSize) -> Void)?
 
     private(set) var scrollMonitor: LocalScrollEventMonitor?
     private(set) var mouseMonitor: LocalMouseEventMonitor?
@@ -73,6 +75,8 @@ final class ArcballEventController {
     private var activeMouseInteraction: MouseInteraction?
     private var lastMousePoint: CGPoint?
     private var lastClampedEdge: ClampEdge?
+    private var mouseDownLocation: CGPoint = .zero
+    private var mouseDownTime: Date = Date()
 
     private enum ClampEdge { case min, max }
     enum MouseInteraction { case orbit, pan, zoom }
@@ -126,6 +130,26 @@ final class ArcballEventController {
     // MARK: - Mouse
 
     private func handleMouseEvent(_ event: NSEvent) -> NSEvent? {
+        // Click detection: runs for ALL navigation presets; always passes the event through.
+        if let view = eventRegionView {
+            let localPoint = view.convert(event.locationInWindow, from: nil)
+            switch event.type {
+            case .leftMouseDown where isEventInsideViewport(event):
+                mouseDownLocation = localPoint
+                mouseDownTime = Date()
+            case .leftMouseUp:
+                let distance = hypot(localPoint.x - mouseDownLocation.x, localPoint.y - mouseDownLocation.y)
+                let duration = Date().timeIntervalSince(mouseDownTime)
+                if activeMouseInteraction == nil && distance < 5 && duration < 0.5 && isEventInsideViewport(event) {
+                    let size = view.bounds.size
+                    onPick?(CGPoint(x: localPoint.x, y: size.height - localPoint.y), size)
+                }
+            default:
+                break
+            }
+        }
+
+        // Camera interaction handling (DCC presets only).
         guard !navigationMapping.useSwiftUIGestures else { return event }
         guard shouldHandleMouseEvent(event) else { return event }
         guard let view = eventRegionView else { return event }
@@ -274,6 +298,7 @@ public struct ArcballCameraControls: ViewModifier {
     let metersPerUnit: Double
     let maxDistanceOverride: Float?
     let navigationMapping: RealityKitNavigationMapping
+    var onPick: ((CGPoint, CGSize) -> Void)?
 
     @State private var controller = ArcballEventController()
     @State private var startDistance: Float?
@@ -285,13 +310,15 @@ public struct ArcballCameraControls: ViewModifier {
         sceneBounds: SceneBounds,
         metersPerUnit: Double = 1.0,
         maxDistance: Float? = nil,
-        navigationMapping: RealityKitNavigationMapping = .apple
+        navigationMapping: RealityKitNavigationMapping = .apple,
+        onPick: ((CGPoint, CGSize) -> Void)? = nil
     ) {
         self._state = state
         self.sceneBounds = sceneBounds
         self.metersPerUnit = metersPerUnit
         self.maxDistanceOverride = maxDistance
         self.navigationMapping = navigationMapping
+        self.onPick = onPick
     }
 
     public func body(content: Content) -> some View {
@@ -357,6 +384,7 @@ public struct ArcballCameraControls: ViewModifier {
         controller.metersPerUnit = metersPerUnit
         controller.maxDistanceOverride = maxDistanceOverride
         controller.cameraState = state
+        controller.onPick = onPick
     }
 
     @ViewBuilder

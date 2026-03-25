@@ -23,6 +23,12 @@ private let preflightRealityKitAnimationTimeNotification = Notification.Name(
 private let preflightRealityKitAnimationPlaybackNotification =
 	Notification.Name("preflight.realitykit.animation.playback")
 
+/// Stores a PostProcessOutlineEffect across SwiftUI render cycles without
+/// requiring @available on the view struct itself.
+private final class OutlineEffectBox: @unchecked Sendable {
+	var effect: Any? = nil  // PostProcessOutlineEffect when available
+}
+
 public struct RealityKitStageView: View {
 	@Environment(\.colorScheme) private var colorScheme
 	let runtime: RealityKitProvider
@@ -35,6 +41,10 @@ public struct RealityKitStageView: View {
 	@State private var outlinedEntityIDs: Set<Entity.ID> = []
 	@State private var viewportInstanceID = UUID()
 	@State private var gridEntity: Entity?
+	/// Stable box holding the post-process outline effect (macOS 26+).
+	@State private var outlineBox = OutlineEffectBox()
+	/// Incremented to force a RealityView update cycle when outline state changes.
+	@State private var outlineGeneration = 0
 	
 	// Grid throttling: track last update time and bounds to avoid excessive refreshes
 	@State private var lastGridUpdateTime: Date = Date.distantPast
@@ -230,6 +240,7 @@ public struct RealityKitStageView: View {
 					rotation: newState.quaternion,
 					distance: newState.distance
 				)
+				runtime.cameraWorldTransform = newState.transform
 			}
 	}
 
@@ -245,12 +256,14 @@ public struct RealityKitStageView: View {
 						sceneBounds: runtime.sceneBounds,
 						metersPerUnit: configuration.metersPerUnit,
 						maxDistance: Float(environmentRadius * 0.9),
-						navigationMapping: store.navigationMapping
+						navigationMapping: store.navigationMapping,
+						onPick: macOSPickHandler
 					)
 				)
+			#else
+				.gesture(selectionGesture)
+				.gesture(clearSelectionGesture)
 			#endif
-			.gesture(selectionGesture)
-			.gesture(clearSelectionGesture)
 	}
 
 	@ViewBuilder
@@ -275,10 +288,18 @@ public struct RealityKitStageView: View {
 			if runtime.isActiveViewport(viewportInstanceID), let entity = runtime.modelEntity {
 				loadModel(entity)
 			}
-		} update: { _ in
+		} update: { content in
 			syncIBLState()
 			updateCamera(state: cameraState)
 			processRuntimeViewRequests()
+			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
+				if let effect = outlineBox.effect as? PostProcessOutlineEffect {
+					content.renderingEffects.customPostProcessing = .effect(effect)
+				} else {
+					content.renderingEffects.customPostProcessing = .none
+				}
+			}
+			_ = outlineGeneration  // establish dependency so RealityView re-runs on selection change
 		}
 		.overlay {
 			if let error = runtime.loadError {
@@ -305,6 +326,56 @@ public struct RealityKitStageView: View {
 				runtime.userDidPick(nil)
 			}
 	}
+
+	// MARK: - macOS Picking
+
+	#if os(macOS)
+	/// Closure passed to ArcballCameraControls for NSEvent-based click detection.
+	private var macOSPickHandler: (CGPoint, CGSize) -> Void {
+		let r = runtime
+		return { location, size in
+			Task { @MainActor in Self.macOSPick(at: location, in: size, runtime: r) }
+		}
+	}
+
+	@MainActor
+	private static func macOSPick(at location: CGPoint, in size: CGSize, runtime: RealityKitProvider) {
+		guard size.width > 0, size.height > 0 else { return }
+		guard let scene = runtime.rootEntity?.scene else { return }
+
+		let camera = runtime.rootEntity?.findEntity(named: "MainCamera")
+		let fovDegrees = Float(camera?.components[PerspectiveCameraComponent.self]?.fieldOfViewInDegrees ?? 60)
+		let tanHalfFov = tan(fovDegrees * (.pi / 180) / 2)
+		let aspect = Float(size.width / size.height)
+
+		// location is y-down (0=top). Convert to NDC: x∈[-1,1], y∈[-1,1] y-up.
+		let ndcX = Float(location.x / size.width) * 2 - 1
+		let ndcY = 1 - Float(location.y / size.height) * 2
+
+		// Ray direction in camera local space (camera looks down -Z).
+		let localDir = SIMD3<Float>(ndcX * tanHalfFov * aspect, ndcY * tanHalfFov, -1)
+
+		// Transform to world space using the camera's world transform columns.
+		let t = runtime.cameraWorldTransform
+		let camPos = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
+		let worldDir = simd_normalize(SIMD3<Float>(
+			t.columns.0.x * localDir.x + t.columns.1.x * localDir.y + t.columns.2.x * localDir.z,
+			t.columns.0.y * localDir.x + t.columns.1.y * localDir.y + t.columns.2.y * localDir.z,
+			t.columns.0.z * localDir.x + t.columns.1.z * localDir.y + t.columns.2.z * localDir.z
+		))
+
+		let hits = scene.raycast(
+			origin: camPos, direction: worldDir, length: 100_000,
+			query: .nearest, mask: .all, relativeTo: nil
+		)
+
+		if let hit = hits.first {
+			runtime.userDidPick(runtime.nearestMappedPrimPath(from: hit.entity))
+		} else {
+			runtime.userDidPick(nil)
+		}
+	}
+	#endif
 
 	private func handleLoadRequest() async {
 		guard let command = store.activeLoadCommand else {
@@ -519,7 +590,7 @@ public struct RealityKitStageView: View {
 	}
 
 	private func markInputTargetsRecursively(_ entity: Entity) {
-		entity.components.set(InputTargetComponent(allowedInputTypes: .indirect))
+		entity.components.set(InputTargetComponent(allowedInputTypes: .all))
 		for child in entity.children {
 			markInputTargetsRecursively(child)
 		}
@@ -640,6 +711,10 @@ public struct RealityKitStageView: View {
 		selectionHighlightEntity?.removeFromParent()
 		selectionHighlightEntity = nil
 
+		if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
+			clearPostProcessOutline()
+		}
+
 		guard let path = path, !path.isEmpty else { return }
 
 		guard let target = runtime.selectionEntity(for: path) else { return }
@@ -651,8 +726,38 @@ public struct RealityKitStageView: View {
 			applyOutline(to: target)
 		case .boundingBox:
 			applyBoundingBox(to: target)
+		case .postProcessOutline:
+			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
+				applyPostProcessOutline(to: target)
+			} else {
+				applyOutline(to: target)
+			}
 		}
 	}
+
+	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
+	@MainActor
+	private func applyPostProcessOutline(to entity: Entity) {
+		var effect = PostProcessOutlineEffect(
+			color: configuration.outlineConfiguration.color,
+			radius: 2
+		)
+		effect.setSelection(entity)
+		outlineBox.effect = effect
+		outlineGeneration += 1
+	}
+
+	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
+	@MainActor
+	private func clearPostProcessOutline() {
+		guard outlineBox.effect != nil else { return }
+		if var effect = outlineBox.effect as? PostProcessOutlineEffect {
+			effect.setSelection(nil)
+		}
+		outlineBox.effect = nil
+		outlineGeneration += 1
+	}
+
 
 	@MainActor
 	private func applyOutline(to entity: Entity) {

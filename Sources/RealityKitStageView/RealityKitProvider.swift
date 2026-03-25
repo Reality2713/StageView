@@ -283,6 +283,8 @@ public final class RealityKitProvider {
         self.rootEntity = entity
     }
     
+    internal var cameraWorldTransform: simd_float4x4 = matrix_identity_float4x4
+
     internal func updateCameraState(rotation: simd_quatf, distance: Float) {
         self.cameraRotation = rotation
         self.cameraDistance = distance

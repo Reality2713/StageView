@@ -8,6 +8,11 @@ public enum SelectionHighlightStyle: Sendable, Equatable {
     case outline
     /// Axis-aligned wireframe bounds cage around the selected entity/subtree.
     case boundingBox
+    /// Screen-space post-process outline. Pixel-perfect and scale-independent.
+    /// Requires macOS 26 / iOS 26 / tvOS 26. Falls back to `.outline` on earlier OS versions.
+    @available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
+    @available(visionOS, unavailable)
+    case postProcessOutline
     /// Disable selection highlighting.
     case none
 }
