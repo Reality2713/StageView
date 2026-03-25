@@ -63,6 +63,7 @@ public struct RealityKitGrid {
         isZUp: Bool,
         appearance: ViewportAppearance
     ) {
+        _ = isZUp
         let worldExtentMeters = worldExtent // Already in Meters from runtime
         let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
         let minorStep = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
@@ -80,15 +81,12 @@ public struct RealityKitGrid {
         let scaleFactor = max(neededHalfExtent / planeHalfExtent, 0.001)
         entity.scale = SIMD3<Float>(repeating: scaleFactor)
 
-        // Position slightly below ground to prevent z-fighting.
+        // RealityKit imports USD scenes into a Y-up world, even when the source
+        // stage metadata says Z-up. Keep the procedural floor aligned to the
+        // RealityKit world ground plane so it does not double-rotate for Z-up assets.
         let yOffset = Float(-0.001)
-        if isZUp {
-            entity.transform.rotation = simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
-            entity.position = SIMD3<Float>(0, 0, -yOffset)
-        } else {
-            entity.transform.rotation = .init()
-            entity.position = SIMD3<Float>(0, yOffset, 0)
-        }
+        entity.transform.rotation = .init()
+        entity.position = SIMD3<Float>(0, yOffset, 0)
 
         // Resolve colors for appearance.
         let palette = ProceduralGridPalette(appearance: appearance)
