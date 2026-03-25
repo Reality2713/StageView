@@ -340,8 +340,15 @@ public struct RealityKitStageView: View {
 
 	@MainActor
 	private static func macOSPick(at location: CGPoint, in size: CGSize, runtime: RealityKitProvider) {
-		guard size.width > 0, size.height > 0 else { return }
-		guard let scene = runtime.rootEntity?.scene else { return }
+		NSLog("[RKStagePick] macOSPick called at \(location) size=\(size)")
+		guard size.width > 0, size.height > 0 else {
+			NSLog("[RKStagePick] macOSPick: invalid size, returning")
+			return
+		}
+		guard let scene = runtime.rootEntity?.scene else {
+			NSLog("[RKStagePick] macOSPick: no scene (rootEntity=\(runtime.rootEntity?.name ?? "nil"))")
+			return
+		}
 
 		let camera = runtime.rootEntity?.findEntity(named: "MainCamera")
 		let fovDegrees = Float(camera?.components[PerspectiveCameraComponent.self]?.fieldOfViewInDegrees ?? 60)
@@ -364,14 +371,20 @@ public struct RealityKitStageView: View {
 			t.columns.0.z * localDir.x + t.columns.1.z * localDir.y + t.columns.2.z * localDir.z
 		))
 
+		NSLog("[RKStagePick] raycast: camPos=\(camPos) worldDir=\(worldDir) fov=\(fovDegrees)° ndc=(\(ndcX),\(ndcY))")
+
 		let hits = scene.raycast(
 			origin: camPos, direction: worldDir, length: 100_000,
 			query: .nearest, mask: .all, relativeTo: nil
 		)
 
+		NSLog("[RKStagePick] raycast hit count: \(hits.count)")
 		if let hit = hits.first {
-			runtime.userDidPick(runtime.nearestMappedPrimPath(from: hit.entity))
+			let path = runtime.nearestMappedPrimPath(from: hit.entity)
+			NSLog("[RKStagePick] hit entity='\(hit.entity.name)' path=\(path ?? "nil")")
+			runtime.userDidPick(path)
 		} else {
+			NSLog("[RKStagePick] no hit — clearing selection")
 			runtime.userDidPick(nil)
 		}
 	}

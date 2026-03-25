@@ -137,15 +137,24 @@ final class ArcballEventController {
             case .leftMouseDown where isEventInsideViewport(event):
                 mouseDownLocation = localPoint
                 mouseDownTime = Date()
+                NSLog("[RKStagePick] mouseDown inside viewport at \(localPoint)")
+            case .leftMouseDown:
+                NSLog("[RKStagePick] mouseDown OUTSIDE viewport")
             case .leftMouseUp:
                 let distance = hypot(localPoint.x - mouseDownLocation.x, localPoint.y - mouseDownLocation.y)
                 let duration = Date().timeIntervalSince(mouseDownTime)
+                NSLog("[RKStagePick] mouseUp: dist=\(distance) dur=\(duration) activeInteraction=\(activeMouseInteraction != nil) insideViewport=\(isEventInsideViewport(event))")
                 if activeMouseInteraction == nil && distance < 5 && duration < 0.5 && isEventInsideViewport(event) {
                     let size = view.bounds.size
+                    NSLog("[RKStagePick] firing onPick at \(localPoint) size=\(size)")
                     onPick?(CGPoint(x: localPoint.x, y: size.height - localPoint.y), size)
                 }
             default:
                 break
+            }
+        } else {
+            if event.type == .leftMouseDown || event.type == .leftMouseUp {
+                NSLog("[RKStagePick] eventRegionView is nil — monitor fired but no view")
             }
         }
 
