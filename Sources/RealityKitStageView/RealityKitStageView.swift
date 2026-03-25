@@ -340,13 +340,13 @@ public struct RealityKitStageView: View {
 
 	@MainActor
 	private static func macOSPick(at location: CGPoint, in size: CGSize, runtime: RealityKitProvider) {
-		NSLog("[RKStagePick] macOSPick called at \(location) size=\(size)")
+		logger.debug("macOSPick called at \(location.x, privacy: .public),\(location.y, privacy: .public) size=\(size.width, privacy: .public)x\(size.height, privacy: .public)")
 		guard size.width > 0, size.height > 0 else {
-			NSLog("[RKStagePick] macOSPick: invalid size, returning")
+			logger.debug("macOSPick: invalid size, returning")
 			return
 		}
 		guard let scene = runtime.rootEntity?.scene else {
-			NSLog("[RKStagePick] macOSPick: no scene (rootEntity=\(runtime.rootEntity?.name ?? "nil"))")
+			logger.debug("macOSPick: no scene (rootEntity=\(runtime.rootEntity?.name ?? "nil", privacy: .public))")
 			return
 		}
 
@@ -371,20 +371,20 @@ public struct RealityKitStageView: View {
 			t.columns.0.z * localDir.x + t.columns.1.z * localDir.y + t.columns.2.z * localDir.z
 		))
 
-		NSLog("[RKStagePick] raycast: camPos=\(camPos) worldDir=\(worldDir) fov=\(fovDegrees)° ndc=(\(ndcX),\(ndcY))")
+		logger.debug("macOSPick raycast: camPos=\(camPos.x, privacy: .public),\(camPos.y, privacy: .public),\(camPos.z, privacy: .public) dir=\(worldDir.x, privacy: .public),\(worldDir.y, privacy: .public),\(worldDir.z, privacy: .public) fov=\(fovDegrees, privacy: .public)° ndc=\(ndcX, privacy: .public),\(ndcY, privacy: .public)")
 
 		let hits = scene.raycast(
 			origin: camPos, direction: worldDir, length: 100_000,
 			query: .nearest, mask: .all, relativeTo: nil
 		)
 
-		NSLog("[RKStagePick] raycast hit count: \(hits.count)")
+		logger.debug("macOSPick raycast hit count: \(hits.count, privacy: .public)")
 		if let hit = hits.first {
 			let path = runtime.nearestMappedPrimPath(from: hit.entity)
-			NSLog("[RKStagePick] hit entity='\(hit.entity.name)' path=\(path ?? "nil")")
+			logger.debug("macOSPick hit entity='\(hit.entity.name, privacy: .public)' path=\(path ?? "nil", privacy: .public)")
 			runtime.userDidPick(path)
 		} else {
-			NSLog("[RKStagePick] no hit — clearing selection")
+			logger.debug("macOSPick no hit — clearing selection")
 			runtime.userDidPick(nil)
 		}
 	}

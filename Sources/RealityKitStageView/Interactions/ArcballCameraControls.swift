@@ -1,9 +1,14 @@
+import OSLog
 import SwiftUI
 import simd
 #if os(macOS)
 import AppKit
 #elseif os(iOS) || os(visionOS)
 import UIKit
+#endif
+
+#if os(macOS)
+private let pickLogger = Logger(subsystem: "RealityKitStageView", category: "Picking")
 #endif
 
 public struct ArcballCameraState: Equatable, Sendable {
@@ -137,16 +142,16 @@ final class ArcballEventController {
             case .leftMouseDown where isEventInsideViewport(event):
                 mouseDownLocation = localPoint
                 mouseDownTime = Date()
-                NSLog("[RKStagePick] mouseDown inside viewport at \(localPoint)")
+                pickLogger.debug("mouseDown inside viewport at \(localPoint.x, privacy: .public),\(localPoint.y, privacy: .public)")
             case .leftMouseDown:
-                NSLog("[RKStagePick] mouseDown OUTSIDE viewport")
+                pickLogger.debug("mouseDown OUTSIDE viewport")
             case .leftMouseUp:
                 let distance = hypot(localPoint.x - mouseDownLocation.x, localPoint.y - mouseDownLocation.y)
                 let duration = Date().timeIntervalSince(mouseDownTime)
-                NSLog("[RKStagePick] mouseUp: dist=\(distance) dur=\(duration) activeInteraction=\(activeMouseInteraction != nil) insideViewport=\(isEventInsideViewport(event))")
+                pickLogger.debug("mouseUp: dist=\(distance, privacy: .public) dur=\(duration, privacy: .public) activeInteraction=\(self.activeMouseInteraction != nil, privacy: .public) insideViewport=\(self.isEventInsideViewport(event), privacy: .public)")
                 if activeMouseInteraction == nil && distance < 5 && duration < 0.5 && isEventInsideViewport(event) {
                     let size = view.bounds.size
-                    NSLog("[RKStagePick] firing onPick at \(localPoint) size=\(size)")
+                    pickLogger.debug("firing onPick at \(localPoint.x, privacy: .public),\(localPoint.y, privacy: .public) size=\(size.width, privacy: .public)x\(size.height, privacy: .public)")
                     onPick?(CGPoint(x: localPoint.x, y: size.height - localPoint.y), size)
                 }
             default:
@@ -154,7 +159,7 @@ final class ArcballEventController {
             }
         } else {
             if event.type == .leftMouseDown || event.type == .leftMouseUp {
-                NSLog("[RKStagePick] eventRegionView is nil — monitor fired but no view")
+                pickLogger.debug("eventRegionView is nil — monitor fired but no view")
             }
         }
 

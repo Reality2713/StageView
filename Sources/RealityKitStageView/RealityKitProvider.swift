@@ -91,7 +91,7 @@ public final class RealityKitProvider {
 
     /// Update selection from viewport interaction (e.g. pick).
     public func userDidPick(_ path: String?) {
-        NSLog("[RKStagePick] userDidPick path=\(path ?? "nil")")
+        providerLogger.debug("userDidPick path=\(path ?? "nil", privacy: .public)")
         self.isUserInteraction = true
         self.selectedPrimPath = path
     }
