@@ -79,14 +79,6 @@ public struct RealityKitStageView: View {
 	private var taskBoundViewport: some View {
 		viewportStack
 			.task {
-				for await snapshot in runtime.observeDiscreteState() {
-					guard snapshot.isUserInteraction else { continue }
-					await MainActor.run {
-						_ = store.send(.entityPicked(snapshot.selectedPrimPath))
-					}
-				}
-			}
-			.task {
 				for await notification in NotificationCenter.default.notifications(
 					named: preflightRealityKitAnimationPlaybackNotification
 				) {
@@ -154,8 +146,8 @@ public struct RealityKitStageView: View {
 					loadModel(entity)
 				}
 			}
-				.onChange(of: runtime.selectedPrimPath) { _, newPath in
-				updateSelectionHighlight(for: newPath)
+				.onChange(of: runtime.selectionGeneration) { _, _ in
+				updateSelectionHighlight(for: runtime.selectedPrimPath)
 			}
 	}
 
@@ -293,7 +285,13 @@ public struct RealityKitStageView: View {
 			updateCamera(state: cameraState)
 			processRuntimeViewRequests()
 			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-				if let effect = outlineBox.effect as? PostProcessOutlineEffect {
+				if var effect = outlineBox.effect as? PostProcessOutlineEffect {
+					if let camera = rootEntity?.findEntity(named: "MainCamera") {
+						let noRef: Entity? = nil
+						let cameraWorldTransform = camera.transformMatrix(relativeTo: noRef)
+						effect.setViewMatrix(cameraWorldTransform.inverse)
+						outlineBox.effect = effect
+					}
 					content.renderingEffects.customPostProcessing = .effect(effect)
 				} else {
 					content.renderingEffects.customPostProcessing = .none
@@ -312,11 +310,9 @@ public struct RealityKitStageView: View {
 		SpatialTapGesture()
 			.targetedToAnyEntity()
 			.onEnded { value in
-				if let path = runtime.nearestMappedPrimPath(from: value.entity) {
-					runtime.userDidPick(path)
-				} else {
-					runtime.userDidPick(nil)
-				}
+				let path = runtime.preferredPickPrimPath(from: value.entity)
+				runtime.userDidPick(path)
+				store.send(.entityPicked(path))
 			}
 	}
 
@@ -324,6 +320,7 @@ public struct RealityKitStageView: View {
 		SpatialTapGesture()
 			.onEnded { _ in
 				runtime.userDidPick(nil)
+				store.send(.entityPicked(nil))
 			}
 	}
 
@@ -333,13 +330,19 @@ public struct RealityKitStageView: View {
 	/// Closure passed to ArcballCameraControls for NSEvent-based click detection.
 	private var macOSPickHandler: (CGPoint, CGSize) -> Void {
 		let r = runtime
+		let s = store
 		return { location, size in
-			Task { @MainActor in Self.macOSPick(at: location, in: size, runtime: r) }
+			Task { @MainActor in Self.macOSPick(at: location, in: size, runtime: r, store: s) }
 		}
 	}
 
 	@MainActor
-	private static func macOSPick(at location: CGPoint, in size: CGSize, runtime: RealityKitProvider) {
+	private static func macOSPick(
+		at location: CGPoint,
+		in size: CGSize,
+		runtime: RealityKitProvider,
+		store: StoreOf<StageViewFeature>
+	) {
 		logger.debug("macOSPick called at \(location.x, privacy: .public),\(location.y, privacy: .public) size=\(size.width, privacy: .public)x\(size.height, privacy: .public)")
 		guard size.width > 0, size.height > 0 else {
 			logger.debug("macOSPick: invalid size, returning")
@@ -375,17 +378,19 @@ public struct RealityKitStageView: View {
 
 		let hits = scene.raycast(
 			origin: camPos, direction: worldDir, length: 100_000,
-			query: .nearest, mask: .all, relativeTo: nil
+			query: .all, mask: .all, relativeTo: nil
 		)
 
 		logger.debug("macOSPick raycast hit count: \(hits.count, privacy: .public)")
 		if let hit = hits.first {
-			let path = runtime.nearestMappedPrimPath(from: hit.entity)
+			let path = runtime.preferredPickPrimPath(from: hits.map(\.entity))
 			logger.debug("macOSPick hit entity='\(hit.entity.name, privacy: .public)' path=\(path ?? "nil", privacy: .public)")
 			runtime.userDidPick(path)
+			store.send(.entityPicked(path))
 		} else {
 			logger.debug("macOSPick no hit — clearing selection")
 			runtime.userDidPick(nil)
+			store.send(.entityPicked(nil))
 		}
 	}
 	#endif
@@ -731,6 +736,9 @@ public struct RealityKitStageView: View {
 		guard let path = path, !path.isEmpty else { return }
 
 		guard let target = runtime.selectionEntity(for: path) else { return }
+		logger.debug(
+			"Selection highlight path=\(path, privacy: .public) target='\(target.name, privacy: .public)' directModel=\(target.components.has(ModelComponent.self), privacy: .public) subtreeModels=\(countModelEntities(in: target), privacy: .public)"
+		)
 
 		switch configuration.selectionHighlightStyle {
 		case .none:
@@ -751,10 +759,15 @@ public struct RealityKitStageView: View {
 	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
 	@MainActor
 	private func applyPostProcessOutline(to entity: Entity) {
-		var effect = PostProcessOutlineEffect(
-			color: configuration.outlineConfiguration.color,
-			radius: 2
-		)
+		var effect: PostProcessOutlineEffect
+		if let existing = outlineBox.effect as? PostProcessOutlineEffect {
+			effect = existing
+		} else {
+			effect = PostProcessOutlineEffect(
+				color: configuration.outlineConfiguration.color,
+				radius: 2
+			)
+		}
 		effect.setSelection(entity)
 		outlineBox.effect = effect
 		outlineGeneration += 1
@@ -763,12 +776,20 @@ public struct RealityKitStageView: View {
 	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
 	@MainActor
 	private func clearPostProcessOutline() {
-		guard outlineBox.effect != nil else { return }
 		if var effect = outlineBox.effect as? PostProcessOutlineEffect {
 			effect.setSelection(nil)
+			outlineBox.effect = effect
+			outlineGeneration += 1
 		}
-		outlineBox.effect = nil
-		outlineGeneration += 1
+	}
+
+	@MainActor
+	private func countModelEntities(in entity: Entity) -> Int {
+		var count = entity.components.has(ModelComponent.self) ? 1 : 0
+		for child in entity.children {
+			count += countModelEntities(in: child)
+		}
+		return count
 	}
 
 

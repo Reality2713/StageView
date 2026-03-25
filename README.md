@@ -25,6 +25,7 @@ StageView provides a unified protocol and shared viewport components that Realit
 - **IBL Support**: Environment lighting with EV-style exposure control
 - **Scale Indicator**: Auto-switching scale reference (cm/m/km) based on scene size
 - **Colored Axes**: Visual axis indicators (X=red, Y=green, Z=blue)
+- **Selection Remapping Hooks**: Upgrade coarse imported pick results to semantic scene paths
 
 ## Modules
 
@@ -127,6 +128,29 @@ config.showBackground = true
 // For RealityKit, convert to intensityExponent
 let exponent = config.realityKitIntensityExponent
 ```
+
+### Upgrading Picked Paths
+
+If RealityKit collapses imported geometry into generic entities such as
+`merged_1`, consumers can provide stronger scene-aware remapping:
+
+```swift
+import RealityKitStageView
+
+let provider = RealityKitProvider()
+
+provider.setPickPathOverrides([
+    "/RootNode/merged_1": "/RootNode/Forklift"
+])
+
+provider.setPickPathResolver { directPath, entity, provider in
+    guard directPath == "/RootNode/merged_1" else { return nil }
+    return "/RootNode/Forklift/Body"
+}
+```
+
+`StageView` applies consumer overrides first, then its built-in generic merged
+node fallback, then the direct imported mapping.
 
 ## Requirements
 

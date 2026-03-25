@@ -1,7 +1,10 @@
 import Metal
+import OSLog
 import RealityKit
 import SwiftUI
 import simd
+
+private let outlineLogger = Logger(subsystem: "RealityKitStageView", category: "PostProcessOutline")
 
 // MARK: - Internal State
 
@@ -37,6 +40,9 @@ final class OutlineRenderState: @unchecked Sendable {
     var maskPipeline: (any MTLRenderPipelineState)?
     var dilatePipeline: (any MTLComputePipelineState)?
     var compositePipeline: (any MTLComputePipelineState)?
+    var viewMatrix: simd_float4x4 = matrix_identity_float4x4
+    var didLogPrepare = false
+    var didLogFirstPostProcess = false
 
     // MARK: Resolved mesh entries (only accessed from postProcess)
 
@@ -154,28 +160,65 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
             return
         }
         var entries: [OutlineRenderState.PendingEntry] = []
-        collectMeshEntries(from: entity, into: &entries)
+        collectSelectionMeshEntries(from: entity, into: &entries)
         state.pending = entries
     }
 
     @MainActor
-    private func collectMeshEntries(
+    private func collectSelectionMeshEntries(
         from entity: Entity,
         into entries: inout [OutlineRenderState.PendingEntry]
     ) {
-        if let model = entity.components[ModelComponent.self],
-           let lowLevel = model.mesh.lowLevelMesh
-        {
-            let noRef: Entity? = nil
-            let worldTransform = entity.transformMatrix(relativeTo: noRef)
-            if let entry = makePendingEntry(mesh: lowLevel, worldTransform: worldTransform) {
-                entries.append(entry)
-            }
+        if appendMeshEntryIfAvailable(from: entity, into: &entries) {
+            // If the selected entity already owns a concrete mesh, outline that
+            // mesh only. Descending into every child tends to explode the
+            // selection to the whole imported subtree for material-group nodes.
+            return
         }
 
         for child in entity.children {
-            collectMeshEntries(from: child, into: &entries)
+            collectSelectionMeshEntries(from: child, into: &entries)
         }
+    }
+
+    @MainActor
+    private func appendMeshEntryIfAvailable(
+        from entity: Entity,
+        into entries: inout [OutlineRenderState.PendingEntry]
+    ) -> Bool {
+        guard let model = entity.components[ModelComponent.self] else {
+            outlineLogger.debug("Post-process mesh extraction skipped for '\(entity.name, privacy: .public)': no ModelComponent")
+            return false
+        }
+
+        let noRef: Entity? = nil
+        let worldTransform = entity.transformMatrix(relativeTo: noRef)
+
+        let contentEntries = makePendingEntries(
+            from: model.mesh.contents,
+            entityWorldTransform: worldTransform
+        )
+        if contentEntries.isEmpty == false {
+            entries.append(contentsOf: contentEntries)
+            outlineLogger.debug(
+                "Post-process mesh extraction for '\(entity.name, privacy: .public)' used MeshResource.contents with \(contentEntries.count, privacy: .public) entries"
+            )
+            return true
+        }
+
+        if let lowLevel = model.mesh.lowLevelMesh,
+           let entry = makePendingEntry(mesh: lowLevel, worldTransform: worldTransform) {
+            entries.append(entry)
+            outlineLogger.debug(
+                "Post-process mesh extraction for '\(entity.name, privacy: .public)' used lowLevelMesh"
+            )
+            return true
+        }
+
+        outlineLogger.info(
+            "Post-process mesh extraction failed for '\(entity.name, privacy: .public)': ModelComponent present but neither MeshResource.contents nor lowLevelMesh produced entries"
+        )
+        return false
     }
 
     @MainActor
@@ -234,16 +277,91 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         )
     }
 
+    @MainActor
+    private func makePendingEntries(
+        from contents: MeshResource.Contents,
+        entityWorldTransform: simd_float4x4
+    ) -> [OutlineRenderState.PendingEntry] {
+        let modelsByID = Dictionary(uniqueKeysWithValues: contents.models.map { ($0.id, $0) })
+        let instances = Array(contents.instances)
+
+        if instances.isEmpty {
+            return contents.models.flatMap { model in
+                makePendingEntries(from: model, worldTransform: entityWorldTransform)
+            }
+        }
+
+        return instances.flatMap { instance -> [OutlineRenderState.PendingEntry] in
+            guard let model = modelsByID[instance.model] else { return [] }
+            let worldTransform = simd_mul(entityWorldTransform, instance.transform)
+            return makePendingEntries(from: model, worldTransform: worldTransform)
+        }
+    }
+
+    @MainActor
+    private func makePendingEntries(
+        from model: MeshResource.Model,
+        worldTransform: simd_float4x4
+    ) -> [OutlineRenderState.PendingEntry] {
+        model.parts.compactMap { part in
+            makePendingEntry(from: part, worldTransform: worldTransform)
+        }
+    }
+
+    @MainActor
+    private func makePendingEntry(
+        from part: MeshResource.Part,
+        worldTransform: simd_float4x4
+    ) -> OutlineRenderState.PendingEntry? {
+        guard let triangleIndices = part.triangleIndices?.elements, triangleIndices.isEmpty == false else {
+            return nil
+        }
+
+        let positions = part.positions.elements
+        guard positions.isEmpty == false else { return nil }
+
+        let packedPositions = positions.flatMap { [$0.x, $0.y, $0.z] }
+        let indexBytes = triangleIndices.withUnsafeBytes { Array($0) }
+
+        return .init(
+            positions: packedPositions,
+            indices: indexBytes,
+            indexCount: triangleIndices.count,
+            indexType: .uint32,
+            modelMatrix: worldTransform
+        )
+    }
+
     // MARK: PostProcessEffect
 
     public mutating func prepare(for device: any MTLDevice) {
         state.preparePipelines(device: device)
+        if state.didLogPrepare == false {
+            state.didLogPrepare = true
+            outlineLogger.info("Post-process outline prepared on device '\(device.name, privacy: .public)'")
+        }
+    }
+
+    public mutating func setViewMatrix(_ viewMatrix: simd_float4x4) {
+        state.viewMatrix = viewMatrix
     }
 
     public mutating func postProcess(
         context: borrowing PostProcessEffectContext<any MTLCommandBuffer>
     ) {
-        state.flushPending(device: context.device)
+        let device = context.device
+        let textureWidth = context.sourceColorTexture.width
+        let textureHeight = context.sourceColorTexture.height
+
+        state.flushPending(device: device)
+
+        if state.didLogFirstPostProcess == false {
+            state.didLogFirstPostProcess = true
+            let meshEntryCount = state.meshEntries.count
+            outlineLogger.info(
+                "Post-process outline pass running with \(meshEntryCount, privacy: .public) mesh entries at \(textureWidth, privacy: .public)x\(textureHeight, privacy: .public)"
+            )
+        }
 
         guard
             !state.meshEntries.isEmpty,
@@ -255,9 +373,8 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
             return
         }
 
-        let w = context.sourceColorTexture.width
-        let h = context.sourceColorTexture.height
-        let device = context.device
+        let w = textureWidth
+        let h = textureHeight
         let cb = context.commandBuffer
 
         guard
@@ -282,7 +399,7 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         guard let renc = cb.makeRenderCommandEncoder(descriptor: rpd) else { return }
         renc.setRenderPipelineState(maskPipeline)
         for entry in state.meshEntries {
-            var mvp = context.projection * entry.modelMatrix
+            var mvp = context.projection * state.viewMatrix * entry.modelMatrix
             renc.setVertexBuffer(entry.vertexBuffer, offset: 0, index: 0)
             renc.setVertexBytes(&mvp, length: MemoryLayout<simd_float4x4>.size, index: 1)
             renc.drawIndexedPrimitives(

@@ -36,6 +36,76 @@ struct RealityKitProviderSelectionResolutionTests {
         #expect(resolved?.name == "Body")
     }
 
+    @Test
+    func prefersSemanticSiblingForGenericMergedPickPath() {
+        let provider = RealityKitProvider()
+        let model = makeMergedPickModelTree()
+        provider.setModel(model, metersPerUnit: 1.0, isZUp: false)
+
+        let merged = model.children.first?.children.first(where: { $0.name == "merged_1" })
+        let resolved = merged.flatMap { provider.preferredPickPrimPath(from: $0) }
+
+        #expect(resolved == "/RootNode/M_Forklift_C01")
+    }
+
+    @Test
+    func keepsSpecificPickPathWhenEntityIsNotGeneric() {
+        let provider = RealityKitProvider()
+        let model = makeMergedPickModelTree()
+        provider.setModel(model, metersPerUnit: 1.0, isZUp: false)
+
+        let target = model.children.first?.children.first(where: { $0.name == "M_Forklift_C01_Blue" })
+        let resolved = target.flatMap { provider.preferredPickPrimPath(from: $0) }
+
+        #expect(resolved == "/RootNode/M_Forklift_C01_Blue")
+    }
+
+    @Test
+    func usesConsumerPickOverrideBeforeBuiltInFallback() {
+        let provider = RealityKitProvider()
+        let model = makeMergedPickModelTree()
+        provider.setModel(model, metersPerUnit: 1.0, isZUp: false)
+        provider.setPickPathOverrides([
+            "/RootNode/merged_1": "/RootNode/M_Forklift_C01_Glass"
+        ])
+
+        let merged = model.children.first?.children.first(where: { $0.name == "merged_1" })
+        let resolved = merged.flatMap { provider.preferredPickPrimPath(from: $0) }
+
+        #expect(resolved == "/RootNode/M_Forklift_C01_Glass")
+    }
+
+    @Test
+    func usesConsumerResolverBeforeBuiltInFallback() {
+        let provider = RealityKitProvider()
+        let model = makeMergedPickModelTree()
+        provider.setModel(model, metersPerUnit: 1.0, isZUp: false)
+        provider.setPickPathResolver { directPath, _, _ in
+            if directPath == "/RootNode/merged_1" {
+                return "/RootNode/M_Forklift_C01_Decals"
+            }
+            return nil
+        }
+
+        let merged = model.children.first?.children.first(where: { $0.name == "merged_1" })
+        let resolved = merged.flatMap { provider.preferredPickPrimPath(from: $0) }
+
+        #expect(resolved == "/RootNode/M_Forklift_C01_Decals")
+    }
+
+    @Test
+    func prefersSpecificPathFromOrderedHitList() {
+        let provider = RealityKitProvider()
+        let model = makeMergedPickModelTree()
+        provider.setModel(model, metersPerUnit: 1.0, isZUp: false)
+
+        let merged = model.children.first?.children.first(where: { $0.name == "merged_1" })
+        let specific = model.children.first?.children.first(where: { $0.name == "M_Forklift_C01_Glass" })
+        let resolved = provider.preferredPickPrimPath(from: [merged, specific].compactMap { $0 })
+
+        #expect(resolved == "/RootNode/M_Forklift_C01_Glass")
+    }
+
     private func makeSimpleModelTree() -> Entity {
         let root = Entity()
         root.name = ""
@@ -48,6 +118,37 @@ struct RealityKitProviderSelectionResolutionTests {
 
         robot.addChild(body)
         root.addChild(robot)
+        return root
+    }
+
+    private func makeMergedPickModelTree() -> Entity {
+        let root = Entity()
+        root.name = ""
+
+        let rootNode = Entity()
+        rootNode.name = "RootNode"
+
+        let assembly = Entity()
+        assembly.name = "M_Forklift_C01"
+
+        let blue = Entity()
+        blue.name = "M_Forklift_C01_Blue"
+
+        let decals = Entity()
+        decals.name = "M_Forklift_C01_Decals"
+
+        let glass = Entity()
+        glass.name = "M_Forklift_C01_Glass"
+
+        let merged = Entity()
+        merged.name = "merged_1"
+
+        rootNode.addChild(assembly)
+        rootNode.addChild(blue)
+        rootNode.addChild(decals)
+        rootNode.addChild(glass)
+        rootNode.addChild(merged)
+        root.addChild(rootNode)
         return root
     }
 }

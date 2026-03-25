@@ -152,7 +152,7 @@ final class ArcballEventController {
                 if activeMouseInteraction == nil && distance < 5 && duration < 0.5 && isEventInsideViewport(event) {
                     let size = view.bounds.size
                     pickLogger.debug("firing onPick at \(localPoint.x, privacy: .public),\(localPoint.y, privacy: .public) size=\(size.width, privacy: .public)x\(size.height, privacy: .public)")
-                    onPick?(CGPoint(x: localPoint.x, y: size.height - localPoint.y), size)
+                    onPick?(localPoint, size)
                 }
             default:
                 break

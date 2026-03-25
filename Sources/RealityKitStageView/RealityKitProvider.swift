@@ -56,6 +56,8 @@ public struct RealityKitDiscreteSnapshot: Equatable, Sendable {
 @Observable
 @MainActor
 public final class RealityKitProvider {
+    public typealias PickPathResolver = @MainActor (_ directPath: String, _ entity: Entity, _ provider: RealityKitProvider) -> String?
+
     private enum LoadError: LocalizedError {
         case timeout(seconds: Int)
         var errorDescription: String? {
@@ -82,11 +84,17 @@ public final class RealityKitProvider {
     public var selectedPrimPath: String? {
         didSet { emitDiscreteSnapshotIfNeeded() }
     }
+    public private(set) var selectionGeneration: UInt64 = 0
 
     /// Update selection from programmatic sync (e.g. TCA).
     public func setSelection(_ path: String?) {
+        if self.selectedPrimPath == path {
+            self.isUserInteraction = false
+            return
+        }
         self.isUserInteraction = false
         self.selectedPrimPath = path
+        self.selectionGeneration &+= 1
     }
 
     /// Update selection from viewport interaction (e.g. pick).
@@ -94,6 +102,7 @@ public final class RealityKitProvider {
         providerLogger.debug("userDidPick path=\(path ?? "nil", privacy: .public)")
         self.isUserInteraction = true
         self.selectedPrimPath = path
+        self.selectionGeneration &+= 1
     }
     
     // MARK: - File State
@@ -118,8 +127,22 @@ public final class RealityKitProvider {
     /// Bidirectional prim path ↔ entity mapping, built once per model load.
     private(set) var primPathToEntityID: [String: Entity.ID] = [:]
     private(set) var entityIDToPrimPath: [Entity.ID: String] = [:]
+    private var pickPathOverrides: [String: String] = [:]
+    private var pickPathResolver: PickPathResolver?
     
     public init() {}
+
+    /// Provide consumer-owned remappings from coarse importer paths to more
+    /// semantic prim paths.
+    public func setPickPathOverrides(_ overrides: [String: String]) {
+        pickPathOverrides = overrides
+    }
+
+    /// Provide a consumer-owned resolver for upgrading picked prim paths when
+    /// the imported RealityKit graph is coarser than the source scene graph.
+    public func setPickPathResolver(_ resolver: PickPathResolver?) {
+        pickPathResolver = resolver
+    }
 
     public func activateViewport(_ id: UUID) {
         activeViewportID = id
@@ -526,6 +549,13 @@ extension RealityKitProvider {
         for child in root.children {
             walk(child, parentPrimPath: "")
         }
+
+        let mappedPaths = primPathToEntityID.keys.sorted()
+        providerLogger.debug("Built prim path mapping with \(mappedPaths.count, privacy: .public) entries")
+        if mappedPaths.count <= 4 || mappedPaths.contains(where: { $0.contains("/merged_") || $0.hasSuffix("/merged") }) {
+            let sample = mappedPaths.prefix(8).joined(separator: ", ")
+            providerLogger.info("Prim path mapping sample: \(sample, privacy: .public)")
+        }
     }
     
     /// Resolve a USD prim path to its RealityKit entity via the cached mapping.
@@ -596,6 +626,58 @@ extension RealityKitProvider {
             current = e.parent
         }
         return nil
+    }
+
+    /// Resolve the best USD prim path for a viewport pick.
+    ///
+    /// RealityKit can collapse imported meshes into generic buckets such as
+    /// `merged_1`, which makes a direct entity-to-prim lookup too coarse for
+    /// selection. This resolver keeps the nearest mapped path when it is
+    /// meaningful, but falls back to a more semantic sibling/descendant path
+    /// when the importer only exposes a generic merged node.
+    public func preferredPickPrimPath(from entity: Entity) -> String? {
+        guard let directPath = nearestMappedPrimPath(from: entity) else { return nil }
+        if let overridePath = remappedPickPath(for: directPath, entity: entity) {
+            return overridePath
+        }
+        guard isGenericImportedPath(directPath) else { return directPath }
+
+        if let semanticPath = preferredSemanticPath(near: directPath) {
+            providerLogger.debug(
+                "Resolved generic pick path \(directPath, privacy: .public) to semantic path \(semanticPath, privacy: .public)"
+            )
+            return semanticPath
+        }
+
+        return directPath
+    }
+
+    /// Resolve the best USD prim path from an ordered list of raycast hits.
+    ///
+    /// This prefers the first specific non-generic mapping in raycast order
+    /// before falling back to merged/importer-generated buckets.
+    public func preferredPickPrimPath(from entities: [Entity]) -> String? {
+        var fallback: String?
+
+        for entity in entities {
+            guard let directPath = nearestMappedPrimPath(from: entity) else { continue }
+
+            if let remapped = remappedPickPath(for: directPath, entity: entity) {
+                if isGenericImportedPath(remapped) == false {
+                    return remapped
+                }
+                fallback = fallback ?? remapped
+                continue
+            }
+
+            if isGenericImportedPath(directPath) == false {
+                return directPath
+            }
+
+            fallback = fallback ?? preferredPickPrimPath(from: entity)
+        }
+
+        return fallback
     }
     
     // MARK: - Private Helpers
@@ -714,6 +796,109 @@ extension RealityKitProvider {
             let rhsDepth = rhs.split(separator: "/").count
             return lhsDepth > rhsDepth
         }
+    }
+
+    private func isGenericImportedPath(_ primPath: String) -> Bool {
+        guard let leaf = primPath.split(separator: "/").last else { return false }
+        return isGenericImportedName(String(leaf))
+    }
+
+    private func remappedPickPath(for directPath: String, entity: Entity) -> String? {
+        if let overridePath = pickPathOverrides[directPath], overridePath.isEmpty == false {
+            providerLogger.debug(
+                "Resolved pick path \(directPath, privacy: .public) using override path \(overridePath, privacy: .public)"
+            )
+            return overridePath
+        }
+
+        if let resolvedPath = pickPathResolver?(directPath, entity, self),
+           resolvedPath.isEmpty == false {
+            providerLogger.debug(
+                "Resolved pick path \(directPath, privacy: .public) using custom resolver path \(resolvedPath, privacy: .public)"
+            )
+            return resolvedPath
+        }
+
+        return nil
+    }
+
+    private func isGenericImportedName(_ name: String) -> Bool {
+        let lowered = name.lowercased()
+        if lowered == "merged" || lowered.hasPrefix("merged_") {
+            return true
+        }
+        if lowered == "mesh" || lowered.hasPrefix("mesh_") {
+            return true
+        }
+        return false
+    }
+
+    private func preferredSemanticPath(near genericPath: String) -> String? {
+        let parentPath: String
+        if let slash = genericPath.lastIndex(of: "/"), slash != genericPath.startIndex {
+            parentPath = String(genericPath[..<slash])
+        } else {
+            parentPath = "/"
+        }
+
+        let directChildren = semanticDirectChildren(of: parentPath)
+        if let bestDirectChild = directChildren.min(by: semanticPathOrdering) {
+            return bestDirectChild
+        }
+
+        let descendants = semanticDescendants(of: parentPath)
+        if let bestDescendant = descendants.min(by: semanticPathOrdering) {
+            return bestDescendant
+        }
+
+        if let ancestor = nearestNonGenericAncestorPath(for: parentPath) {
+            return ancestor
+        }
+
+        return nil
+    }
+
+    private func semanticDirectChildren(of parentPath: String) -> [String] {
+        let parentDepth = pathDepth(parentPath)
+        let prefix = parentPath == "/" ? "/" : parentPath + "/"
+
+        return primPathToEntityID.keys.filter { candidate in
+            guard candidate.hasPrefix(prefix), candidate != parentPath else { return false }
+            guard pathDepth(candidate) == parentDepth + 1 else { return false }
+            return isGenericImportedPath(candidate) == false
+        }
+    }
+
+    private func semanticDescendants(of parentPath: String) -> [String] {
+        let prefix = parentPath == "/" ? "/" : parentPath + "/"
+        return primPathToEntityID.keys.filter { candidate in
+            guard candidate.hasPrefix(prefix), candidate != parentPath else { return false }
+            return isGenericImportedPath(candidate) == false
+        }
+    }
+
+    private func nearestNonGenericAncestorPath(for primPath: String) -> String? {
+        var cursor = primPath
+        while true {
+            guard let slash = cursor.lastIndex(of: "/"), slash != cursor.startIndex else {
+                return nil
+            }
+            cursor = String(cursor[..<slash])
+            if primPathToEntityID[cursor] != nil, isGenericImportedPath(cursor) == false {
+                return cursor
+            }
+        }
+    }
+
+    private func pathDepth(_ primPath: String) -> Int {
+        primPath.split(separator: "/").count
+    }
+
+    private func semanticPathOrdering(lhs: String, rhs: String) -> Bool {
+        let lhsDepth = pathDepth(lhs)
+        let rhsDepth = pathDepth(rhs)
+        if lhsDepth != rhsDepth { return lhsDepth < rhsDepth }
+        return lhs.localizedStandardCompare(rhs) == .orderedAscending
     }
 
     /// BlendShape prims can map to mesh entities, so we walk up path ancestry
