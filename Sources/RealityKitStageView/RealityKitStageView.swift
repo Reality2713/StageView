@@ -100,7 +100,7 @@ public struct RealityKitStageView: View {
 					}
 				}
 			}
-			.task(id: store.loadRequestID) {
+			.task(id: loadTaskID) {
 				await handleLoadRequest()
 			}
 	}
@@ -118,6 +118,7 @@ public struct RealityKitStageView: View {
 				logger.debug(
 					"RealityKit viewport appeared: \(self.viewportInstanceID.uuidString, privacy: .public)"
 				)
+				store.send(.viewportAppeared)
 			}
 			.onDisappear {
 				runtime.deactivateViewport(viewportInstanceID)
@@ -154,6 +155,16 @@ public struct RealityKitStageView: View {
 	private var environmentTaskID: String? {
 		guard let requestID = store.environmentRequestID, rootEntity != nil else { return nil }
 		return requestID.uuidString
+	}
+
+	/// Combined task ID: fires only after a load request exists and the viewport
+	/// has both mounted its scene root and become active.
+	private var loadTaskID: String? {
+		guard store.activeLoadCommand != nil,
+			rootEntity != nil,
+			runtime.isActiveViewport(viewportInstanceID)
+		else { return nil }
+		return store.loadRequestID.uuidString
 	}
 
 	@ViewBuilder
@@ -820,11 +831,24 @@ public struct RealityKitStageView: View {
 		   let existingModel = skybox.components[ModelComponent.self]
 		{
 			do {
-				let texture = try TextureResource.load(
-					contentsOf: url,
-					withName: resourceName + "_skybox",
-					options: .init(semantic: .color)
-				)
+				let texture: TextureResource
+				do {
+					// Use the already-decoded float CGImage and mark it as HDR so
+					// the visible dome does not go through the generic file loader's
+					// `.color` path, which can flatten the skybox relative to the IBL.
+					texture = try await TextureResource(
+						image: cgImage,
+						withName: resourceName + "_skybox",
+						options: .init(semantic: .hdrColor)
+					)
+				} catch {
+					logger.warning("HDR skybox texture creation failed; falling back to file load: \(error.localizedDescription, privacy: .public)")
+					texture = try await TextureResource(
+						contentsOf: url,
+						withName: resourceName + "_skybox",
+						options: .init(semantic: .color)
+					)
+				}
 				var material = UnlitMaterial()
 				material.color = .init(texture: .init(texture))
 				skybox.components.set(ModelComponent(

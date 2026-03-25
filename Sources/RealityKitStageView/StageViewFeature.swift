@@ -121,6 +121,7 @@ public struct StageViewFeature {
         case selectionChanged(String?)
         case updateEnvironmentURL(URL?)
         case updateNavigationMapping(RealityKitNavigationMapping)
+        case viewportAppeared
 
         public enum Delegate: Equatable {
             case userPickedPrim(String?)
@@ -212,6 +213,11 @@ public struct StageViewFeature {
 
             case let .updateNavigationMapping(mapping):
                 state.navigationMapping = mapping
+                return .none
+
+            case .viewportAppeared:
+                guard state.activeLoadCommand != nil else { return .none }
+                state.loadRequestID = uuid()
                 return .none
 
             case .delegate:
