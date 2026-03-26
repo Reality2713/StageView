@@ -174,9 +174,9 @@ public struct OrientationGizmoView: View {
 	private struct HydraToolbarMaterialModifier: ViewModifier {
 		func body(content: Content) -> some View {
 			if #available(macOS 26.0, *) {
-				content.glassEffect()
+				content.glassEffect(in: Circle())
 			} else {
-				content.background(.ultraThinMaterial, in: .circle)
+				content.background(.ultraThinMaterial, in: Circle())
 			}
 		}
 	}
