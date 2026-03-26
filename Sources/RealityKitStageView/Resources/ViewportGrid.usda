@@ -722,7 +722,7 @@ def Xform "Root"
             def Shader "MinorRed"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskNoAxis.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskExclusive.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outr>
                 float outputs:out
             }
@@ -730,7 +730,7 @@ def Xform "Root"
             def Shader "MinorGreen"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskNoAxis.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskExclusive.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outg>
                 float outputs:out
             }
@@ -738,7 +738,7 @@ def Xform "Root"
             def Shader "MinorBlue"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskNoAxis.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskExclusive.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outb>
                 float outputs:out
             }
@@ -932,6 +932,24 @@ def Xform "Root"
                 uniform token info:id = "ND_multiply_float"
                 float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/InvAxisMask.outputs:out>
+                float outputs:out
+            }
+
+            # Punch major regions out of the minor mask so major line positions
+            # show only majorColor (not minorColor + majorColor additively).
+            def Shader "InvMajorMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorMaskFaded.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorMaskExclusive"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskNoAxis.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/InvMajorMask.outputs:out>
                 float outputs:out
             }
 
