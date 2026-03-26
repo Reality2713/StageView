@@ -85,13 +85,15 @@ enum ViewportTuning {
 
     static func gridRadiusMeters(worldExtentMeters: Double) -> Double {
         // Keep a generous floor plane even for tiny assets so depth cues and
-        // fog remain legible at normal editing camera distances.
-        // For tiny assets (e.g. 2mm), 3.0m is way too big. Let's use 0.1m (10cm) floor.
-        Swift.max(0.1, worldExtentMeters * 15.0)
+        // fog remain legible at normal editing camera distances without
+        // forcing millimeter-scale assets onto a centimeter-scale grid.
+        Swift.max(0.03, worldExtentMeters * 15.0)
     }
 
     static func minorGridStepMeters(forGridRadius radiusMeters: Double) -> Double {
         switch radiusMeters {
+        case ..<0.08:
+            return 0.001 // 1mm grid for tiny assets
         case ..<0.5:
             return 0.01 // 1cm grid for tiny assets
         case ..<10:
@@ -103,6 +105,10 @@ enum ViewportTuning {
         default:
             return 1.0
         }
+    }
+
+    static func majorGridStepMeters(forMinorStep minorStep: Double) -> Double {
+        minorStep * 10.0
     }
 
     private static func sceneRadiusMeters(sceneBounds: SceneBounds) -> Float {

@@ -61,9 +61,23 @@ def Xform "Root"
             float inputs:majorBaseThickness = 0.0082
             float inputs:minorDepthFactor = 0.002
             float inputs:majorDepthFactor = 0.0017
-            float inputs:minorThicknessMax = 0.016
-            float inputs:majorThicknessMax = 0.032
-            float inputs:axisExtraThickness = 0.002
+            float inputs:minorThicknessMax = 0.0028
+            float inputs:majorThicknessMax = 0.0021
+            float inputs:axisBaseThicknessWorld = 0.0004 (
+                doc = "Axis half-width in world-space meters at near depth."
+            )
+            float inputs:axisDepthFactorWorld = 0.00006 (
+                doc = "Additional axis half-width per meter of view depth."
+            )
+            float inputs:axisThicknessWorldMax = 0.0012 (
+                doc = "Maximum axis half-width in world-space meters."
+            )
+            float inputs:axisHalfLengthWorld = 0.2 (
+                doc = "Half-length of the colored origin cross in world-space meters."
+            )
+            float inputs:axisOpacityScale = 0.9 (
+                doc = "Additional intensity scale for the colored origin cross."
+            )
             float inputs:fogDensity = 0.065
             float inputs:fogMax = 0.9
             float inputs:edgeFadeStart = 1
@@ -285,11 +299,27 @@ def Xform "Root"
                 float outputs:out
             }
 
-            def Shader "AxisThickness"
+            def Shader "AxisDepthThicknessWorld"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/ViewDepth.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:axisDepthFactorWorld>
+                float outputs:out
+            }
+
+            def Shader "AxisThicknessWorldUnclamped"
             {
                 uniform token info:id = "ND_add_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
-                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:axisExtraThickness>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial.inputs:axisBaseThicknessWorld>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisDepthThicknessWorld.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisThicknessWorld"
+            {
+                uniform token info:id = "ND_min_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisThicknessWorldUnclamped.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:axisThicknessWorldMax>
                 float outputs:out
             }
 
@@ -466,11 +496,18 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "AxisXAlongAbs"
+            {
+                uniform token info:id = "ND_absval_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float outputs:out
+            }
+
             def Shader "AxisXThresholdStep"
             {
                 uniform token info:id = "ND_realitykit_step_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/AxisXAbs.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/AxisThickness.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/AxisThicknessWorld.outputs:out>
                 float outputs:out
             }
 
@@ -482,6 +519,30 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "AxisXLengthStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/AxisXAlongAbs.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial.inputs:axisHalfLengthWorld>
+                float outputs:out
+            }
+
+            def Shader "AxisXLengthMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisXLengthStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisXCrossMask"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisXLengthMask.outputs:out>
+                float outputs:out
+            }
+
             def Shader "AxisZAbs"
             {
                 uniform token info:id = "ND_absval_float"
@@ -489,11 +550,18 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "AxisZAlongAbs"
+            {
+                uniform token info:id = "ND_absval_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float outputs:out
+            }
+
             def Shader "AxisZThresholdStep"
             {
                 uniform token info:id = "ND_realitykit_step_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/AxisZAbs.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/AxisThickness.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/AxisThicknessWorld.outputs:out>
                 float outputs:out
             }
 
@@ -502,6 +570,48 @@ def Xform "Root"
                 uniform token info:id = "ND_subtract_float"
                 float inputs:in1 = 1
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZThresholdStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisZLengthStep"
+            {
+                uniform token info:id = "ND_realitykit_step_float"
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/AxisZAlongAbs.outputs:out>
+                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial.inputs:axisHalfLengthWorld>
+                float outputs:out
+            }
+
+            def Shader "AxisZLengthMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZLengthStep.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisZCrossMask"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZLengthMask.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "InvAxisXMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisXCrossMask.outputs:out>
+                float outputs:out
+            }
+
+            # Keep the center cross deterministic so the origin does not turn
+            # purple from additive X/Z axis overlap.
+            def Shader "AxisZMaskExclusive"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZCrossMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/InvAxisXMask.outputs:out>
                 float outputs:out
             }
 
@@ -549,6 +659,14 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "AxisFogFactor"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/FogFactor.outputs:out>
+                float inputs:in2 = 0.55
+                float outputs:out
+            }
+
             # ── Edge fade ──
 
             def Shader "EdgeXAbs"
@@ -573,10 +691,44 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "EdgeDistanceMinor"
+            {
+                uniform token info:id = "ND_min_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeXAbs.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/EdgeZAbs.outputs:out>
+                float outputs:out
+            }
+
+            # MaterialX in RealityKit does not expose a direct length() node here,
+            # so use a close radial approximation instead of the old square fade.
+            def Shader "EdgeDistanceMinorWeighted"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeDistanceMinor.outputs:out>
+                float inputs:in2 = 0.55
+                float outputs:out
+            }
+
+            def Shader "EdgeDistanceApproxRadial"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeDistance.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/EdgeDistanceMinorWeighted.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "EdgeDistanceClamped"
+            {
+                uniform token info:id = "ND_min_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeDistanceApproxRadial.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/ViewDepth.outputs:out>
+                float outputs:out
+            }
+
             def Shader "EdgeDistancePastStart"
             {
                 uniform token info:id = "ND_subtract_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeDistance.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeDistanceClamped.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:edgeFadeStart>
                 float outputs:out
             }
@@ -613,6 +765,14 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "AxisEdgeFadeFactor"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/EdgeFadeFactor.outputs:out>
+                float inputs:in2 = 0.7
+                float outputs:out
+            }
+
             # ── Fog-attenuated masks ──
 
             def Shader "MinorMaskVisible"
@@ -634,16 +794,32 @@ def Xform "Root"
             def Shader "AxisXVisible"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXMask.outputs:out>
-                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/FogFactor.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXCrossMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisFogFactor.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisXVisibleScaled"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:axisOpacityScale>
                 float outputs:out
             }
 
             def Shader "AxisZVisible"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZMask.outputs:out>
-                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/FogFactor.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZMaskExclusive.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisFogFactor.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisZVisibleScaled"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:axisOpacityScale>
                 float outputs:out
             }
 
@@ -666,16 +842,16 @@ def Xform "Root"
             def Shader "AxisXFaded"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisible.outputs:out>
-                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/EdgeFadeFactor.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXVisibleScaled.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisEdgeFadeFactor.outputs:out>
                 float outputs:out
             }
 
             def Shader "AxisZFaded"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZVisible.outputs:out>
-                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/EdgeFadeFactor.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisZVisibleScaled.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisEdgeFadeFactor.outputs:out>
                 float outputs:out
             }
 
@@ -908,6 +1084,14 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "AnyAxisMask"
+            {
+                uniform token info:id = "ND_max_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXCrossMask.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZMaskExclusive.outputs:out>
+                float outputs:out
+            }
+
             def Shader "AnyVisibleAxis"
             {
                 uniform token info:id = "ND_max_float"
@@ -916,14 +1100,14 @@ def Xform "Root"
                 float outputs:out
             }
 
-            # Inverse axis mask — 0 where any axis line is visible, 1 elsewhere.
-            # Used to punch axis regions out of minor/major masks so their colors
-            # don't additively bleed into the axis lines.
+            # Inverse axis mask — 0 where any axis line exists, 1 elsewhere.
+            # Use the raw binary axis masks here so major/minor colors do not
+            # bleed back under the axes as fog/edge fade attenuates visibility.
             def Shader "InvAxisMask"
             {
                 uniform token info:id = "ND_subtract_float"
                 float inputs:in1 = 1
-                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AnyVisibleAxis.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AnyAxisMask.outputs:out>
                 float outputs:out
             }
 
@@ -937,11 +1121,13 @@ def Xform "Root"
 
             # Punch major regions out of the minor mask so major line positions
             # show only majorColor (not minorColor + majorColor additively).
+            # Use the raw major grid mask here so minor colors do not bleed back
+            # in as the major lines fade with fog/edge attenuation.
             def Shader "InvMajorMask"
             {
                 uniform token info:id = "ND_subtract_float"
                 float inputs:in1 = 1
-                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorMaskFaded.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorGridMask.outputs:out>
                 float outputs:out
             }
 
@@ -979,8 +1165,8 @@ def Xform "Root"
 
             def Shader "Opacity"
             {
-                uniform token info:id = "ND_add_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial.inputs:baseOpacity>
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1 = 1
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/LineOpacityScaled.outputs:out>
                 float outputs:out
             }

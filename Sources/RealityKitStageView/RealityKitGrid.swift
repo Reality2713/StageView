@@ -73,11 +73,28 @@ public struct RealityKitGrid {
         let worldExtentMeters = worldExtent // Already in Meters from runtime
         let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
         let minorStep = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
+        let majorStep = ViewportTuning.majorGridStepMeters(forMinorStep: minorStep)
+        let minorStepFloat = Float(minorStep)
+        let majorStepFloat = Float(majorStep)
+        let radiusMetersFloat = Float(radiusMeters)
 
         let minorScale = Float(1.0 / minorStep)
-        let majorScale: Float = 1.0
-        let edgeFadeStart = Float(radiusMeters * 0.8)
-        let edgeFadeEnd = Float(radiusMeters * 0.995)
+        let majorScale = Float(1.0 / majorStep)
+        let axisBaseThicknessWorld = Float(
+            min(max(minorStepFloat * 0.006, 0.00003), majorStepFloat * 0.0009)
+        )
+        let axisDepthFactorWorld = Float(
+            min(max(minorStepFloat * 0.00035, 0.000005), majorStepFloat * 0.00006)
+        )
+        let axisThicknessWorldMax = Float(
+            min(max(minorStepFloat * 0.012, 0.00006), majorStepFloat * 0.0012)
+        )
+        let axisHalfLengthWorld = Float(
+            max(radiusMetersFloat * 2.0, majorStepFloat * 8.0)
+        )
+        let axisOpacityScale: Float = 0.9
+        let edgeFadeStart = Float(radiusMeters * 0.72)
+        let edgeFadeEnd = Float(radiusMeters * 1.08)
         let edgeFadeReciprocalRange = 1 / max(edgeFadeEnd - edgeFadeStart, 0.0001)
 
         // Scale the plane to cover the needed world extent.
@@ -96,23 +113,30 @@ public struct RealityKitGrid {
 
         // Resolve colors for appearance, applying any caller-provided overrides.
         let palette = ProceduralGridPalette(appearance: appearance)
+        let fogDensityRadiusScale = min(1.0, 3.0 / max(radiusMetersFloat, 3.0))
+        let fogDensity = palette.fogDensity * fogDensityRadiusScale
+        let fogMax = radiusMetersFloat > 5.0 ? min(palette.fogMax, 0.72) : palette.fogMax
         let resolvedMinorColor = minorColorOverride ?? palette.minorColor
         let resolvedMajorColor = majorColorOverride ?? palette.majorColor
 
-        // Scale thicknesses relative to the grid resolution.
-        // The palette base values are balanced for a 1m grid.
-        let thicknessScale = Float(minorStep)
+        // Thickness values live in frac-space. As the world-space step shrinks,
+        // scale them up so the on-screen world-space line width stays stable.
+        let thicknessScale = Float(1.0 / minorStep)
 
         // Walk entity tree and set ShaderGraphMaterial parameters.
         setMaterialParameters(
             on: entity,
             minorScale: minorScale,
             majorScale: majorScale,
+            axisBaseThicknessWorld: axisBaseThicknessWorld,
+            axisDepthFactorWorld: axisDepthFactorWorld,
+            axisThicknessWorldMax: axisThicknessWorldMax,
+            axisHalfLengthWorld: axisHalfLengthWorld,
+            axisOpacityScale: axisOpacityScale,
             minorBaseThickness: palette.minorBaseThickness * thicknessScale,
             majorBaseThickness: palette.majorBaseThickness * thicknessScale,
-            axisExtraThickness: palette.axisExtraThickness * thicknessScale,
-            fogDensity: palette.fogDensity,
-            fogMax: palette.fogMax,
+            fogDensity: fogDensity,
+            fogMax: fogMax,
             edgeFadeStart: edgeFadeStart,
             edgeFadeReciprocalRange: edgeFadeReciprocalRange,
             minorColor: resolvedMinorColor,
@@ -131,9 +155,13 @@ public struct RealityKitGrid {
         on entity: Entity,
         minorScale: Float,
         majorScale: Float,
+        axisBaseThicknessWorld: Float,
+        axisDepthFactorWorld: Float,
+        axisThicknessWorldMax: Float,
+        axisHalfLengthWorld: Float,
+        axisOpacityScale: Float,
         minorBaseThickness: Float,
         majorBaseThickness: Float,
-        axisExtraThickness: Float,
         fogDensity: Float,
         fogMax: Float,
         edgeFadeStart: Float,
@@ -151,9 +179,13 @@ public struct RealityKitGrid {
                     on: child,
                     minorScale: minorScale,
                     majorScale: majorScale,
+                    axisBaseThicknessWorld: axisBaseThicknessWorld,
+                    axisDepthFactorWorld: axisDepthFactorWorld,
+                    axisThicknessWorldMax: axisThicknessWorldMax,
+                    axisHalfLengthWorld: axisHalfLengthWorld,
+                    axisOpacityScale: axisOpacityScale,
                     minorBaseThickness: minorBaseThickness,
                     majorBaseThickness: majorBaseThickness,
-                    axisExtraThickness: axisExtraThickness,
                     fogDensity: fogDensity,
                     fogMax: fogMax,
                     edgeFadeStart: edgeFadeStart,
@@ -176,9 +208,13 @@ public struct RealityKitGrid {
             do {
                 try sgMaterial.setParameter(name: "minorScale", value: .float(minorScale))
                 try sgMaterial.setParameter(name: "majorScale", value: .float(majorScale))
+                try sgMaterial.setParameter(name: "axisBaseThicknessWorld", value: .float(axisBaseThicknessWorld))
+                try sgMaterial.setParameter(name: "axisDepthFactorWorld", value: .float(axisDepthFactorWorld))
+                try sgMaterial.setParameter(name: "axisThicknessWorldMax", value: .float(axisThicknessWorldMax))
+                try sgMaterial.setParameter(name: "axisHalfLengthWorld", value: .float(axisHalfLengthWorld))
+                try sgMaterial.setParameter(name: "axisOpacityScale", value: .float(axisOpacityScale))
                 try sgMaterial.setParameter(name: "minorBaseThickness", value: .float(minorBaseThickness))
                 try sgMaterial.setParameter(name: "majorBaseThickness", value: .float(majorBaseThickness))
-                try sgMaterial.setParameter(name: "axisExtraThickness", value: .float(axisExtraThickness))
                 try sgMaterial.setParameter(name: "fogDensity", value: .float(fogDensity))
                 try sgMaterial.setParameter(name: "fogMax", value: .float(fogMax))
                 try sgMaterial.setParameter(name: "edgeFadeStart", value: .float(edgeFadeStart))
@@ -214,7 +250,6 @@ struct ProceduralGridPalette {
     let zAxisColor: SIMD3<Float>
     let minorBaseThickness: Float
     let majorBaseThickness: Float
-    let axisExtraThickness: Float
     let fogDensity: Float
     let fogMax: Float
     let baseOpacity: Float
@@ -227,27 +262,25 @@ struct ProceduralGridPalette {
             majorColor = SIMD3<Float>(0.44, 0.47, 0.51)
             // AxisX covers the line at X=0 (Z-axis), AxisZ covers the line at Z=0 (X-axis).
             // Swap so the convention matches the gizmo: X=red, Z=blue.
-            xAxisColor = SIMD3<Float>(0.24, 0.50, 0.84) // Blue → Z-axis line (at X=0)
-            zAxisColor = SIMD3<Float>(0.84, 0.24, 0.24) // Red  → X-axis line (at Z=0)
-            minorBaseThickness = 0.0024
-            majorBaseThickness = 0.0056
-            axisExtraThickness = 0.00018
-            fogDensity = 0.12
-            fogMax = 0.94
-            baseOpacity = 0.014
+            xAxisColor = SIMD3<Float>(0.0, 0.0, 1.0) // Blue → Z-axis line (at X=0)
+            zAxisColor = SIMD3<Float>(1.0, 0.0, 0.0) // Red  → X-axis line (at Z=0)
+            minorBaseThickness = 0.0016
+            majorBaseThickness = 0.0011
+            fogDensity = 0.16
+            fogMax = 0.985
+            baseOpacity = 0
             lineOpacityScale = 0.96
 
         case .light:
             minorColor = SIMD3<Float>(0.42, 0.44, 0.48)
             majorColor = SIMD3<Float>(0.24, 0.26, 0.30)
-            xAxisColor = SIMD3<Float>(0.18, 0.44, 0.76) // Blue → Z-axis line (at X=0)
-            zAxisColor = SIMD3<Float>(0.76, 0.18, 0.18) // Red  → X-axis line (at Z=0)
-            minorBaseThickness = 0.0021
-            majorBaseThickness = 0.0048
-            axisExtraThickness = 0.00015
-            fogDensity = 0.07
-            fogMax = 0.86
-            baseOpacity = 0.016
+            xAxisColor = SIMD3<Float>(0.0, 0.0, 1.0) // Blue → Z-axis line (at X=0)
+            zAxisColor = SIMD3<Float>(1.0, 0.0, 0.0) // Red  → X-axis line (at Z=0)
+            minorBaseThickness = 0.0014
+            majorBaseThickness = 0.00095
+            fogDensity = 0.11
+            fogMax = 0.97
+            baseOpacity = 0
             lineOpacityScale = 0.97
         }
     }
