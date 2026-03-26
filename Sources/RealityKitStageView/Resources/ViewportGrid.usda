@@ -722,7 +722,7 @@ def Xform "Root"
             def Shader "MinorRed"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskFaded.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskNoAxis.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outr>
                 float outputs:out
             }
@@ -730,7 +730,7 @@ def Xform "Root"
             def Shader "MinorGreen"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskFaded.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskNoAxis.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outg>
                 float outputs:out
             }
@@ -738,7 +738,7 @@ def Xform "Root"
             def Shader "MinorBlue"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskFaded.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskNoAxis.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorColorChannels.outputs:outb>
                 float outputs:out
             }
@@ -746,7 +746,7 @@ def Xform "Root"
             def Shader "MajorRed"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskFaded.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskNoAxis.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorColorChannels.outputs:outr>
                 float outputs:out
             }
@@ -754,7 +754,7 @@ def Xform "Root"
             def Shader "MajorGreen"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskFaded.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskNoAxis.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorColorChannels.outputs:outg>
                 float outputs:out
             }
@@ -762,7 +762,7 @@ def Xform "Root"
             def Shader "MajorBlue"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskFaded.outputs:out>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskNoAxis.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorColorChannels.outputs:outb>
                 float outputs:out
             }
@@ -913,6 +913,33 @@ def Xform "Root"
                 uniform token info:id = "ND_max_float"
                 float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisXFaded.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZFaded.outputs:out>
+                float outputs:out
+            }
+
+            # Inverse axis mask — 0 where any axis line is visible, 1 elsewhere.
+            # Used to punch axis regions out of minor/major masks so their colors
+            # don't additively bleed into the axis lines.
+            def Shader "InvAxisMask"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1 = 1
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AnyVisibleAxis.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorMaskNoAxis"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorMaskFaded.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/InvAxisMask.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorMaskNoAxis"
+            {
+                uniform token info:id = "ND_multiply_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorMaskFaded.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/InvAxisMask.outputs:out>
                 float outputs:out
             }
 
