@@ -227,6 +227,12 @@ public struct RealityKitStageView: View {
 			.onChange(of: colorScheme) { _, _ in
 				refreshGrid()
 			}
+			.onChange(of: configuration.gridMinorColor) { _, _ in
+				refreshGrid()
+			}
+			.onChange(of: configuration.gridMajorColor) { _, _ in
+				refreshGrid()
+			}
 			.onChange(of: cameraState) { _, newState in
 				runtime.updateCameraState(
 					rotation: newState.quaternion,
