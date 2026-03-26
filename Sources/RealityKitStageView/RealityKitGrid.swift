@@ -236,8 +236,8 @@ struct ProceduralGridPalette {
             lineOpacityScale = 0.96
 
         case .light:
-            minorColor = SIMD3<Float>(0.60, 0.62, 0.65)
-            majorColor = SIMD3<Float>(0.44, 0.46, 0.50)
+            minorColor = SIMD3<Float>(0.42, 0.44, 0.48)
+            majorColor = SIMD3<Float>(0.24, 0.26, 0.30)
             xAxisColor = SIMD3<Float>(0.76, 0.18, 0.18) // Red-ish
             zAxisColor = SIMD3<Float>(0.18, 0.44, 0.76) // Blue-ish
             minorBaseThickness = 0.0021
