@@ -150,11 +150,11 @@ public struct OrientationGizmoView: View {
 			.frame(width: size, height: size)
 			.padding(8)
 			#if os(visionOS)
-				.background(.ultraThinMaterial, in: .circle)
+				.background(.ultraThinMaterial, in: Circle())
 			#elseif os(macOS)
 				.modifier(HydraToolbarMaterialModifier())
 			#else
-				.glassEffect()
+				.glassEffect(in: Circle())
 			#endif
 			.foregroundStyle(.secondary)
 		}
