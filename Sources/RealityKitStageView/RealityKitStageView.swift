@@ -304,12 +304,10 @@ public struct RealityKitStageView: View {
 				)
 			}
 			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-				if var effect = outlineBox.effect as? PostProcessOutlineEffect {
+				if let effect = outlineBox.effect as? PostProcessOutlineEffect {
 					if let camera = rootEntity?.findEntity(named: "MainCamera") {
 						let noRef: Entity? = nil
-						let cameraWorldTransform = camera.transformMatrix(relativeTo: noRef)
-						effect.setViewMatrix(cameraWorldTransform.inverse)
-						outlineBox.effect = effect
+						effect.setViewMatrix(camera.transformMatrix(relativeTo: noRef).inverse)
 					}
 					content.renderingEffects.customPostProcessing = .effect(effect)
 				} else {
