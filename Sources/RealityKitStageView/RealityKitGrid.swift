@@ -25,7 +25,9 @@ public struct RealityKitGrid {
         metersPerUnit: Double,
         worldExtent: Double,
         isZUp: Bool,
-        appearance: ViewportAppearance
+        appearance: ViewportAppearance,
+        minorColorOverride: SIMD3<Float>? = nil,
+        majorColorOverride: SIMD3<Float>? = nil
     ) async -> Entity? {
         guard let url = Bundle.module.url(
             forResource: "ViewportGrid",
@@ -44,7 +46,9 @@ public struct RealityKitGrid {
                 metersPerUnit: metersPerUnit,
                 worldExtent: worldExtent,
                 isZUp: isZUp,
-                appearance: appearance
+                appearance: appearance,
+                minorColorOverride: minorColorOverride,
+                majorColorOverride: majorColorOverride
             )
 
             return entity
@@ -61,7 +65,9 @@ public struct RealityKitGrid {
         metersPerUnit: Double,
         worldExtent: Double,
         isZUp: Bool,
-        appearance: ViewportAppearance
+        appearance: ViewportAppearance,
+        minorColorOverride: SIMD3<Float>? = nil,
+        majorColorOverride: SIMD3<Float>? = nil
     ) {
         _ = isZUp
         let worldExtentMeters = worldExtent // Already in Meters from runtime
@@ -88,13 +94,15 @@ public struct RealityKitGrid {
         entity.transform.rotation = .init()
         entity.position = SIMD3<Float>(0, yOffset, 0)
 
-        // Resolve colors for appearance.
+        // Resolve colors for appearance, applying any caller-provided overrides.
         let palette = ProceduralGridPalette(appearance: appearance)
+        let resolvedMinorColor = minorColorOverride ?? palette.minorColor
+        let resolvedMajorColor = majorColorOverride ?? palette.majorColor
 
         // Scale thicknesses relative to the grid resolution.
         // The palette base values are balanced for a 1m grid.
         let thicknessScale = Float(minorStep)
-        
+
         // Walk entity tree and set ShaderGraphMaterial parameters.
         setMaterialParameters(
             on: entity,
@@ -107,8 +115,8 @@ public struct RealityKitGrid {
             fogMax: palette.fogMax,
             edgeFadeStart: edgeFadeStart,
             edgeFadeReciprocalRange: edgeFadeReciprocalRange,
-            minorColor: palette.minorColor,
-            majorColor: palette.majorColor,
+            minorColor: resolvedMinorColor,
+            majorColor: resolvedMajorColor,
             xAxisColor: palette.xAxisColor,
             zAxisColor: palette.zAxisColor,
             baseOpacity: palette.baseOpacity,
@@ -228,17 +236,17 @@ struct ProceduralGridPalette {
             lineOpacityScale = 0.96
 
         case .light:
-            minorColor = SIMD3<Float>(0.50, 0.53, 0.57)
-            majorColor = SIMD3<Float>(0.39, 0.42, 0.46)
-            xAxisColor = SIMD3<Float>(0.84, 0.24, 0.24) // Red-ish
-            zAxisColor = SIMD3<Float>(0.24, 0.50, 0.84) // Blue-ish
+            minorColor = SIMD3<Float>(0.60, 0.62, 0.65)
+            majorColor = SIMD3<Float>(0.44, 0.46, 0.50)
+            xAxisColor = SIMD3<Float>(0.76, 0.18, 0.18) // Red-ish
+            zAxisColor = SIMD3<Float>(0.18, 0.44, 0.76) // Blue-ish
             minorBaseThickness = 0.0021
             majorBaseThickness = 0.0048
             axisExtraThickness = 0.00015
             fogDensity = 0.07
-            fogMax = 0.8
-            baseOpacity = 0.01
-            lineOpacityScale = 0.96
+            fogMax = 0.86
+            baseOpacity = 0.016
+            lineOpacityScale = 0.97
         }
     }
 }

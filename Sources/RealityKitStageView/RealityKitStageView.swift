@@ -227,6 +227,12 @@ public struct RealityKitStageView: View {
 			.onChange(of: colorScheme) { _, _ in
 				refreshGrid()
 			}
+			.onChange(of: configuration.gridMinorColor) { _, _ in
+				refreshGrid()
+			}
+			.onChange(of: configuration.gridMajorColor) { _, _ in
+				refreshGrid()
+			}
 			.onChange(of: cameraState) { _, newState in
 				runtime.updateCameraState(
 					rotation: newState.quaternion,
@@ -654,7 +660,9 @@ public struct RealityKitStageView: View {
 				metersPerUnit: configuration.metersPerUnit,
 				worldExtent: Double(runtime.sceneBounds.maxExtent),
 				isZUp: configuration.isZUp,
-				appearance: colorScheme == .light ? .light : .dark
+				appearance: colorScheme == .light ? .light : .dark,
+				minorColorOverride: configuration.gridMinorColor,
+				majorColorOverride: configuration.gridMajorColor
 			)
 			// Re-parent if needed (e.g. after toggling showGrid off then on).
 			if existing.parent == nil {
@@ -679,7 +687,9 @@ public struct RealityKitStageView: View {
 				metersPerUnit: configuration.metersPerUnit,
 				worldExtent: Double(runtime.sceneBounds.maxExtent),
 				isZUp: configuration.isZUp,
-				appearance: colorScheme == .light ? .light : .dark
+				appearance: colorScheme == .light ? .light : .dark,
+				minorColorOverride: configuration.gridMinorColor,
+				majorColorOverride: configuration.gridMajorColor
 			)
 		else { return }
 

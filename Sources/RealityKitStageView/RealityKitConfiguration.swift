@@ -33,6 +33,11 @@ public struct RealityKitConfiguration: Sendable {
     /// Rendering mode for selection visualization.
     public var selectionHighlightStyle: SelectionHighlightStyle = .boundingBox
 
+    /// Optional grid line color overrides. When nil, the palette default for the current
+    /// viewport appearance (light/dark) is used.
+    public var gridMinorColor: SIMD3<Float>?
+    public var gridMajorColor: SIMD3<Float>?
+
     public init(
         showGrid: Bool = true,
         showAxes: Bool = true,
@@ -43,7 +48,9 @@ public struct RealityKitConfiguration: Sendable {
         environmentRotation: Float = 0.0,
         showEnvironmentBackground: Bool = true,
         outlineConfiguration: OutlineConfiguration = .init(),
-        selectionHighlightStyle: SelectionHighlightStyle = .boundingBox
+        selectionHighlightStyle: SelectionHighlightStyle = .boundingBox,
+        gridMinorColor: SIMD3<Float>? = nil,
+        gridMajorColor: SIMD3<Float>? = nil
     ) {
         self.showGrid = showGrid
         self.showAxes = showAxes
@@ -55,6 +62,8 @@ public struct RealityKitConfiguration: Sendable {
         self.showEnvironmentBackground = showEnvironmentBackground
         self.outlineConfiguration = outlineConfiguration
         self.selectionHighlightStyle = selectionHighlightStyle
+        self.gridMinorColor = gridMinorColor
+        self.gridMajorColor = gridMajorColor
     }
 
     /// RealityKit currently renders hotter than Hydra for the same EV slider
