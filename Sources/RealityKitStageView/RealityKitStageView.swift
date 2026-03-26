@@ -227,12 +227,6 @@ public struct RealityKitStageView: View {
 			.onChange(of: colorScheme) { _, _ in
 				refreshGrid()
 			}
-			.onChange(of: configuration.gridMinorColor) { _, _ in
-				refreshGrid()
-			}
-			.onChange(of: configuration.gridMajorColor) { _, _ in
-				refreshGrid()
-			}
 			.onChange(of: cameraState) { _, newState in
 				runtime.updateCameraState(
 					rotation: newState.quaternion,
@@ -290,6 +284,19 @@ public struct RealityKitStageView: View {
 			syncIBLState()
 			updateCamera(state: cameraState)
 			processRuntimeViewRequests()
+			// Apply grid colors on every update cycle — configuration is a value type passed
+			// from the parent, so this closure always has the current color values.
+			if let grid = gridEntity, configuration.showGrid {
+				RealityKitGrid.updateProceduralGrid(
+					entity: grid,
+					metersPerUnit: configuration.metersPerUnit,
+					worldExtent: Double(runtime.sceneBounds.maxExtent),
+					isZUp: configuration.isZUp,
+					appearance: colorScheme == .light ? .light : .dark,
+					minorColorOverride: configuration.gridMinorColor,
+					majorColorOverride: configuration.gridMajorColor
+				)
+			}
 			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
 				if var effect = outlineBox.effect as? PostProcessOutlineEffect {
 					if let camera = rootEntity?.findEntity(named: "MainCamera") {
