@@ -1,5 +1,25 @@
 import SwiftUI
 
+private struct ScaleIndicatorMaterialModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(visionOS)
+        content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        #elseif os(macOS)
+        if #available(macOS 26.0, *) {
+            content.glassEffect(in: RoundedRectangle(cornerRadius: 10))
+        } else {
+            content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        }
+        #else
+        if #available(iOS 26.0, *) {
+            content.glassEffect(in: RoundedRectangle(cornerRadius: 10))
+        } else {
+            content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        }
+        #endif
+    }
+}
+
 struct DynamicScaleReference: Equatable {
     let meters: Double
     let label: String
@@ -106,7 +126,7 @@ public struct ScaleIndicatorView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .modifier(ScaleIndicatorMaterialModifier())
         }
     }
 }

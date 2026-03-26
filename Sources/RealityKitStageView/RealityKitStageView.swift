@@ -377,9 +377,9 @@ public struct RealityKitStageView: View {
 		let tanHalfFov = tan(fovDegrees * (.pi / 180) / 2)
 		let aspect = Float(size.width / size.height)
 
-		// location is y-down (0=top). Convert to NDC: x∈[-1,1], y∈[-1,1] y-up.
+		// location is AppKit-space (y=0 at bottom). Convert directly to NDC y-up.
 		let ndcX = Float(location.x / size.width) * 2 - 1
-		let ndcY = 1 - Float(location.y / size.height) * 2
+		let ndcY = Float(location.y / size.height) * 2 - 1
 
 		// Ray direction in camera local space (camera looks down -Z).
 		let localDir = SIMD3<Float>(ndcX * tanHalfFov * aspect, ndcY * tanHalfFov, -1)
@@ -456,17 +456,23 @@ public struct RealityKitStageView: View {
 
 	@ViewBuilder
 	private var overlays: some View {
-		GeometryReader { proxy in
-			VStack {
-				scaleIndicator(viewportWidth: proxy.size.width)
-				Spacer()
-				HStack {
-					orientationGizmo
+		if configuration.showOrientationGizmo || configuration.showScaleIndicator {
+			GeometryReader { proxy in
+				VStack {
+					if configuration.showScaleIndicator {
+						scaleIndicator(viewportWidth: proxy.size.width)
+					}
 					Spacer()
+					HStack {
+						if configuration.showOrientationGizmo {
+							orientationGizmo
+						}
+						Spacer()
+					}
 				}
+				.padding(12)
+				.allowsHitTesting(false)
 			}
-			.padding(12)
-			.allowsHitTesting(false)
 		}
 	}
 

@@ -342,7 +342,7 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         }
     }
 
-    public mutating func setViewMatrix(_ viewMatrix: simd_float4x4) {
+    public func setViewMatrix(_ viewMatrix: simd_float4x4) {
         state.viewMatrix = viewMatrix
     }
 

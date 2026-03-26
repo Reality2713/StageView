@@ -38,6 +38,15 @@ public struct RealityKitConfiguration: Sendable {
     public var gridMinorColor: SIMD3<Float>?
     public var gridMajorColor: SIMD3<Float>?
 
+    /// Whether the built-in orientation gizmo (bottom-left XYZ axes) is rendered.
+    /// Set to `false` when the consumer renders its own gizmo outside the Metal surface
+    /// so that SwiftUI glass materials can sample the composited viewport correctly.
+    public var showOrientationGizmo: Bool = true
+
+    /// Whether the built-in scale indicator (top-center ruler bar) is rendered.
+    /// Set to `false` for the same reason as `showOrientationGizmo`.
+    public var showScaleIndicator: Bool = true
+
     public init(
         showGrid: Bool = true,
         showAxes: Bool = true,
@@ -50,7 +59,9 @@ public struct RealityKitConfiguration: Sendable {
         outlineConfiguration: OutlineConfiguration = .init(),
         selectionHighlightStyle: SelectionHighlightStyle = .boundingBox,
         gridMinorColor: SIMD3<Float>? = nil,
-        gridMajorColor: SIMD3<Float>? = nil
+        gridMajorColor: SIMD3<Float>? = nil,
+        showOrientationGizmo: Bool = true,
+        showScaleIndicator: Bool = true
     ) {
         self.showGrid = showGrid
         self.showAxes = showAxes
@@ -64,6 +75,8 @@ public struct RealityKitConfiguration: Sendable {
         self.selectionHighlightStyle = selectionHighlightStyle
         self.gridMinorColor = gridMinorColor
         self.gridMajorColor = gridMajorColor
+        self.showOrientationGizmo = showOrientationGizmo
+        self.showScaleIndicator = showScaleIndicator
     }
 
     /// RealityKit currently renders hotter than Hydra for the same EV slider
