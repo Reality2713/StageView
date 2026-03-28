@@ -154,7 +154,7 @@ public struct OrientationGizmoView: View {
 			#elseif os(macOS)
 				.modifier(HydraToolbarMaterialModifier())
 			#else
-				.glassEffect(in: Circle())
+				.modifier(HydraToolbarMaterialModifier())
 			#endif
 			.foregroundStyle(.secondary)
 		}
@@ -170,14 +170,22 @@ public struct OrientationGizmoView: View {
 	}
 }
 
-#if os(macOS)
-	private struct HydraToolbarMaterialModifier: ViewModifier {
-		func body(content: Content) -> some View {
-			if #available(macOS 26.0, *) {
-				content.glassEffect(in: Circle())
-			} else {
-				content.background(.ultraThinMaterial, in: Circle())
-			}
+private struct HydraToolbarMaterialModifier: ViewModifier {
+	func body(content: Content) -> some View {
+		#if os(macOS)
+		if #available(macOS 26.0, *) {
+			content.glassEffect(in: Circle())
+		} else {
+			content.background(.ultraThinMaterial, in: Circle())
 		}
+		#elseif os(visionOS)
+		content.background(.ultraThinMaterial, in: Circle())
+		#else
+		if #available(iOS 26.0, *) {
+			content.glassEffect(in: Circle())
+		} else {
+			content.background(.ultraThinMaterial, in: Circle())
+		}
+		#endif
 	}
-#endif
+}

@@ -458,6 +458,7 @@ public struct ArcballCameraControls: ViewModifier {
     let sceneBounds: SceneBounds
     let metersPerUnit: Double
     let maxDistanceOverride: Float?
+    let navigationMapping: RealityKitNavigationMapping
 
     @State private var startDistance: Float?
     @State private var previousDragValue: DragGesture.Value?
@@ -468,12 +469,14 @@ public struct ArcballCameraControls: ViewModifier {
         state: Binding<ArcballCameraState>,
         sceneBounds: SceneBounds,
         metersPerUnit: Double = 1.0,
-        maxDistance: Float? = nil
+        maxDistance: Float? = nil,
+        navigationMapping: RealityKitNavigationMapping = .touchpad
     ) {
         self._state = state
         self.sceneBounds = sceneBounds
         self.metersPerUnit = metersPerUnit
         self.maxDistanceOverride = maxDistance
+        self.navigationMapping = navigationMapping
     }
 
     public func body(content: Content) -> some View {
@@ -591,7 +594,10 @@ public struct ArcballCameraControls: ViewModifier {
         if startDistance == nil { startDistance = state.distance }
         guard let start = startDistance else { return }
         guard magnification > 0 else { return }
-        let newDistance = start / Float(magnification)
+        let effective = navigationMapping.invertZoomDirection
+            ? 1.0 / magnification
+            : magnification
+        let newDistance = start / Float(effective)
         state.distance = clampDistance(newDistance)
     }
 }

@@ -1,4 +1,20 @@
+#if os(macOS)
 import AppKit
+public typealias PlatformModifierFlags = NSEvent.ModifierFlags
+#elseif os(iOS) || os(visionOS)
+import UIKit
+public typealias PlatformModifierFlags = UIKeyModifierFlags
+#endif
+
+extension PlatformModifierFlags {
+    static var optionKey: Self {
+        #if os(macOS)
+        .option
+        #else
+        .alternate
+        #endif
+    }
+}
 
 /// Data-driven camera navigation mapping for the RealityKit viewport.
 /// Each preset is a static factory that produces bindings matching
@@ -8,9 +24,9 @@ public struct RealityKitNavigationMapping: Sendable, Equatable {
 
     public struct MouseBinding: Sendable, Equatable {
         public var button: Int          // 0 = LMB, 1 = RMB, 2 = MMB
-        public var modifiers: NSEvent.ModifierFlags
+        public var modifiers: PlatformModifierFlags
 
-        public init(button: Int, modifiers: NSEvent.ModifierFlags = []) {
+        public init(button: Int, modifiers: PlatformModifierFlags = []) {
             self.button = button
             self.modifiers = modifiers
         }
@@ -65,7 +81,7 @@ extension RealityKitNavigationMapping {
     /// Uses SwiftUI gestures for trackpad-friendly interaction.
     public static let apple = RealityKitNavigationMapping(
         orbit: MouseBinding(button: 0),
-        pan: MouseBinding(button: 0, modifiers: .option),
+        pan: MouseBinding(button: 0, modifiers: .optionKey),
         zoom: MouseBinding(button: 1),
         scrollAction: .pan,
         optionScrollAction: .zoom,
@@ -75,9 +91,9 @@ extension RealityKitNavigationMapping {
     /// Maya-style: Option+LMB = orbit, Option+MMB = pan, Option+RMB = zoom.
     /// Uses NSEvent monitors for three-button mouse interaction.
     public static let maya = RealityKitNavigationMapping(
-        orbit: MouseBinding(button: 0, modifiers: .option),
-        pan: MouseBinding(button: 2, modifiers: .option),
-        zoom: MouseBinding(button: 1, modifiers: .option),
+        orbit: MouseBinding(button: 0, modifiers: .optionKey),
+        pan: MouseBinding(button: 2, modifiers: .optionKey),
+        zoom: MouseBinding(button: 1, modifiers: .optionKey),
         scrollAction: .pan,
         optionScrollAction: .zoom,
         useSwiftUIGestures: false
@@ -109,7 +125,7 @@ extension RealityKitNavigationMapping {
     /// Uses SwiftUI gestures exclusively.
     public static let touchpad = RealityKitNavigationMapping(
         orbit: MouseBinding(button: 0),
-        pan: MouseBinding(button: 0, modifiers: .option),
+        pan: MouseBinding(button: 0, modifiers: .optionKey),
         zoom: MouseBinding(button: 1),
         scrollAction: .pan,
         optionScrollAction: .zoom,
