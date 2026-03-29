@@ -159,8 +159,8 @@ public struct RealityKitStageView: View {
 	/// rootEntity is @State — SwiftUI re-evaluates the body when it transitions from nil
 	/// to a value, causing this ID to change from nil → UUID string → task fires.
 	private var environmentTaskID: String? {
-		guard let requestID = store.environmentRequestID, rootEntity != nil else { return nil }
-		return requestID.uuidString
+		guard rootEntity != nil else { return nil }
+		return store.environmentRequestID?.uuidString
 	}
 
 	/// Combined task ID: fires only after a load request exists and the viewport
@@ -188,6 +188,9 @@ public struct RealityKitStageView: View {
 			}
 			.onChange(of: configuration.environmentRotation) { _, newValue in
 				updateIBLRotation(newValue)
+			}
+			.onChange(of: configuration.selectionHighlightStyle) { _, _ in
+				updateSelectionHighlight(for: runtime.selectedPrimPath)
 			}
 	}
 

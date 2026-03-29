@@ -27,6 +27,10 @@ public struct RealityKitConfiguration: Sendable {
     public var showAxes: Bool = true
     public var metersPerUnit: Double = 1.0
     public var isZUp: Bool = false
+    /// Legacy compatibility input for non-store integrations.
+    ///
+    /// TCA-first hosts should drive mutable per-viewport IBL through
+    /// `StageViewFeature.State.environmentURL` instead of this property.
     public var environmentMapURL: URL?
     public var environmentExposure: Float = 0.0
     public var environmentRotation: Float = 0.0

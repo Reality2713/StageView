@@ -58,18 +58,27 @@ public struct StageViewFeature {
         }
     }
 
-    @ObservableState
-    public struct State: Equatable {
-        public var activeLoadCommand: LoadCommand?
-        /// Stable viewport appearance intent.
-        ///
-        /// Host applications should map user preferences and document overrides
-        /// into this value. `RealityKitStageView` resolves it against the current
-        /// SwiftUI environment locally, without sending hot-path actions.
-        public var appearance: StageViewAppearance
-        public var cameraResetRequestID: UUID?
-        public var environmentRequestID: UUID?
-        public var environmentURL: URL?
+	    @ObservableState
+	    public struct State: Equatable {
+	        public var activeLoadCommand: LoadCommand?
+	        /// Stable viewport appearance intent.
+	        ///
+	        /// Host applications should map user preferences and document overrides
+	        /// into this value. `RealityKitStageView` resolves it against the current
+	        /// SwiftUI environment locally, without sending hot-path actions.
+	        public var appearance: StageViewAppearance
+	        public var cameraResetRequestID: UUID?
+	        /// Monotonic request token for environment/IBL reloads.
+	        ///
+	        /// Update this whenever `environmentURL` changes so the view can reload
+	        /// document-scoped lighting without polling or per-frame reducer traffic.
+	        public var environmentRequestID: UUID?
+	        /// Per-viewport environment map intent.
+	        ///
+	        /// Hosts should derive this from document or scene state and keep it in
+	        /// the stage feature. `RealityKitConfiguration` is not the source of
+	        /// truth for mutable IBL in the TCA-first integration.
+	        public var environmentURL: URL?
         public var liveTransform: LiveTransformData?
         public var liveTransformRequestID: UUID?
         public var blendShapeRuntimeWeights: [BlendShapeRuntimeWeight]
