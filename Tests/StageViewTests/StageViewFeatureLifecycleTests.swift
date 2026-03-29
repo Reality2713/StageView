@@ -61,4 +61,20 @@ struct StageViewFeatureLifecycleTests {
             $0.selectedPrimPath = nil
         }
     }
+
+    @Test
+    func updateAppearanceChangesIntentWithoutTouchingRuntimeState() async {
+        let appearance = StageViewAppearance.custom(
+            StageViewAppearanceOverrides(
+                background: .color(SIMD4<Float>(0.4, 0.5, 0.6, 1.0))
+            )
+        )
+        let store = TestStore(initialState: StageViewFeature.State()) {
+            StageViewFeature()
+        }
+
+        await store.send(.updateAppearance(appearance)) {
+            $0.appearance = appearance
+        }
+    }
 }

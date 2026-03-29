@@ -18,6 +18,10 @@ public enum SelectionHighlightStyle: Sendable, Equatable {
 }
 
 /// Configuration for the RealityKit viewport.
+///
+/// `RealityKitConfiguration` is reserved for static embedding concerns and
+/// renderer options. Mutable appearance intent belongs in
+/// `StageViewFeature.State.appearance`.
 public struct RealityKitConfiguration: Sendable {
     public var showGrid: Bool = true
     public var showAxes: Bool = true
@@ -32,11 +36,6 @@ public struct RealityKitConfiguration: Sendable {
     public var outlineConfiguration: OutlineConfiguration = .init()
     /// Rendering mode for selection visualization.
     public var selectionHighlightStyle: SelectionHighlightStyle = .boundingBox
-
-    /// Optional grid line color overrides. When nil, the palette default for the current
-    /// viewport appearance (light/dark) is used.
-    public var gridMinorColor: SIMD3<Float>?
-    public var gridMajorColor: SIMD3<Float>?
 
     /// Whether the built-in orientation gizmo (bottom-left XYZ axes) is rendered.
     /// Set to `false` when the consumer renders its own gizmo outside the Metal surface
@@ -58,8 +57,6 @@ public struct RealityKitConfiguration: Sendable {
         showEnvironmentBackground: Bool = true,
         outlineConfiguration: OutlineConfiguration = .init(),
         selectionHighlightStyle: SelectionHighlightStyle = .boundingBox,
-        gridMinorColor: SIMD3<Float>? = nil,
-        gridMajorColor: SIMD3<Float>? = nil,
         showOrientationGizmo: Bool = true,
         showScaleIndicator: Bool = true
     ) {
@@ -73,8 +70,6 @@ public struct RealityKitConfiguration: Sendable {
         self.showEnvironmentBackground = showEnvironmentBackground
         self.outlineConfiguration = outlineConfiguration
         self.selectionHighlightStyle = selectionHighlightStyle
-        self.gridMinorColor = gridMinorColor
-        self.gridMajorColor = gridMajorColor
         self.showOrientationGizmo = showOrientationGizmo
         self.showScaleIndicator = showScaleIndicator
     }

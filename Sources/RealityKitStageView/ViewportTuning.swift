@@ -3,7 +3,7 @@ import OSLog
 
 private let tuningLogger = Logger(subsystem: "RealityKitStageView", category: "ViewportTuning")
 
-public enum ViewportAppearance: Sendable {
+public enum ViewportAppearance: Sendable, Equatable {
     case light
     case dark
 }

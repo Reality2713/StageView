@@ -61,6 +61,12 @@ public struct StageViewFeature {
     @ObservableState
     public struct State: Equatable {
         public var activeLoadCommand: LoadCommand?
+        /// Stable viewport appearance intent.
+        ///
+        /// Host applications should map user preferences and document overrides
+        /// into this value. `RealityKitStageView` resolves it against the current
+        /// SwiftUI environment locally, without sending hot-path actions.
+        public var appearance: StageViewAppearance
         public var cameraResetRequestID: UUID?
         public var environmentRequestID: UUID?
         public var environmentURL: URL?
@@ -75,6 +81,7 @@ public struct StageViewFeature {
 
         public init(
             activeLoadCommand: LoadCommand? = nil,
+            appearance: StageViewAppearance = .automatic,
             cameraResetRequestID: UUID? = nil,
             environmentRequestID: UUID? = nil,
             environmentURL: URL? = nil,
@@ -88,6 +95,7 @@ public struct StageViewFeature {
             selectedPrimPath: String? = nil
         ) {
             self.activeLoadCommand = activeLoadCommand
+            self.appearance = appearance
             self.cameraResetRequestID = cameraResetRequestID
             self.environmentRequestID = environmentRequestID
             self.environmentURL = environmentURL
@@ -120,6 +128,12 @@ public struct StageViewFeature {
         case resetCameraRequested
         case selectionChanged(String?)
         case updateEnvironmentURL(URL?)
+        /// Updates the viewport's appearance intent.
+        ///
+        /// Use this for app-driven preference or document override changes.
+        /// Do not send actions for transient host environment changes such as
+        /// light/dark resolution; the view derives those locally.
+        case updateAppearance(StageViewAppearance)
         case updateNavigationMapping(RealityKitNavigationMapping)
         case viewportAppeared
 
@@ -209,6 +223,10 @@ public struct StageViewFeature {
                 guard state.environmentURL != url else { return .none }
                 state.environmentURL = url
                 state.environmentRequestID = uuid()
+                return .none
+
+            case let .updateAppearance(appearance):
+                state.appearance = appearance
                 return .none
 
             case let .updateNavigationMapping(mapping):

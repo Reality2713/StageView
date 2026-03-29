@@ -75,6 +75,10 @@ public struct RealityKitStageView: View {
 		interactiveViewport
 	}
 
+	private var resolvedAppearance: ResolvedStageViewAppearance {
+		store.appearance.resolvedAppearance(for: colorScheme)
+	}
+
 	@ViewBuilder
 	private var taskBoundViewport: some View {
 		viewportStack
@@ -227,10 +231,7 @@ public struct RealityKitStageView: View {
 			.onChange(of: colorScheme) { _, _ in
 				refreshGrid()
 			}
-			.onChange(of: configuration.gridMinorColor) { _, _ in
-				refreshGrid()
-			}
-			.onChange(of: configuration.gridMajorColor) { _, _ in
+			.onChange(of: store.appearance) { _, _ in
 				refreshGrid()
 			}
 			.onChange(of: cameraState) { _, newState in
@@ -247,6 +248,7 @@ public struct RealityKitStageView: View {
 		observedViewport
 			.withLiveTransform(store: store, provider: runtime)
 			.withRuntimeBlendShapes(store: store, provider: runtime)
+			.background(resolvedBackgroundColor)
 			#if os(macOS)
 				.modifier(
 					ArcballCameraControls(
@@ -262,6 +264,16 @@ public struct RealityKitStageView: View {
 				.gesture(selectionGesture)
 				.gesture(clearSelectionGesture)
 			#endif
+	}
+
+	private var resolvedBackgroundColor: Color {
+		let background = resolvedAppearance.backgroundColor
+		return Color(
+			red: Double(background.x),
+			green: Double(background.y),
+			blue: Double(background.z),
+			opacity: Double(background.w)
+		)
 	}
 
 	@ViewBuilder
@@ -290,17 +302,17 @@ public struct RealityKitStageView: View {
 			syncIBLState()
 			updateCamera(state: cameraState)
 			processRuntimeViewRequests()
-			// Apply grid colors on every update cycle — configuration is a value type passed
-			// from the parent, so this closure always has the current color values.
+			// Apply resolved grid colors on every update cycle so runtime updates
+			// stay in sync with the current appearance intent.
 			if let grid = gridEntity, configuration.showGrid {
 				RealityKitGrid.updateProceduralGrid(
 					entity: grid,
 					metersPerUnit: configuration.metersPerUnit,
 					worldExtent: Double(runtime.sceneBounds.maxExtent),
 					isZUp: configuration.isZUp,
-					appearance: colorScheme == .light ? .light : .dark,
-					minorColorOverride: configuration.gridMinorColor,
-					majorColorOverride: configuration.gridMajorColor
+					appearance: resolvedAppearance.viewportAppearance,
+					minorColorOverride: resolvedAppearance.gridMinorColor,
+					majorColorOverride: resolvedAppearance.gridMajorColor
 				)
 			}
 			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
@@ -677,9 +689,9 @@ public struct RealityKitStageView: View {
 				metersPerUnit: configuration.metersPerUnit,
 				worldExtent: Double(runtime.sceneBounds.maxExtent),
 				isZUp: configuration.isZUp,
-				appearance: colorScheme == .light ? .light : .dark,
-				minorColorOverride: configuration.gridMinorColor,
-				majorColorOverride: configuration.gridMajorColor
+				appearance: resolvedAppearance.viewportAppearance,
+				minorColorOverride: resolvedAppearance.gridMinorColor,
+				majorColorOverride: resolvedAppearance.gridMajorColor
 			)
 			// Re-parent if needed (e.g. after toggling showGrid off then on).
 			if existing.parent == nil {
@@ -704,9 +716,9 @@ public struct RealityKitStageView: View {
 				metersPerUnit: configuration.metersPerUnit,
 				worldExtent: Double(runtime.sceneBounds.maxExtent),
 				isZUp: configuration.isZUp,
-				appearance: colorScheme == .light ? .light : .dark,
-				minorColorOverride: configuration.gridMinorColor,
-				majorColorOverride: configuration.gridMajorColor
+				appearance: resolvedAppearance.viewportAppearance,
+				minorColorOverride: resolvedAppearance.gridMinorColor,
+				majorColorOverride: resolvedAppearance.gridMajorColor
 			)
 		else { return }
 
