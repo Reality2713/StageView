@@ -465,8 +465,6 @@ final class ArcballTouchController: ObservableObject {
     var onCameraStateChanged: ((ArcballCameraState) -> Void)?
     var onPick: ((CGPoint, CGSize) -> Void)?
 
-    private var lastOrbitPoint: CGPoint = .zero
-    private var lastPanPoint: CGPoint = .zero
     private var startDistance: Float?
     private var lastClampedEdge: ClampEdge?
     private var activeGestureCount: Int = 0
@@ -497,17 +495,18 @@ final class ArcballTouchController: ObservableObject {
     }
 
     func handleOrbitPan(_ gesture: UIPanGestureRecognizer, in view: UIView) {
-        let location = gesture.location(in: view)
         switch gesture.state {
         case .began:
             activeGestureCount += 1
-            lastOrbitPoint = location
+            gesture.setTranslation(.zero, in: view)
+            let location = gesture.location(in: view)
             touchGestureLogger.debug("orbit began at \(location.x, privacy: .public),\(location.y, privacy: .public)")
         case .changed:
-            let deltaX = Float(location.x - lastOrbitPoint.x)
-            let deltaY = Float(location.y - lastOrbitPoint.y)
+            let translation = gesture.translation(in: view)
+            let deltaX = Float(translation.x)
+            let deltaY = Float(translation.y)
             applyOrbit(deltaX: deltaX, deltaY: deltaY)
-            lastOrbitPoint = location
+            gesture.setTranslation(.zero, in: view)
             publishState()
         case .ended, .cancelled, .failed:
             activeGestureCount = Swift.max(0, activeGestureCount - 1)
@@ -518,22 +517,23 @@ final class ArcballTouchController: ObservableObject {
     }
 
     func handlePan(_ gesture: UIPanGestureRecognizer, in view: UIView) {
-        let location = gesture.location(in: view)
         switch gesture.state {
         case .began:
             activeGestureCount += 1
-            lastPanPoint = location
+            gesture.setTranslation(.zero, in: view)
+            let location = gesture.location(in: view)
             touchGestureLogger.debug("pan began at \(location.x, privacy: .public),\(location.y, privacy: .public)")
         case .changed:
             let multiplier: Float = 2.5
-            let deltaX = Float(location.x - lastPanPoint.x)
-            let deltaY = Float(location.y - lastPanPoint.y)
+            let translation = gesture.translation(in: view)
+            let deltaX = Float(translation.x)
+            let deltaY = Float(translation.y)
             let scrollInvert: Float = navigationMapping.invertScrollDirection ? -1 : 1
             applyPan(
                 deltaX: deltaX * multiplier * scrollInvert,
                 deltaY: deltaY * multiplier * scrollInvert
             )
-            lastPanPoint = location
+            gesture.setTranslation(.zero, in: view)
             publishState()
         case .ended, .cancelled, .failed:
             activeGestureCount = Swift.max(0, activeGestureCount - 1)
