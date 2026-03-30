@@ -264,8 +264,16 @@ public struct RealityKitStageView: View {
 					)
 				)
 			#else
-				.gesture(selectionGesture)
-				.gesture(clearSelectionGesture)
+				.modifier(
+					ArcballCameraControls(
+						state: $cameraState,
+						sceneBounds: runtime.sceneBounds,
+						metersPerUnit: configuration.metersPerUnit,
+						maxDistance: Float(environmentRadius * 0.9),
+						navigationMapping: store.navigationMapping,
+						onPick: nonMacPickHandler
+					)
+				)
 			#endif
 	}
 
@@ -338,24 +346,6 @@ public struct RealityKitStageView: View {
 		}
 	}
 
-	private var selectionGesture: some Gesture {
-		SpatialTapGesture()
-			.targetedToAnyEntity()
-			.onEnded { value in
-				let path = runtime.preferredPickPrimPath(from: value.entity)
-				runtime.userDidPick(path)
-				store.send(.entityPicked(path))
-			}
-	}
-
-	private var clearSelectionGesture: some Gesture {
-		SpatialTapGesture()
-			.onEnded { _ in
-				runtime.userDidPick(nil)
-				store.send(.entityPicked(nil))
-			}
-	}
-
 	// MARK: - macOS Picking
 
 	#if os(macOS)
@@ -421,6 +411,62 @@ public struct RealityKitStageView: View {
 			store.send(.entityPicked(path))
 		} else {
 			logger.debug("macOSPick no hit — clearing selection")
+			runtime.userDidPick(nil)
+			store.send(.entityPicked(nil))
+		}
+	}
+	#endif
+
+	#if !os(macOS)
+	private var nonMacPickHandler: (CGPoint, CGSize) -> Void {
+		let r = runtime
+		let s = store
+		return { location, size in
+			Task { @MainActor in Self.nonMacPick(at: location, in: size, runtime: r, store: s) }
+		}
+	}
+
+	@MainActor
+	private static func nonMacPick(
+		at location: CGPoint,
+		in size: CGSize,
+		runtime: RealityKitProvider,
+		store: StoreOf<StageViewFeature>
+	) {
+		guard size.width > 0, size.height > 0 else { return }
+		guard let scene = runtime.rootEntity?.scene else { return }
+
+		let camera = runtime.rootEntity?.findEntity(named: "MainCamera")
+		let fovDegrees = Float(camera?.components[PerspectiveCameraComponent.self]?.fieldOfViewInDegrees ?? 60)
+		let tanHalfFov = tan(fovDegrees * (.pi / 180) / 2)
+		let aspect = Float(size.width / size.height)
+
+		let ndcX = Float(location.x / size.width) * 2 - 1
+		let ndcY = 1 - Float(location.y / size.height) * 2
+
+		let localDir = SIMD3<Float>(ndcX * tanHalfFov * aspect, ndcY * tanHalfFov, -1)
+		let t = runtime.cameraWorldTransform
+		let camPos = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
+		let worldDir = simd_normalize(SIMD3<Float>(
+			t.columns.0.x * localDir.x + t.columns.1.x * localDir.y + t.columns.2.x * localDir.z,
+			t.columns.0.y * localDir.x + t.columns.1.y * localDir.y + t.columns.2.y * localDir.z,
+			t.columns.0.z * localDir.x + t.columns.1.z * localDir.y + t.columns.2.z * localDir.z
+		))
+
+		let hits = scene.raycast(
+			origin: camPos,
+			direction: worldDir,
+			length: 100_000,
+			query: .all,
+			mask: .all,
+			relativeTo: nil
+		)
+
+		if let _ = hits.first {
+			let path = runtime.preferredPickPrimPath(from: hits.map(\.entity))
+			runtime.userDidPick(path)
+			store.send(.entityPicked(path))
+		} else {
 			runtime.userDidPick(nil)
 			store.send(.entityPicked(nil))
 		}

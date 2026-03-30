@@ -9,6 +9,8 @@ import UIKit
 
 #if os(macOS)
 private let pickLogger = Logger(subsystem: "RealityKitStageView", category: "Picking")
+#else
+private let touchGestureLogger = Logger(subsystem: "RealityKitStageView", category: "TouchInput")
 #endif
 
 public struct ArcballCameraState: Equatable, Sendable {
@@ -453,71 +455,21 @@ public struct ArcballCameraControls: ViewModifier {
     }
 }
 #else
-public struct ArcballCameraControls: ViewModifier {
-    @Binding var state: ArcballCameraState
-    let sceneBounds: SceneBounds
-    let metersPerUnit: Double
-    let maxDistanceOverride: Float?
-    let navigationMapping: RealityKitNavigationMapping
+@MainActor
+final class ArcballTouchController: ObservableObject {
+    var navigationMapping: RealityKitNavigationMapping = .touchpad
+    var cameraState: ArcballCameraState = .init()
+    var sceneBounds: SceneBounds = .init()
+    var metersPerUnit: Double = 1.0
+    var maxDistanceOverride: Float?
+    var onCameraStateChanged: ((ArcballCameraState) -> Void)?
+    var onPick: ((CGPoint, CGSize) -> Void)?
 
-    @State private var startDistance: Float?
-    @State private var previousDragValue: DragGesture.Value?
-    @State private var previousPanValue: DragGesture.Value?
-    @State private var lastClampedEdge: ClampEdge?
-
-    public init(
-        state: Binding<ArcballCameraState>,
-        sceneBounds: SceneBounds,
-        metersPerUnit: Double = 1.0,
-        maxDistance: Float? = nil,
-        navigationMapping: RealityKitNavigationMapping = .touchpad
-    ) {
-        self._state = state
-        self.sceneBounds = sceneBounds
-        self.metersPerUnit = metersPerUnit
-        self.maxDistanceOverride = maxDistance
-        self.navigationMapping = navigationMapping
-    }
-
-    public func body(content: Content) -> some View {
-        let orbitGesture = DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                let deltaX = Float(value.translation.width - (previousDragValue?.translation.width ?? 0))
-                let deltaY = Float(value.translation.height - (previousDragValue?.translation.height ?? 0))
-                handleOrbit(deltaX: deltaX, deltaY: deltaY)
-                previousDragValue = value
-            }
-            .onEnded { _ in
-                startDistance = nil
-                previousDragValue = nil
-            }
-
-        let panGesture = LongPressGesture(minimumDuration: 0.2)
-            .sequenced(before: DragGesture(minimumDistance: 0))
-            .onChanged { value in
-                guard case let .second(true, drag?) = value else { return }
-                let deltaX = Float(drag.translation.width - (previousPanValue?.translation.width ?? 0))
-                let deltaY = Float(drag.translation.height - (previousPanValue?.translation.height ?? 0))
-                handlePan(deltaX: deltaX, deltaY: deltaY)
-                previousPanValue = drag
-            }
-            .onEnded { _ in
-                previousPanValue = nil
-            }
-
-        let magnificationGesture = MagnificationGesture()
-            .onChanged { value in
-                handleZoom(magnification: value)
-            }
-            .onEnded { _ in
-                startDistance = nil
-            }
-
-        return content
-            .gesture(orbitGesture)
-            .highPriorityGesture(panGesture)
-            .simultaneousGesture(magnificationGesture)
-    }
+    private var lastOrbitPoint: CGPoint = .zero
+    private var lastPanPoint: CGPoint = .zero
+    private var startDistance: Float?
+    private var lastClampedEdge: ClampEdge?
+    private var activeGestureCount: Int = 0
 
     private enum ClampEdge {
         case min
@@ -525,6 +477,9 @@ public struct ArcballCameraControls: ViewModifier {
     }
 
     private let clampEpsilon: Float = 0.0001
+
+    var isInteracting: Bool { activeGestureCount > 0 }
+
     private var minDistance: Float {
         ViewportTuning.minimumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
     }
@@ -534,6 +489,84 @@ public struct ArcballCameraControls: ViewModifier {
             return Swift.max(override, minDistance)
         }
         return ViewportTuning.maximumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
+    }
+
+    func handleTap(at location: CGPoint, in size: CGSize) {
+        touchGestureLogger.debug("tap at \(location.x, privacy: .public),\(location.y, privacy: .public)")
+        onPick?(location, size)
+    }
+
+    func handleOrbitPan(_ gesture: UIPanGestureRecognizer, in view: UIView) {
+        let location = gesture.location(in: view)
+        switch gesture.state {
+        case .began:
+            activeGestureCount += 1
+            lastOrbitPoint = location
+            touchGestureLogger.debug("orbit began at \(location.x, privacy: .public),\(location.y, privacy: .public)")
+        case .changed:
+            let deltaX = Float(location.x - lastOrbitPoint.x)
+            let deltaY = Float(location.y - lastOrbitPoint.y)
+            applyOrbit(deltaX: deltaX, deltaY: deltaY)
+            lastOrbitPoint = location
+            publishState()
+        case .ended, .cancelled, .failed:
+            activeGestureCount = Swift.max(0, activeGestureCount - 1)
+            touchGestureLogger.debug("orbit ended")
+        default:
+            break
+        }
+    }
+
+    func handlePan(_ gesture: UIPanGestureRecognizer, in view: UIView) {
+        let location = gesture.location(in: view)
+        switch gesture.state {
+        case .began:
+            activeGestureCount += 1
+            lastPanPoint = location
+            touchGestureLogger.debug("pan began at \(location.x, privacy: .public),\(location.y, privacy: .public)")
+        case .changed:
+            let multiplier: Float = 2.5
+            let deltaX = Float(location.x - lastPanPoint.x)
+            let deltaY = Float(location.y - lastPanPoint.y)
+            let scrollInvert: Float = navigationMapping.invertScrollDirection ? -1 : 1
+            applyPan(
+                deltaX: deltaX * multiplier * scrollInvert,
+                deltaY: deltaY * multiplier * scrollInvert
+            )
+            lastPanPoint = location
+            publishState()
+        case .ended, .cancelled, .failed:
+            activeGestureCount = Swift.max(0, activeGestureCount - 1)
+            touchGestureLogger.debug("pan ended")
+        default:
+            break
+        }
+    }
+
+    func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        if gesture.state == .began || startDistance == nil {
+            if gesture.state == .began {
+                activeGestureCount += 1
+                touchGestureLogger.debug("pinch began scale=\(gesture.scale, privacy: .public)")
+            }
+            startDistance = cameraState.distance
+        }
+        guard let start = startDistance else { return }
+        guard gesture.scale > 0 else { return }
+        let effective = navigationMapping.invertZoomDirection
+            ? 1.0 / gesture.scale
+            : gesture.scale
+        cameraState.distance = clampDistance(start / Float(effective))
+        publishState()
+        if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+            startDistance = nil
+            activeGestureCount = Swift.max(0, activeGestureCount - 1)
+            touchGestureLogger.debug("pinch ended")
+        }
+    }
+
+    private func publishState() {
+        onCameraStateChanged?(cameraState)
     }
 
     private func clampDistance(_ value: Float) -> Float {
@@ -551,7 +584,7 @@ public struct ArcballCameraControls: ViewModifier {
 
         if edge != lastClampedEdge {
             if edge != nil {
-                performHapticFeedback()
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
             lastClampedEdge = edge
         }
@@ -559,46 +592,168 @@ public struct ArcballCameraControls: ViewModifier {
         return clamped
     }
 
-    private func performHapticFeedback() {
-        #if os(iOS)
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        #endif
-    }
-
-    private func handleOrbit(deltaX: Float, deltaY: Float) {
+    private func applyOrbit(deltaX: Float, deltaY: Float) {
         let sensitivity: Float = 0.01
-        var newRotation = state.rotation
-        newRotation.y -= deltaX * sensitivity
-        newRotation.x -= deltaY * sensitivity
-        newRotation.x = Swift.max(-.pi / 2 + 0.01, Swift.min(.pi / 2 - 0.01, newRotation.x))
-        state.rotation = newRotation
+        cameraState.rotation.y -= deltaX * sensitivity
+        cameraState.rotation.x -= deltaY * sensitivity
+        cameraState.rotation.x = Swift.max(-.pi / 2 + 0.01, Swift.min(.pi / 2 - 0.01, cameraState.rotation.x))
     }
 
-    private func handlePan(deltaX: Float, deltaY: Float) {
+    private func applyPan(deltaX: Float, deltaY: Float) {
         let scale = ViewportTuning.panScale(
-            distance: state.distance,
+            distance: cameraState.distance,
             sceneBounds: sceneBounds,
             metersPerUnit: metersPerUnit
         )
-        let rotX = simd_quatf(angle: state.rotation.x, axis: [1, 0, 0])
-        let rotY = simd_quatf(angle: state.rotation.y, axis: [0, 1, 0])
+        let rotX = simd_quatf(angle: cameraState.rotation.x, axis: [1, 0, 0])
+        let rotY = simd_quatf(angle: cameraState.rotation.y, axis: [0, 1, 0])
         let orientation = rotY * rotX
 
         let right = orientation.act([1, 0, 0])
         let up = orientation.act([0, 1, 0])
 
-        state.focus += (right * (-deltaX * scale)) + (up * (deltaY * scale))
+        cameraState.focus += (right * (-deltaX * scale)) + (up * (deltaY * scale))
+    }
+}
+
+private struct ArcballTouchInputOverlay: UIViewRepresentable {
+    @ObservedObject var controller: ArcballTouchController
+
+    func makeUIView(context: Context) -> ArcballTouchInputView {
+        let view = ArcballTouchInputView()
+        view.controller = controller
+        return view
     }
 
-    private func handleZoom(magnification: CGFloat) {
-        if startDistance == nil { startDistance = state.distance }
-        guard let start = startDistance else { return }
-        guard magnification > 0 else { return }
-        let effective = navigationMapping.invertZoomDirection
-            ? 1.0 / magnification
-            : magnification
-        let newDistance = start / Float(effective)
-        state.distance = clampDistance(newDistance)
+    func updateUIView(_ uiView: ArcballTouchInputView, context: Context) {
+        uiView.controller = controller
+    }
+}
+
+private final class ArcballTouchInputView: UIView, UIGestureRecognizerDelegate {
+    weak var controller: ArcballTouchController?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+        setupGestures()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        backgroundColor = .clear
+        isOpaque = false
+        setupGestures()
+    }
+
+    private func setupGestures() {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        tap.delegate = self
+        addGestureRecognizer(tap)
+
+        let orbitPan = UIPanGestureRecognizer(target: self, action: #selector(handleOrbitPan(_:)))
+        orbitPan.minimumNumberOfTouches = 1
+        orbitPan.maximumNumberOfTouches = 1
+        orbitPan.delegate = self
+        addGestureRecognizer(orbitPan)
+
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        pan.minimumNumberOfTouches = 2
+        pan.maximumNumberOfTouches = 2
+        pan.delegate = self
+        addGestureRecognizer(pan)
+
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        pinch.delegate = self
+        addGestureRecognizer(pinch)
+
+        tap.require(toFail: orbitPan)
+        tap.require(toFail: pan)
+        tap.require(toFail: pinch)
+    }
+
+    @objc
+    private func handleTap(_ gesture: UITapGestureRecognizer) {
+        controller?.handleTap(at: gesture.location(in: self), in: bounds.size)
+    }
+
+    @objc
+    private func handleOrbitPan(_ gesture: UIPanGestureRecognizer) {
+        controller?.handleOrbitPan(gesture, in: self)
+    }
+
+    @objc
+    private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        controller?.handlePan(gesture, in: self)
+    }
+
+    @objc
+    private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        controller?.handlePinch(gesture)
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        false
+    }
+}
+
+public struct ArcballCameraControls: ViewModifier {
+    @Binding var state: ArcballCameraState
+    let sceneBounds: SceneBounds
+    let metersPerUnit: Double
+    let maxDistanceOverride: Float?
+    let navigationMapping: RealityKitNavigationMapping
+    var onPick: ((CGPoint, CGSize) -> Void)?
+
+    @State private var controller = ArcballTouchController()
+
+    public init(
+        state: Binding<ArcballCameraState>,
+        sceneBounds: SceneBounds,
+        metersPerUnit: Double = 1.0,
+        maxDistance: Float? = nil,
+        navigationMapping: RealityKitNavigationMapping = .touchpad,
+        onPick: ((CGPoint, CGSize) -> Void)? = nil
+    ) {
+        self._state = state
+        self.sceneBounds = sceneBounds
+        self.metersPerUnit = metersPerUnit
+        self.maxDistanceOverride = maxDistance
+        self.navigationMapping = navigationMapping
+        self.onPick = onPick
+    }
+
+    public func body(content: Content) -> some View {
+        content
+            .overlay {
+                ArcballTouchInputOverlay(controller: controller)
+            }
+            .onAppear {
+                syncController()
+                controller.onCameraStateChanged = { newState in
+                    state = newState
+                }
+            }
+            .onChange(of: navigationMapping) { _, _ in syncController() }
+            .onChange(of: sceneBounds) { _, _ in syncController() }
+            .onChange(of: metersPerUnit) { _, _ in syncController() }
+            .onChange(of: state) { _, newState in
+                guard !controller.isInteracting else { return }
+                controller.cameraState = newState
+            }
+    }
+
+    private func syncController() {
+        controller.navigationMapping = navigationMapping
+        controller.sceneBounds = sceneBounds
+        controller.metersPerUnit = metersPerUnit
+        controller.maxDistanceOverride = maxDistanceOverride
+        controller.cameraState = state
+        controller.onPick = onPick
     }
 }
 #endif
