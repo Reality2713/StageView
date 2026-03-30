@@ -619,7 +619,7 @@ final class ArcballTouchController: ObservableObject {
         guard dt > 0 else { return }
 
         // Exponential decay — half-life 0.25s gives a natural, QuickLook-style coast.
-        let decayFactor = CGFloat(exp(-Float.log(2) / 0.25 * dt))
+        let decayFactor = CGFloat(exp(-log(Float(2)) / 0.25 * dt))
 
         if orbitVelocity != .zero {
             applyOrbit(deltaX: Float(orbitVelocity.x) * dt, deltaY: Float(orbitVelocity.y) * dt)
