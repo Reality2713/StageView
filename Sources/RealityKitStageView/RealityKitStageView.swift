@@ -256,29 +256,6 @@ public struct RealityKitStageView: View {
 			.withLiveTransform(store: store, provider: runtime)
 			.withRuntimeBlendShapes(store: store, provider: runtime)
 			.background(resolvedBackgroundColor)
-			#if os(macOS)
-				.modifier(
-					ArcballCameraControls(
-						state: $cameraState,
-						sceneBounds: runtime.sceneBounds,
-						metersPerUnit: configuration.metersPerUnit,
-						maxDistance: Float(environmentRadius * 0.9),
-						navigationMapping: store.navigationMapping,
-						onPick: macOSPickHandler
-					)
-				)
-			#else
-				.modifier(
-					ArcballCameraControls(
-						state: $cameraState,
-						sceneBounds: runtime.sceneBounds,
-						metersPerUnit: configuration.metersPerUnit,
-						maxDistance: Float(environmentRadius * 0.9),
-						navigationMapping: store.navigationMapping,
-						onPick: nonMacPickHandler
-					)
-				)
-			#endif
 	}
 
 	private var resolvedBackgroundColor: Color {
@@ -295,10 +272,33 @@ public struct RealityKitStageView: View {
 	private var viewportStack: some View {
 		ZStack {
 			realityViewLayer
-            StageViewOverlayContainer(
-                slots: overlaySlots,
-                snapshot: overlaySnapshot
-            )
+				#if os(macOS)
+					.modifier(
+						ArcballCameraControls(
+							state: $cameraState,
+							sceneBounds: runtime.sceneBounds,
+							metersPerUnit: configuration.metersPerUnit,
+							maxDistance: Float(environmentRadius * 0.9),
+							navigationMapping: store.navigationMapping,
+							onPick: macOSPickHandler
+						)
+					)
+				#else
+					.modifier(
+						ArcballCameraControls(
+							state: $cameraState,
+							sceneBounds: runtime.sceneBounds,
+							metersPerUnit: configuration.metersPerUnit,
+							maxDistance: Float(environmentRadius * 0.9),
+							navigationMapping: store.navigationMapping,
+							onPick: nonMacPickHandler
+						)
+					)
+				#endif
+			StageViewOverlayContainer(
+				slots: overlaySlots,
+				snapshot: overlaySnapshot
+			)
 		}
 	}
 
