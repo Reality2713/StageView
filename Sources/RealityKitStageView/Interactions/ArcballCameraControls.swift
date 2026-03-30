@@ -469,6 +469,12 @@ final class ArcballTouchController: ObservableObject {
     private var lastClampedEdge: ClampEdge?
     private var activeGestureCount: Int = 0
 
+    // Momentum
+    private var orbitVelocity: CGPoint = .zero
+    private var panVelocity: CGPoint = .zero
+    private var displayLink: CADisplayLink?
+    private var lastDisplayLinkTimestamp: CFTimeInterval = 0
+
     private enum ClampEdge {
         case min
         case max
@@ -476,7 +482,7 @@ final class ArcballTouchController: ObservableObject {
 
     private let clampEpsilon: Float = 0.0001
 
-    var isInteracting: Bool { activeGestureCount > 0 }
+    var isInteracting: Bool { activeGestureCount > 0 || displayLink != nil }
 
     private var minDistance: Float {
         ViewportTuning.minimumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
@@ -497,6 +503,7 @@ final class ArcballTouchController: ObservableObject {
     func handleOrbitPan(_ gesture: UIPanGestureRecognizer, in view: UIView) {
         switch gesture.state {
         case .began:
+            stopMomentum()
             activeGestureCount += 1
             gesture.setTranslation(.zero, in: view)
             let location = gesture.location(in: view)
@@ -508,9 +515,14 @@ final class ArcballTouchController: ObservableObject {
             applyOrbit(deltaX: deltaX, deltaY: deltaY)
             gesture.setTranslation(.zero, in: view)
             publishState()
-        case .ended, .cancelled, .failed:
+        case .ended:
             activeGestureCount = Swift.max(0, activeGestureCount - 1)
-            touchGestureLogger.debug("orbit ended")
+            let v = gesture.velocity(in: view)
+            touchGestureLogger.debug("orbit ended velocity=\(v.x, privacy: .public),\(v.y, privacy: .public)")
+            startOrbitMomentum(velocity: v)
+        case .cancelled, .failed:
+            activeGestureCount = Swift.max(0, activeGestureCount - 1)
+            touchGestureLogger.debug("orbit cancelled/failed")
         default:
             break
         }
@@ -519,6 +531,7 @@ final class ArcballTouchController: ObservableObject {
     func handlePan(_ gesture: UIPanGestureRecognizer, in view: UIView) {
         switch gesture.state {
         case .began:
+            stopMomentum()
             activeGestureCount += 1
             gesture.setTranslation(.zero, in: view)
             let location = gesture.location(in: view)
@@ -535,22 +548,27 @@ final class ArcballTouchController: ObservableObject {
             )
             gesture.setTranslation(.zero, in: view)
             publishState()
-        case .ended, .cancelled, .failed:
+        case .ended:
             activeGestureCount = Swift.max(0, activeGestureCount - 1)
-            touchGestureLogger.debug("pan ended")
+            let v = gesture.velocity(in: view)
+            touchGestureLogger.debug("pan ended velocity=\(v.x, privacy: .public),\(v.y, privacy: .public)")
+            startPanMomentum(velocity: v)
+        case .cancelled, .failed:
+            activeGestureCount = Swift.max(0, activeGestureCount - 1)
+            touchGestureLogger.debug("pan cancelled/failed")
         default:
             break
         }
     }
 
     func handlePinch(_ gesture: UIPinchGestureRecognizer) {
-        if gesture.state == .began || startDistance == nil {
-            if gesture.state == .began {
-                activeGestureCount += 1
-                touchGestureLogger.debug("pinch began scale=\(gesture.scale, privacy: .public)")
-            }
+        if gesture.state == .began {
+            stopMomentum()
+            activeGestureCount += 1
             startDistance = cameraState.distance
+            touchGestureLogger.debug("pinch began scale=\(gesture.scale, privacy: .public)")
         }
+        if startDistance == nil { startDistance = cameraState.distance }
         guard let start = startDistance else { return }
         guard gesture.scale > 0 else { return }
         let effective = navigationMapping.invertZoomDirection
@@ -562,6 +580,70 @@ final class ArcballTouchController: ObservableObject {
             startDistance = nil
             activeGestureCount = Swift.max(0, activeGestureCount - 1)
             touchGestureLogger.debug("pinch ended")
+        }
+    }
+
+    // MARK: - Momentum
+
+    private func startOrbitMomentum(velocity: CGPoint) {
+        guard hypot(velocity.x, velocity.y) > 50 else { return }
+        orbitVelocity = velocity
+        ensureDisplayLink()
+    }
+
+    private func startPanMomentum(velocity: CGPoint) {
+        guard hypot(velocity.x, velocity.y) > 50 else { return }
+        panVelocity = velocity
+        ensureDisplayLink()
+    }
+
+    private func ensureDisplayLink() {
+        guard displayLink == nil else { return }
+        lastDisplayLinkTimestamp = 0
+        let link = CADisplayLink(target: self, selector: #selector(decayStep(_:)))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    func stopMomentum() {
+        displayLink?.invalidate()
+        displayLink = nil
+        orbitVelocity = .zero
+        panVelocity = .zero
+    }
+
+    @objc private func decayStep(_ link: CADisplayLink) {
+        let now = link.targetTimestamp
+        let dt = lastDisplayLinkTimestamp == 0 ? 0.0 : Float(now - lastDisplayLinkTimestamp)
+        lastDisplayLinkTimestamp = now
+        guard dt > 0 else { return }
+
+        // Exponential decay — half-life 0.25s gives a natural, QuickLook-style coast.
+        let decayFactor = CGFloat(exp(-Float.log(2) / 0.25 * dt))
+
+        if orbitVelocity != .zero {
+            applyOrbit(deltaX: Float(orbitVelocity.x) * dt, deltaY: Float(orbitVelocity.y) * dt)
+            orbitVelocity.x *= decayFactor
+            orbitVelocity.y *= decayFactor
+            if hypot(orbitVelocity.x, orbitVelocity.y) < 20 { orbitVelocity = .zero }
+        }
+
+        if panVelocity != .zero {
+            let multiplier: Float = 2.5
+            let scrollInvert: Float = navigationMapping.invertScrollDirection ? -1 : 1
+            applyPan(
+                deltaX: Float(panVelocity.x) * dt * multiplier * scrollInvert,
+                deltaY: Float(panVelocity.y) * dt * multiplier * scrollInvert
+            )
+            panVelocity.x *= decayFactor
+            panVelocity.y *= decayFactor
+            if hypot(panVelocity.x, panVelocity.y) < 20 { panVelocity = .zero }
+        }
+
+        publishState()
+
+        if orbitVelocity == .zero && panVelocity == .zero {
+            stopMomentum()
         }
     }
 
@@ -697,7 +779,10 @@ private final class ArcballTouchInputView: UIView, UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        false
+        // Two-finger pan + pinch can run together — matches QuickLook / Maps behaviour.
+        let isPan = gestureRecognizer is UIPanGestureRecognizer || otherGestureRecognizer is UIPanGestureRecognizer
+        let isPinch = gestureRecognizer is UIPinchGestureRecognizer || otherGestureRecognizer is UIPinchGestureRecognizer
+        return isPan && isPinch
     }
 }
 
