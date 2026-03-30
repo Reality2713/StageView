@@ -2,6 +2,7 @@ import ComposableArchitecture
 import ImageIO
 import OSLog
 import RealityKit
+import StageViewOverlay
 import SwiftUI
 import simd
 
@@ -33,6 +34,7 @@ public struct RealityKitStageView: View {
 	@Environment(\.colorScheme) private var colorScheme
 	let runtime: RealityKitProvider
 	var configuration: RealityKitConfiguration
+    var overlaySlots: StageViewOverlaySlots
 	var store: StoreOf<StageViewFeature>
 
 	@State private var rootEntity: Entity?
@@ -64,10 +66,12 @@ public struct RealityKitStageView: View {
 	public init(
 		provider: RealityKitProvider,
 		store: StoreOf<StageViewFeature>,
-		configuration: RealityKitConfiguration = RealityKitConfiguration()
+		configuration: RealityKitConfiguration = RealityKitConfiguration(),
+        overlaySlots: StageViewOverlaySlots = .empty
 	) {
 		self.runtime = provider
 		self.configuration = configuration
+        self.overlaySlots = overlaySlots
 		self.store = store
 	}
 
@@ -291,9 +295,26 @@ public struct RealityKitStageView: View {
 	private var viewportStack: some View {
 		ZStack {
 			realityViewLayer
-			overlays
+            StageViewOverlayContainer(
+                slots: overlaySlots,
+                snapshot: overlaySnapshot
+            )
 		}
 	}
+
+    private var overlaySnapshot: StageViewOverlaySnapshot {
+        let metersPerUnit = configuration.metersPerUnit > 0 ? configuration.metersPerUnit : 1.0
+        return StageViewOverlaySnapshot(
+            builtInVisibility: .init(
+                showsOrientationGizmo: configuration.showOrientationGizmo,
+                showsScaleIndicator: configuration.showScaleIndicator
+            ),
+            cameraRotation: cameraState.quaternion,
+            horizontalFOVDegrees: 60,
+            isZUp: configuration.isZUp,
+            referenceDepthMeters: Double(runtime.cameraDistance) * metersPerUnit
+        )
+    }
 
 	@ViewBuilder
 	private var realityViewLayer: some View {
@@ -509,50 +530,6 @@ public struct RealityKitStageView: View {
 			}
 			logger.error(
 				"Model load failed: \(error.localizedDescription, privacy: .public)"
-			)
-		}
-	}
-
-	@ViewBuilder
-	private var overlays: some View {
-		if configuration.showOrientationGizmo || configuration.showScaleIndicator {
-			GeometryReader { proxy in
-				VStack {
-					if configuration.showScaleIndicator {
-						scaleIndicator(viewportWidth: proxy.size.width)
-					}
-					Spacer()
-					HStack {
-						if configuration.showOrientationGizmo {
-							orientationGizmo
-						}
-						Spacer()
-					}
-				}
-				.padding(12)
-				.allowsHitTesting(false)
-			}
-		}
-	}
-
-	@ViewBuilder
-	private func scaleIndicator(viewportWidth: CGFloat) -> some View {
-		let referenceDepthMeters = Double(runtime.cameraDistance)
-		if referenceDepthMeters.isFinite, referenceDepthMeters > 0 {
-			ScaleIndicatorView(
-				referenceDepthMeters: referenceDepthMeters,
-				viewportWidthPoints: Double(max(1, viewportWidth)),
-				horizontalFOVDegrees: 60
-			)
-		}
-	}
-
-	@ViewBuilder
-	private var orientationGizmo: some View {
-		if cameraState.quaternion.vector.isFinite {
-			OrientationGizmoView(
-				cameraRotation: cameraState.quaternion,
-				isZUp: runtime.isZUp
 			)
 		}
 	}

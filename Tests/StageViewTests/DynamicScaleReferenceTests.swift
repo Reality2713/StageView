@@ -1,5 +1,5 @@
 import Testing
-@testable import RealityKitStageView
+@testable import StageViewOverlay
 
 struct DynamicScaleReferenceTests {
     @Test

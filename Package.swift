@@ -5,6 +5,7 @@ let package = Package(
     name: "StageView",
     platforms: [.macOS(.v15), .iOS(.v18), .visionOS(.v2)],
     products: [
+        .library(name: "StageViewOverlay", targets: ["StageViewOverlay"]),
         .library(name: "RealityKitStageView", targets: ["RealityKitStageView"]),
     ],
     dependencies: [
@@ -12,15 +13,24 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "StageViewOverlay",
+            dependencies: []
+        ),
+        .target(
             name: "RealityKitStageView",
             dependencies: [
+                "StageViewOverlay",
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
             ],
             resources: [.process("Resources")]
         ),
         .testTarget(
+            name: "StageViewOverlayTests",
+            dependencies: ["StageViewOverlay"]
+        ),
+        .testTarget(
             name: "StageViewTests",
-            dependencies: ["RealityKitStageView"]
+            dependencies: ["RealityKitStageView", "StageViewOverlay"]
         ),
     ]
 )
