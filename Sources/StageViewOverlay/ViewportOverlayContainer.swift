@@ -38,7 +38,15 @@ public struct ViewportOverlayContainer<AccessoryContent: View>: View {
     public var body: some View {
         let grouped = items.groupedAndSortedForDisplay()
 
-        ZStack {
+        // Debug: Log what items we have
+        let itemCount = items.items.count
+        let anchorNames = grouped.keys.map { String(describing: $0) }.joined(separator: ", ")
+        print("[ViewportOverlayContainer] Rendering \(itemCount) items across anchors: \(anchorNames)")
+        for item in items.items {
+            print("[ViewportOverlayContainer] Item: role=\(item.role), anchor=\(item.anchor), hasContent=\(item.content != nil)")
+        }
+
+        return ZStack {
             // Render each anchor region
             ForEach(ViewportOverlayAnchor.allCases, id: \.self) { anchor in
                 if let anchorItems = grouped[anchor], !anchorItems.isEmpty {
@@ -106,6 +114,7 @@ private struct AnchorItemContent<AccessoryContent: View>: View {
     var body: some View {
         switch item.role {
         case .orientationGizmo:
+            print("[AnchorItemContent] Rendering orientationGizmo, showsGizmo=\(builtInVisibility.showsOrientationGizmo)")
             if builtInVisibility.showsOrientationGizmo,
                let cameraRotation = snapshot.cameraRotation,
                cameraRotation.vector.isFinite {
@@ -117,6 +126,7 @@ private struct AnchorItemContent<AccessoryContent: View>: View {
             }
 
         case .scaleIndicator:
+            print("[AnchorItemContent] Rendering scaleIndicator, showsScale=\(builtInVisibility.showsScaleIndicator), depth=\(String(describing: snapshot.referenceDepthMeters))")
             if builtInVisibility.showsScaleIndicator,
                let referenceDepthMeters = snapshot.referenceDepthMeters,
                referenceDepthMeters.isFinite,
@@ -130,6 +140,7 @@ private struct AnchorItemContent<AccessoryContent: View>: View {
             }
 
         case .hostAccessory, .domainAccessory:
+            print("[AnchorItemContent] Rendering accessory, hasContent=\(item.content != nil)")
             if let content = item.content {
                 content.view
             } else {
