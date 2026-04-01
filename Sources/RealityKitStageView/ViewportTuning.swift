@@ -19,7 +19,7 @@ enum ViewportTuning {
         metersPerUnit: Double,
         horizontalFOVDegrees: Float = 60
     ) -> Float {
-        let radiusMeters = sceneRadiusMeters(sceneBounds: sceneBounds)
+        let radiusMeters = sceneRadiusMeters(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
         let halfFOV = horizontalFOVDegrees * .pi / 360.0
         let framedDistance = radiusMeters / Swift.max(tan(halfFOV), 0.001)
         let minDist = minimumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
@@ -32,20 +32,20 @@ enum ViewportTuning {
     }
 
     static func minimumDistance(sceneBounds: SceneBounds, metersPerUnit: Double) -> Float {
-        let radiusMeters = sceneRadiusMeters(sceneBounds: sceneBounds)
+        let radiusMeters = sceneRadiusMeters(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
         // The absolute floor should be 2mm in WORLD space (meters).
         let absoluteFloorMeters = Float(0.002)
         return Swift.max(absoluteFloorMeters, radiusMeters * 0.12)
     }
 
     static func maximumDistance(sceneBounds: SceneBounds, metersPerUnit: Double) -> Float {
-        let radiusMeters = sceneRadiusMeters(sceneBounds: sceneBounds)
+        let radiusMeters = sceneRadiusMeters(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
         let absoluteCeilingMeters = Float(500.0)
         return Swift.max(absoluteCeilingMeters, radiusMeters * 400.0)
     }
 
     static func panScale(distance: Float, sceneBounds: SceneBounds, metersPerUnit: Double) -> Float {
-        let radiusMeters = sceneRadiusMeters(sceneBounds: sceneBounds)
+        let radiusMeters = sceneRadiusMeters(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
         return Swift.max(distance * 0.00125, radiusMeters * 0.00075)
     }
 
@@ -55,7 +55,7 @@ enum ViewportTuning {
         metersPerUnit: Double,
         environmentRadius: Float? = nil
     ) -> ViewportCameraClipping {
-        let radiusMeters = sceneRadiusMeters(sceneBounds: sceneBounds)
+        let radiusMeters = sceneRadiusMeters(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit)
         let safeDistance = Swift.max(distance, minimumDistance(sceneBounds: sceneBounds, metersPerUnit: metersPerUnit))
         let absoluteNear = Float(0.0005)
 
@@ -111,8 +111,9 @@ enum ViewportTuning {
         minorStep * 10.0
     }
 
-    private static func sceneRadiusMeters(sceneBounds: SceneBounds) -> Float {
-        let extentMeters = Swift.max(sceneBounds.maxExtent, 0.0001)
+    private static func sceneRadiusMeters(sceneBounds: SceneBounds, metersPerUnit: Double) -> Float {
+        let safeMetersPerUnit = Float(Swift.max(metersPerUnit, 0.000_001))
+        let extentMeters = Swift.max(sceneBounds.maxExtent * safeMetersPerUnit, 0.0001)
         return extentMeters * 0.5
     }
 }

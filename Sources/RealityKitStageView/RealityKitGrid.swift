@@ -70,7 +70,8 @@ public struct RealityKitGrid {
         majorColorOverride: SIMD3<Float>? = nil
     ) {
         _ = isZUp
-        let worldExtentMeters = worldExtent // Already in Meters from runtime
+        let safeMetersPerUnit = Swift.max(metersPerUnit, 0.000_001)
+        let worldExtentMeters = worldExtent * safeMetersPerUnit
         let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
         let minorStep = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
         let majorStep = ViewportTuning.majorGridStepMeters(forMinorStep: minorStep)

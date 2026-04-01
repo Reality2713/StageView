@@ -224,6 +224,7 @@ public struct RealityKitStageView: View {
 				refreshGrid()
 			}
 			.onChange(of: runtime.sceneBounds) { _, newBounds in
+				updateSkyboxRadius(for: newBounds)
 				// Throttle grid updates based on time and significant bounds changes
 				let now = Date()
 				let timeSinceLastUpdate = now.timeIntervalSince(lastGridUpdateTime)
@@ -707,6 +708,7 @@ public struct RealityKitStageView: View {
 			}
 		}
 		camera.transform.matrix = state.transform
+		updateSkyboxPosition(using: camera)
 	}
 
 	@MainActor
@@ -741,6 +743,33 @@ public struct RealityKitStageView: View {
 		Task {
 			await loadProceduralGrid(into: root)
 		}
+	}
+
+	@MainActor
+	private func updateSkyboxRadius(for bounds: SceneBounds) {
+		guard let skybox = skyboxEntity else { return }
+		guard var model = skybox.components[ModelComponent.self] else { return }
+
+		let targetRadius = Float(Swift.max(1000.0, Double(bounds.maxExtent) * 10.0))
+		let currentBounds = skybox.visualBounds(relativeTo: skybox)
+		let currentRadius = Swift.max(
+			currentBounds.extents.x,
+			Swift.max(currentBounds.extents.y, currentBounds.extents.z)
+		) * 0.5
+
+		guard currentRadius.isFinite else { return }
+		guard Swift.abs(currentRadius - targetRadius) > Swift.max(1.0, targetRadius * 0.01) else {
+			return
+		}
+
+		model.mesh = .generateSphere(radius: targetRadius)
+		skybox.components.set(model)
+	}
+
+	@MainActor
+	private func updateSkyboxPosition(using camera: Entity) {
+		guard let skybox = skyboxEntity else { return }
+		skybox.position = camera.position(relativeTo: rootEntity)
 	}
 
 	@MainActor
