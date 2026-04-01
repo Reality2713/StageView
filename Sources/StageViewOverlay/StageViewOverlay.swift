@@ -203,34 +203,49 @@ public struct StageViewOverlayContainer: View {
     public var body: some View {
         if slots.hasContent || snapshot.showsBuiltInContent {
             GeometryReader { proxy in
-                VStack(spacing: 0) {
-                    HStack(alignment: .top) {
-                        slotView(slots.topLeading, alignment: .leading)
-                        Spacer(minLength: 0)
-                        VStack(spacing: 8) {
-                            builtInScaleIndicator(viewportWidth: proxy.size.width)
-                            slotView(slots.top, alignment: .center)
-                        }
-                        Spacer(minLength: 0)
-                        slotView(slots.topTrailing, alignment: .trailing)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    HStack(alignment: .bottom) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            slotView(slots.bottomLeading, alignment: .leading)
-                            builtInOrientationGizmo
-                        }
-                        Spacer(minLength: 0)
-                        slotView(slots.bottom, alignment: .center)
-                        Spacer(minLength: 0)
-                        slotView(slots.bottomTrailing, alignment: .trailing)
-                    }
-                }
-                .padding(12)
+                overlayLayout(viewportWidth: proxy.size.width)
             }
         }
+    }
+
+    @ViewBuilder
+    private func overlayLayout(viewportWidth: CGFloat) -> some View {
+        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, *) {
+            GlassEffectContainer(spacing: 16) {
+                overlayChrome(viewportWidth: viewportWidth)
+            }
+        } else {
+            overlayChrome(viewportWidth: viewportWidth)
+        }
+    }
+
+    private func overlayChrome(viewportWidth: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                slotView(slots.topLeading, alignment: .leading)
+                Spacer(minLength: 0)
+                VStack(spacing: 8) {
+                    builtInScaleIndicator(viewportWidth: viewportWidth)
+                    slotView(slots.top, alignment: .center)
+                }
+                Spacer(minLength: 0)
+                slotView(slots.topTrailing, alignment: .trailing)
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    slotView(slots.bottomLeading, alignment: .leading)
+                    builtInOrientationGizmo
+                }
+                Spacer(minLength: 0)
+                slotView(slots.bottom, alignment: .center)
+                Spacer(minLength: 0)
+                slotView(slots.bottomTrailing, alignment: .trailing)
+            }
+        }
+        .padding(12)
     }
 
     @ViewBuilder
