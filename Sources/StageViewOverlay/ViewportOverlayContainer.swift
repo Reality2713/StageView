@@ -1,7 +1,4 @@
-import OSLog
 import SwiftUI
-
-private let logger = Logger(subsystem: "StageViewOverlay", category: "ViewportOverlay")
 
 /// A neutral viewport overlay container that coordinates built-ins and external accessories.
 ///
@@ -57,12 +54,6 @@ public struct ViewportOverlayContainer<AccessoryContent: View>: View {
             }
         }
         .padding(12)
-        .task {
-            logger.debug("Rendering \(self.items.items.count) overlay items")
-            for item in self.items.items {
-                logger.debug("  - \(String(describing: item.role)) at \(String(describing: item.anchor)), content=\(item.content != nil)")
-            }
-        }
     }
 }
 
