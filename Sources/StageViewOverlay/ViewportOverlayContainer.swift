@@ -39,7 +39,6 @@ public struct ViewportOverlayContainer<AccessoryContent: View>: View {
         let grouped = items.groupedAndSortedForDisplay()
 
         ZStack {
-            // Render each anchor region
             ForEach(ViewportOverlayAnchor.allCases, id: \.self) { anchor in
                 if let anchorItems = grouped[anchor], !anchorItems.isEmpty {
                     AnchorRegion(
@@ -53,7 +52,8 @@ public struct ViewportOverlayContainer<AccessoryContent: View>: View {
                 }
             }
         }
-        .padding(12)
+        .safeAreaPadding()
+        .padding()
     }
 }
 

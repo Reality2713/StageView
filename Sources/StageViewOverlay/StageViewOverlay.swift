@@ -277,16 +277,20 @@ public struct StageViewOverlayContainer: View {
 private struct StageViewOverlayRoot: View {
     let slots: StageViewOverlaySlots
     let snapshot: StageViewOverlaySnapshot
+    @State private var viewportWidth: CGFloat = 0
 
     var body: some View {
-        GeometryReader { proxy in
-            StageViewOverlayEffectContainer {
-                StageViewOverlayChrome(
-                    slots: slots,
-                    snapshot: snapshot,
-                    viewportWidth: proxy.size.width
-                )
-            }
+        StageViewOverlayEffectContainer {
+            StageViewOverlayChrome(
+                slots: slots,
+                snapshot: snapshot,
+                viewportWidth: viewportWidth
+            )
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { newWidth in
+            viewportWidth = newWidth
         }
     }
 }
@@ -313,7 +317,8 @@ private struct StageViewOverlayChrome: View {
                 snapshot: snapshot
             )
         }
-        .padding(12)
+        .safeAreaPadding()
+        .padding()
     }
 }
 

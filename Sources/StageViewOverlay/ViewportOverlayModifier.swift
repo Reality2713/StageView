@@ -26,6 +26,7 @@ public struct ViewportOverlayModifier<AccessoryContent: View>: ViewModifier {
     let builtInVisibility: StageViewBuiltInOverlayVisibility
     let snapshot: StageViewOverlaySnapshot
     @ViewBuilder let accessoryContent: (ViewportOverlayItem) -> AccessoryContent
+    @State private var viewportWidth: CGFloat = 0
 
     public init(
         items: ViewportOverlayCollection,
@@ -42,15 +43,18 @@ public struct ViewportOverlayModifier<AccessoryContent: View>: ViewModifier {
     public func body(content: Content) -> some View {
         content
             .overlay {
-                GeometryReader { proxy in
-                    ViewportOverlayContainer(
-                        items: items,
-                        builtInVisibility: builtInVisibility,
-                        snapshot: snapshot,
-                        viewportWidth: proxy.size.width,
-                        accessoryContent: accessoryContent
-                    )
-                }
+                ViewportOverlayContainer(
+                    items: items,
+                    builtInVisibility: builtInVisibility,
+                    snapshot: snapshot,
+                    viewportWidth: viewportWidth,
+                    accessoryContent: accessoryContent
+                )
+            }
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width
+            } action: { newWidth in
+                viewportWidth = newWidth
             }
     }
 }
