@@ -270,10 +270,17 @@ public struct StageViewOverlayContainer: View {
            let cameraRotation = snapshot.cameraRotation,
            cameraRotation.vector.isFinite
         {
-            OrientationGizmoView(
-                cameraRotation: cameraRotation,
-                isZUp: snapshot.isZUp
-            )
+            ZStack {
+                Circle()
+                    .fill(.clear)
+                    .stageViewOverlayMaterial(in: Circle())
+
+                OrientationGizmoView(
+                    cameraRotation: cameraRotation,
+                    isZUp: snapshot.isZUp
+                )
+            }
+            .frame(width: 96, height: 96)
             .allowsHitTesting(false)
         }
     }
@@ -344,109 +351,99 @@ public struct OrientationGizmoView: View {
     }
 
     public var body: some View {
-        ZStack {
-            // Keep the liquid glass on a dedicated SwiftUI backing shape instead of the
-            // Canvas itself. Applying glass directly to Canvas can lock the badge into a
-            // light appearance because the immediate-mode drawing gets flattened before
-            // the backdrop sampling stage.
-            Circle()
-                .fill(.clear)
-                .stageViewOverlayMaterial(in: Circle())
+        Canvas { context, canvasSize in
+            let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+            let axisLength = min(canvasSize.width, canvasSize.height) * 0.35
+            let invRotation = cameraRotation.inverse
+            let xAxis = rotatePoint(SIMD3<Float>(1, 0, 0), by: invRotation)
+            let yAxis = rotatePoint(SIMD3<Float>(0, 1, 0), by: invRotation)
+            let zAxis = rotatePoint(SIMD3<Float>(0, 0, 1), by: invRotation)
+            let upAxisTag = isZUp ? "Z" : "Y"
 
-            Canvas { context, canvasSize in
-                let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-                let axisLength = min(canvasSize.width, canvasSize.height) * 0.35
-                let invRotation = cameraRotation.inverse
-                let xAxis = rotatePoint(SIMD3<Float>(1, 0, 0), by: invRotation)
-                let yAxis = rotatePoint(SIMD3<Float>(0, 1, 0), by: invRotation)
-                let zAxis = rotatePoint(SIMD3<Float>(0, 0, 1), by: invRotation)
-                let upAxisTag = isZUp ? "Z" : "Y"
+            let axes: [(axis: SIMD3<Float>, color: Color, label: String)] = [
+                (xAxis, .red, "X"),
+                (yAxis, .green, "Y"),
+                (zAxis, .blue, "Z"),
+            ].sorted { $0.axis.z < $1.axis.z }
 
-                let axes: [(axis: SIMD3<Float>, color: Color, label: String)] = [
-                    (xAxis, .red, "X"),
-                    (yAxis, .green, "Y"),
-                    (zAxis, .blue, "Z"),
-                ].sorted { $0.axis.z < $1.axis.z }
+            for (axis, color, label) in axes {
+                let isUp = label == upAxisTag
+                let endPoint = CGPoint(
+                    x: center.x + CGFloat(axis.x) * axisLength,
+                    y: center.y - CGFloat(axis.y) * axisLength
+                )
 
-                for (axis, color, label) in axes {
-                    let isUp = label == upAxisTag
-                    let endPoint = CGPoint(
-                        x: center.x + CGFloat(axis.x) * axisLength,
-                        y: center.y - CGFloat(axis.y) * axisLength
+                var path = Path()
+                path.move(to: center)
+                path.addLine(to: endPoint)
+
+                context.stroke(
+                    path,
+                    with: .color(color.opacity(0.7)),
+                    lineWidth: 2.0
+                )
+
+                let arrowSize: CGFloat = isUp ? 10 : 7
+                let direction = CGPoint(x: endPoint.x - center.x, y: endPoint.y - center.y)
+                let length = sqrt(direction.x * direction.x + direction.y * direction.y)
+                if length > 0 {
+                    let norm = CGPoint(x: direction.x / length, y: direction.y / length)
+                    let perp = CGPoint(x: -norm.y, y: norm.x)
+
+                    var arrowPath = Path()
+                    arrowPath.move(to: endPoint)
+                    arrowPath.addLine(
+                        to: CGPoint(
+                            x: endPoint.x - norm.x * arrowSize + perp.x * arrowSize * 0.5,
+                            y: endPoint.y - norm.y * arrowSize + perp.y * arrowSize * 0.5
+                        )
                     )
-
-                    var path = Path()
-                    path.move(to: center)
-                    path.addLine(to: endPoint)
-
-                    context.stroke(
-                        path,
-                        with: .color(color.opacity(0.7)),
-                        lineWidth: 2.0
+                    arrowPath.addLine(
+                        to: CGPoint(
+                            x: endPoint.x - norm.x * arrowSize - perp.x * arrowSize * 0.5,
+                            y: endPoint.y - norm.y * arrowSize - perp.y * arrowSize * 0.5
+                        )
                     )
-
-                    let arrowSize: CGFloat = isUp ? 10 : 7
-                    let direction = CGPoint(x: endPoint.x - center.x, y: endPoint.y - center.y)
-                    let length = sqrt(direction.x * direction.x + direction.y * direction.y)
-                    if length > 0 {
-                        let norm = CGPoint(x: direction.x / length, y: direction.y / length)
-                        let perp = CGPoint(x: -norm.y, y: norm.x)
-
-                        var arrowPath = Path()
-                        arrowPath.move(to: endPoint)
-                        arrowPath.addLine(
-                            to: CGPoint(
-                                x: endPoint.x - norm.x * arrowSize + perp.x * arrowSize * 0.5,
-                                y: endPoint.y - norm.y * arrowSize + perp.y * arrowSize * 0.5
-                            )
-                        )
-                        arrowPath.addLine(
-                            to: CGPoint(
-                                x: endPoint.x - norm.x * arrowSize - perp.x * arrowSize * 0.5,
-                                y: endPoint.y - norm.y * arrowSize - perp.y * arrowSize * 0.5
-                            )
-                        )
-                        arrowPath.closeSubpath()
-                        context.fill(arrowPath, with: .color(color.opacity(0.7)))
-                    }
-
-                    if axis.z > -0.3 {
-                        let labelPosition = CGPoint(
-                            x: endPoint.x + CGFloat(axis.x) * 12,
-                            y: endPoint.y - CGFloat(axis.y) * 12
-                        )
-                        context.draw(
-                            Text(label)
-                                .font(
-                                    .system(
-                                        size: isUp ? 13 : 11,
-                                        weight: isUp ? .heavy : .bold,
-                                        design: .monospaced
-                                    )
-                                )
-                                .foregroundColor(color),
-                            at: labelPosition,
-                            anchor: .center
-                        )
-                    }
+                    arrowPath.closeSubpath()
+                    context.fill(arrowPath, with: .color(color.opacity(0.7)))
                 }
 
-                let originSize: CGFloat = 8
-                context.fill(
-                    Circle().path(
-                        in: CGRect(
-                            x: center.x - originSize / 2,
-                            y: center.y - originSize / 2,
-                            width: originSize,
-                            height: originSize
-                        )
-                    ),
-                    with: .color(.white)
-                )
+                if axis.z > -0.3 {
+                    let labelPosition = CGPoint(
+                        x: endPoint.x + CGFloat(axis.x) * 12,
+                        y: endPoint.y - CGFloat(axis.y) * 12
+                    )
+                    context.draw(
+                        Text(label)
+                            .font(
+                                .system(
+                                    size: isUp ? 13 : 11,
+                                    weight: isUp ? .heavy : .bold,
+                                    design: .monospaced
+                                )
+                            )
+                            .foregroundColor(color),
+                        at: labelPosition,
+                        anchor: .center
+                    )
+                }
             }
-            .padding(8)
+
+            let originSize: CGFloat = 8
+            context.fill(
+                Circle().path(
+                    in: CGRect(
+                        x: center.x - originSize / 2,
+                        y: center.y - originSize / 2,
+                        width: originSize,
+                        height: originSize
+                    )
+                ),
+                with: .color(.white)
+            )
         }
-        .frame(width: size + 16, height: size + 16)
+        .frame(width: size, height: size)
+        .padding(8)
         .foregroundStyle(.secondary)
     }
 
