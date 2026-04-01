@@ -30,6 +30,42 @@ struct ViewportTuningTests {
     }
 
     @Test
+    func framingDistanceUsesSceneUnitsAcrossAuthoredUnitSystems() {
+        let bounds = SceneBounds(min: .zero, max: SIMD3<Float>(repeating: 0.602598))
+
+        let metersDistance = ViewportTuning.defaultCameraDistance(
+            sceneBounds: bounds,
+            metersPerUnit: 1.0
+        )
+        let feetDistance = ViewportTuning.defaultCameraDistance(
+            sceneBounds: bounds,
+            metersPerUnit: 0.3048
+        )
+
+        #expect(Swift.abs(metersDistance - feetDistance) < 0.0001)
+        #expect(feetDistance > 0.5)
+    }
+
+    @Test
+    func clippingRangeUsesSceneUnitsAcrossAuthoredUnitSystems() {
+        let bounds = SceneBounds(min: .zero, max: SIMD3<Float>(repeating: 0.602598))
+
+        let meterClip = ViewportTuning.clippingRange(
+            distance: 0.600145,
+            sceneBounds: bounds,
+            metersPerUnit: 1.0
+        )
+        let feetClip = ViewportTuning.clippingRange(
+            distance: 0.600145,
+            sceneBounds: bounds,
+            metersPerUnit: 0.3048
+        )
+
+        #expect(Swift.abs(meterClip.near - feetClip.near) < 0.0001)
+        #expect(Swift.abs(meterClip.far - feetClip.far) < 0.0001)
+    }
+
+    @Test
     func gridRadiusUsesAdaptiveExtentButFixedMajorReference() {
         let smallRadius = ViewportTuning.gridRadiusMeters(worldExtentMeters: 0.05)
         let largeRadius = ViewportTuning.gridRadiusMeters(worldExtentMeters: 20.0)
