@@ -34,7 +34,16 @@ public struct RealityKitStageView: View {
 	@Environment(\.colorScheme) private var colorScheme
 	let runtime: RealityKitProvider
 	var configuration: RealityKitConfiguration
+
+    // MARK: - Overlay Configuration (New Anchored API)
+
+    /// The collection of anchored overlay items.
+    /// Use this to configure built-ins (gizmo, scale) and external accessories.
+    var overlayItems: ViewportOverlayCollection
+
+    /// Deprecated slot-based overlay configuration - will be removed in future version.
     var overlaySlots: StageViewOverlaySlots
+
 	var store: StoreOf<StageViewFeature>
 
 	@State private var rootEntity: Entity?
@@ -67,10 +76,12 @@ public struct RealityKitStageView: View {
 		provider: RealityKitProvider,
 		store: StoreOf<StageViewFeature>,
 		configuration: RealityKitConfiguration = RealityKitConfiguration(),
+        overlayItems: ViewportOverlayCollection = .empty,
         overlaySlots: StageViewOverlaySlots = .empty
 	) {
 		self.runtime = provider
 		self.configuration = configuration
+        self.overlayItems = overlayItems
         self.overlaySlots = overlaySlots
 		self.store = store
 	}
@@ -295,11 +306,36 @@ public struct RealityKitStageView: View {
 						)
 					)
 				#endif
-			StageViewOverlayContainer(
-				slots: overlaySlots,
-				snapshot: overlaySnapshot
+			// Use new anchored overlay system if items configured or built-ins enabled, else fall back to legacy slots
+			if !overlayItems.items.isEmpty || configuration.showsBuiltInOverlays {
+				anchoredOverlayContainer
+			} else if overlaySlots.hasContent {
+				legacyOverlayContainer
+			}
+		}
+	}
+
+	@ViewBuilder
+	private var anchoredOverlayContainer: some View {
+		GeometryReader { proxy in
+			ViewportOverlayContainer(
+				items: overlayItems,
+				builtInVisibility: .init(
+					showsOrientationGizmo: configuration.showOrientationGizmo,
+					showsScaleIndicator: configuration.showScaleIndicator
+				),
+				snapshot: overlaySnapshot,
+				viewportWidth: proxy.size.width
 			)
 		}
+	}
+
+	@ViewBuilder
+	private var legacyOverlayContainer: some View {
+		StageViewOverlayContainer(
+			slots: overlaySlots,
+			snapshot: overlaySnapshot
+		)
 	}
 
     private var overlaySnapshot: StageViewOverlaySnapshot {

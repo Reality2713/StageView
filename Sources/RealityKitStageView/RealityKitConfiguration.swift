@@ -119,4 +119,9 @@ public struct RealityKitConfiguration: Sendable {
     public var realityKitIntensityExponent: Float {
         Self.realityKitIntensityExponent(forHydraEV: environmentExposure)
     }
+
+    /// Returns true if any built-in overlays should be rendered.
+    public var showsBuiltInOverlays: Bool {
+        showOrientationGizmo || showScaleIndicator
+    }
 }

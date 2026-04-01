@@ -2,16 +2,19 @@
 //  SelectionOutlineApp.swift
 //  SelectionOutline
 //
-//  Created by Cristian Díaz on 29.03.26.
-//
 
+import ComposableArchitecture
 import SwiftUI
 
 @main
 struct SelectionOutlineApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
+  var body: some Scene {
+    WindowGroup {
+      ContentView(
+        store: Store(initialState: SelectionOutlineFeature.State()) {
+          SelectionOutlineFeature()
         }
+      )
     }
+  }
 }

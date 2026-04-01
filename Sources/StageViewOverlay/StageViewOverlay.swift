@@ -2,6 +2,56 @@ import Foundation
 import SwiftUI
 import simd
 
+// MARK: - Anchored Overlay API (New)
+
+/// The primary entry point for viewport overlay configuration.
+///
+/// Use `ViewportOverlayCollection` to declaratively specify which overlays appear
+/// and where they are anchored. Built-ins and external accessories participate
+/// in the same coordinated layout surface.
+///
+/// Example:
+/// ```swift
+/// let overlays = ViewportOverlayCollection()
+///     .orientationGizmo(anchor: .bottomLeading)
+///     .scaleIndicator(anchor: .top)
+///     .hostAccessory(anchor: .topLeading)
+/// ```
+public typealias ViewportOverlayConfiguration = ViewportOverlayCollection
+
+// MARK: - Legacy Slot API (Deprecated)
+
+extension StageViewOverlaySlots {
+    /// Converts legacy slots to the new anchored collection, preserving view content.
+    @available(*, deprecated, message: "Migrate to ViewportOverlayCollection")
+    public func toAnchoredCollection() -> ViewportOverlayCollection {
+        var collection = ViewportOverlayCollection()
+
+        if let topLeading {
+            collection = collection.hostAccessory(anchor: .topLeading, content: UncheckedAnyViewBox(topLeading))
+        }
+        if let top {
+            collection = collection.hostAccessory(anchor: .top, content: UncheckedAnyViewBox(top))
+        }
+        if let topTrailing {
+            collection = collection.hostAccessory(anchor: .topTrailing, content: UncheckedAnyViewBox(topTrailing))
+        }
+        if let bottomLeading {
+            collection = collection.hostAccessory(anchor: .bottomLeading, content: UncheckedAnyViewBox(bottomLeading))
+        }
+        if let bottom {
+            collection = collection.hostAccessory(anchor: .bottom, content: UncheckedAnyViewBox(bottom))
+        }
+        if let bottomTrailing {
+            collection = collection.hostAccessory(anchor: .bottomTrailing, content: UncheckedAnyViewBox(bottomTrailing))
+        }
+
+        return collection
+    }
+}
+
+// MARK: - Built-in Components
+
 public struct DynamicScaleReference: Equatable {
     public let meters: Double
     public let label: String
@@ -116,6 +166,10 @@ public struct StageViewOverlaySnapshot {
     }
 }
 
+/// Deprecated slot-based overlay configuration.
+///
+/// Use `ViewportOverlayCollection` instead for anchored overlay positioning.
+@available(*, deprecated, message: "Use ViewportOverlayCollection with anchored positioning")
 public struct StageViewOverlaySlots {
     public var bottom: AnyView?
     public var bottomLeading: AnyView?
@@ -188,6 +242,10 @@ public struct StageViewOverlaySlots {
     }
 }
 
+/// Deprecated slot-based overlay container.
+///
+/// Use `ViewportOverlayContainer` with `ViewportOverlayCollection` instead.
+@available(*, deprecated, message: "Use ViewportOverlayContainer with anchored positioning")
 public struct StageViewOverlayContainer: View {
     public let slots: StageViewOverlaySlots
     public let snapshot: StageViewOverlaySnapshot
@@ -201,60 +259,149 @@ public struct StageViewOverlayContainer: View {
     }
 
     public var body: some View {
-        if slots.hasContent || snapshot.showsBuiltInContent {
-            GeometryReader { proxy in
-                overlayLayout(viewportWidth: proxy.size.width)
+        if showsOverlay {
+            StageViewOverlayRoot(
+                slots: slots,
+                snapshot: snapshot
+            )
+        }
+    }
+    
+    private var showsOverlay: Bool {
+        slots.hasContent || snapshot.showsBuiltInContent
+    }
+}
+
+/// Deprecated.
+@available(*, deprecated)
+private struct StageViewOverlayRoot: View {
+    let slots: StageViewOverlaySlots
+    let snapshot: StageViewOverlaySnapshot
+
+    var body: some View {
+        GeometryReader { proxy in
+            StageViewOverlayEffectContainer {
+                StageViewOverlayChrome(
+                    slots: slots,
+                    snapshot: snapshot,
+                    viewportWidth: proxy.size.width
+                )
             }
         }
     }
+}
 
-    @ViewBuilder
-    private func overlayLayout(viewportWidth: CGFloat) -> some View {
-        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, *) {
-            GlassEffectContainer(spacing: 16) {
-                overlayChrome(viewportWidth: viewportWidth)
-            }
-        } else {
-            overlayChrome(viewportWidth: viewportWidth)
-        }
-    }
+/// Deprecated.
+@available(*, deprecated)
+private struct StageViewOverlayChrome: View {
+    let slots: StageViewOverlaySlots
+    let snapshot: StageViewOverlaySnapshot
+    let viewportWidth: CGFloat
 
-    private func overlayChrome(viewportWidth: CGFloat) -> some View {
+    var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top) {
-                slotView(slots.topLeading, alignment: .leading)
-                Spacer(minLength: 0)
-                VStack(spacing: 8) {
-                    builtInScaleIndicator(viewportWidth: viewportWidth)
-                    slotView(slots.top, alignment: .center)
-                }
-                Spacer(minLength: 0)
-                slotView(slots.topTrailing, alignment: .trailing)
-            }
+            StageViewOverlayTopRow(
+                slots: slots,
+                snapshot: snapshot,
+                viewportWidth: viewportWidth
+            )
 
             Spacer(minLength: 0)
 
-            HStack(alignment: .bottom) {
-                VStack(alignment: .leading, spacing: 8) {
-                    slotView(slots.bottomLeading, alignment: .leading)
-                    builtInOrientationGizmo
-                }
-                Spacer(minLength: 0)
-                slotView(slots.bottom, alignment: .center)
-                Spacer(minLength: 0)
-                slotView(slots.bottomTrailing, alignment: .trailing)
-            }
+            StageViewOverlayBottomRow(
+                slots: slots,
+                snapshot: snapshot
+            )
         }
         .padding(12)
     }
+}
 
-    @ViewBuilder
-    private func builtInScaleIndicator(viewportWidth: CGFloat) -> some View {
-        if snapshot.builtInVisibility.showsScaleIndicator,
-           let referenceDepthMeters = snapshot.referenceDepthMeters,
-           referenceDepthMeters.isFinite,
-           referenceDepthMeters > 0
-        {
+/// Deprecated.
+@available(*, deprecated)
+private struct StageViewOverlayTopRow: View {
+    let slots: StageViewOverlaySlots
+    let snapshot: StageViewOverlaySnapshot
+    let viewportWidth: CGFloat
+
+    var body: some View {
+        HStack(alignment: .top) {
+            StageViewOverlaySlot(
+                view: slots.topLeading,
+                alignment: .leading
+            )
+            Spacer(minLength: 0)
+            VStack(spacing: 8) {
+                StageViewBuiltInScaleIndicator(
+                    snapshot: snapshot,
+                    viewportWidth: viewportWidth
+                )
+                StageViewOverlaySlot(
+                    view: slots.top,
+                    alignment: .center
+                )
+            }
+            Spacer(minLength: 0)
+            StageViewOverlaySlot(
+                view: slots.topTrailing,
+                alignment: .trailing
+            )
+        }
+    }
+}
+
+/// Deprecated.
+@available(*, deprecated)
+private struct StageViewOverlayBottomRow: View {
+    let slots: StageViewOverlaySlots
+    let snapshot: StageViewOverlaySnapshot
+
+    var body: some View {
+        HStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                StageViewOverlaySlot(
+                    view: slots.bottomLeading,
+                    alignment: .leading
+                )
+                StageViewBuiltInOrientationGizmo(snapshot: snapshot)
+            }
+            Spacer(minLength: 0)
+            StageViewOverlaySlot(
+                view: slots.bottom,
+                alignment: .center
+            )
+            Spacer(minLength: 0)
+            StageViewOverlaySlot(
+                view: slots.bottomTrailing,
+                alignment: .trailing
+            )
+        }
+    }
+}
+
+/// Deprecated.
+@available(*, deprecated)
+private struct StageViewOverlaySlot: View {
+    let view: AnyView?
+    let alignment: HorizontalAlignment
+
+    var body: some View {
+        if let view {
+            VStack(alignment: alignment, spacing: 0) {
+                view
+            }
+        }
+    }
+}
+
+/// Deprecated. Built-ins now render through ViewportOverlayContainer.
+@available(*, deprecated)
+private struct StageViewBuiltInScaleIndicator: View {
+    let snapshot: StageViewOverlaySnapshot
+    let viewportWidth: CGFloat
+
+    var body: some View {
+        if let referenceDepthMeters = referenceDepthMeters {
             ScaleIndicatorView(
                 referenceDepthMeters: referenceDepthMeters,
                 viewportWidthPoints: Double(max(1, viewportWidth)),
@@ -264,33 +411,56 @@ public struct StageViewOverlayContainer: View {
         }
     }
 
-    @ViewBuilder
-    private var builtInOrientationGizmo: some View {
-        if snapshot.builtInVisibility.showsOrientationGizmo,
-           let cameraRotation = snapshot.cameraRotation,
-           cameraRotation.vector.isFinite
-        {
-            ZStack {
-                Circle()
-                    .fill(.clear)
-                    .stageViewOverlayMaterial(in: Circle())
+    private var referenceDepthMeters: Double? {
+        guard snapshot.builtInVisibility.showsScaleIndicator,
+              let referenceDepthMeters = snapshot.referenceDepthMeters,
+              referenceDepthMeters.isFinite,
+              referenceDepthMeters > 0
+        else {
+            return nil
+        }
+        return referenceDepthMeters
+    }
+}
 
-                OrientationGizmoView(
-                    cameraRotation: cameraRotation,
-                    isZUp: snapshot.isZUp
-                )
-            }
-            .frame(width: 96, height: 96)
+/// Deprecated. Built-ins now render through ViewportOverlayContainer.
+@available(*, deprecated)
+private struct StageViewBuiltInOrientationGizmo: View {
+    let snapshot: StageViewOverlaySnapshot
+
+    var body: some View {
+        if let cameraRotation = cameraRotation {
+            OrientationGizmoView(
+                cameraRotation: cameraRotation,
+                isZUp: snapshot.isZUp
+            )
             .allowsHitTesting(false)
         }
     }
 
-    @ViewBuilder
-    private func slotView(_ view: AnyView?, alignment: HorizontalAlignment) -> some View {
-        if let view {
-            VStack(alignment: alignment, spacing: 0) {
-                view
+    private var cameraRotation: simd_quatf? {
+        guard snapshot.builtInVisibility.showsOrientationGizmo,
+              let cameraRotation = snapshot.cameraRotation,
+              cameraRotation.vector.isFinite
+        else {
+            return nil
+        }
+        return cameraRotation
+    }
+}
+
+/// Deprecated. Use `glassEffect` modifiers directly on overlay content.
+@available(*, deprecated)
+private struct StageViewOverlayEffectContainer<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, *) {
+            GlassEffectContainer(spacing: 16) {
+                content()
             }
+        } else {
+            content()
         }
     }
 }
@@ -444,6 +614,7 @@ public struct OrientationGizmoView: View {
         }
         .frame(width: size, height: size)
         .padding(8)
+        .stageViewOverlayMaterial(in: Circle())
         .foregroundStyle(.secondary)
     }
 
@@ -485,7 +656,7 @@ public extension View {
     }
 }
 
-private extension SIMD4 where Scalar == Float {
+extension SIMD4 where Scalar == Float {
     var isFinite: Bool {
         x.isFinite && y.isFinite && z.isFinite && w.isFinite
     }

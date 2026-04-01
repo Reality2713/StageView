@@ -20,6 +20,14 @@ struct StageViewOverlaySnapshotTests {
             )
         )
         #expect(scaleOnly.showsBuiltInContent == true)
+
+        let gizmoOnly = StageViewOverlaySnapshot(
+            builtInVisibility: .init(
+                showsOrientationGizmo: true,
+                showsScaleIndicator: false
+            )
+        )
+        #expect(gizmoOnly.showsBuiltInContent == true)
     }
 
     @Test
