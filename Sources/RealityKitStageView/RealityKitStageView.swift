@@ -46,6 +46,7 @@ public struct RealityKitStageView: View {
 	@State private var outlinedEntityIDs: Set<Entity.ID> = []
 	@State private var viewportInstanceID = UUID()
 	@State private var gridEntity: Entity?
+	@State private var gridLoadRequestID = UUID()
 	/// Stable box holding the post-process outline effect (macOS 26+).
 	@State private var outlineBox = OutlineEffectBox()
 	/// Incremented to force a RealityView update cycle when outline state changes.
@@ -56,6 +57,11 @@ public struct RealityKitStageView: View {
 	@State private var lastGridBoundsExtent: Double = 0
 	private static let gridUpdateInterval: TimeInterval = 0.5 // Max 2 updates per second
 	private static let gridBoundsThreshold: Double = 0.05 // 5% change threshold
+
+	// Environment slider throttling: track pending values and debounce updates
+	@State private var pendingExposure: Float?
+	@State private var pendingRotation: Float?
+	private static let environmentSliderDebounceMs: UInt64 = 50 // 50ms debounce
 
 	/// Looked up by name from rootEntity — always available after makeSceneRoot().
 	private var iblEntity: Entity? { rootEntity?.findEntity(named: "ImageBasedLight") }
@@ -187,18 +193,26 @@ public struct RealityKitStageView: View {
 				guard environmentTaskID != nil else { return }
 				await updateEnvironment(store.environmentURL)
 			}
-			.onChange(of: configuration.showEnvironmentBackground) { _, newValue in
-				skyboxEntity?.isEnabled = newValue
+		.task(id: configuration.environmentExposure) {
+			// Debounce exposure updates to avoid sluggish UI during slider dragging
+			try? await Task.sleep(for: .milliseconds(Self.environmentSliderDebounceMs))
+			await MainActor.run {
+				updateIBLExposure(configuration.environmentExposure)
 			}
-			.onChange(of: configuration.environmentExposure) { _, newValue in
-				updateIBLExposure(newValue)
+		}
+		.task(id: configuration.environmentRotation) {
+			// Debounce rotation updates to avoid sluggish UI during slider dragging
+			try? await Task.sleep(for: .milliseconds(Self.environmentSliderDebounceMs))
+			await MainActor.run {
+				updateIBLRotation(configuration.environmentRotation)
 			}
-			.onChange(of: configuration.environmentRotation) { _, newValue in
-				updateIBLRotation(newValue)
-			}
-			.onChange(of: configuration.selectionHighlightStyle) { _, _ in
-				updateSelectionHighlight(for: runtime.selectedPrimPath)
-			}
+		}
+		.onChange(of: configuration.showEnvironmentBackground) { _, newValue in
+			skyboxEntity?.isEnabled = newValue
+		}
+		.onChange(of: configuration.selectionHighlightStyle) { _, _ in
+			updateSelectionHighlight(for: runtime.selectedPrimPath)
+		}
 	}
 
 	@ViewBuilder
@@ -338,6 +352,7 @@ public struct RealityKitStageView: View {
 			content.add(root)
 			self.rootEntity = root
 			runtime.updateRootEntity(root, viewportID: viewportInstanceID)
+			refreshGrid()
 
 			if runtime.isActiveViewport(viewportInstanceID), let entity = runtime.modelEntity {
 				loadModel(entity)
@@ -592,12 +607,6 @@ public struct RealityKitStageView: View {
 		fillLight.look(at: .zero, from: [-2, 2, -3], relativeTo: nil)
 		root.addChild(fillLight)
 
-		if configuration.showGrid {
-			Task {
-				await loadProceduralGrid(into: root)
-			}
-		}
-
 		let camera = PerspectiveCamera()
 		camera.name = "MainCamera"
 		if var component = camera.components[PerspectiveCameraComponent.self] {
@@ -716,6 +725,7 @@ public struct RealityKitStageView: View {
 		guard let root = rootEntity else { return }
 
 		if !configuration.showGrid {
+			gridLoadRequestID = UUID()
 			gridEntity?.removeFromParent()
 			gridEntity = nil
 			return
@@ -732,16 +742,19 @@ public struct RealityKitStageView: View {
 				minorColorOverride: resolvedAppearance.gridMinorColor,
 				majorColorOverride: resolvedAppearance.gridMajorColor
 			)
-			// Re-parent if needed (e.g. after toggling showGrid off then on).
-			if existing.parent == nil {
+			// Re-parent if needed when the viewport root is recreated during refreshes.
+			if existing.parent !== root {
+				existing.removeFromParent()
 				root.addChild(existing)
 			}
 			return
 		}
 
 		// First time — async load.
+		let requestID = UUID()
+		gridLoadRequestID = requestID
 		Task {
-			await loadProceduralGrid(into: root)
+			await loadProceduralGrid(into: root, requestID: requestID)
 		}
 	}
 
@@ -773,9 +786,8 @@ public struct RealityKitStageView: View {
 	}
 
 	@MainActor
-	private func loadProceduralGrid(into root: Entity) async {
-		// Remove any stale grid.
-		root.findEntity(named: "ReferenceGrid")?.removeFromParent()
+	private func loadProceduralGrid(into root: Entity, requestID: UUID) async {
+		guard configuration.showGrid else { return }
 
 		guard
 			let grid = await RealityKitGrid.createProceduralGridEntity(
@@ -788,6 +800,13 @@ public struct RealityKitStageView: View {
 			)
 		else { return }
 
+		guard configuration.showGrid else { return }
+		guard gridLoadRequestID == requestID else { return }
+		guard rootEntity === root else { return }
+
+		// Remove any stale grid attached to the current root before adopting the new one.
+		root.findEntity(named: "ReferenceGrid")?.removeFromParent()
+		gridEntity?.removeFromParent()
 		self.gridEntity = grid
 		root.addChild(grid)
 	}
