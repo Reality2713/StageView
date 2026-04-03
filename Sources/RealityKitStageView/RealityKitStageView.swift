@@ -667,6 +667,13 @@ public struct RealityKitStageView: View {
 
 			if !preserveCamera, rootEntity?.findEntity(named: "MainCamera") != nil {
 				let bounds = runtime.sceneBounds
+				guard bounds.isFrameable else {
+					logger.error(
+						"Skipping auto-frame because scene bounds are invalid. min=\(String(describing: bounds.min), privacy: .public) max=\(String(describing: bounds.max), privacy: .public) maxExtent=\(bounds.maxExtent)"
+					)
+					applyIBLReceiver(to: entity)
+					return
+				}
 				let distance = ViewportTuning.defaultCameraDistance(
 					sceneBounds: bounds,
 					metersPerUnit: configuration.metersPerUnit

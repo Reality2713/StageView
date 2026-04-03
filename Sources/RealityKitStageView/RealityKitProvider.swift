@@ -269,6 +269,7 @@ public final class RealityKitProvider {
         modelEntity = nil
         currentFileURL = nil
         isLoaded = false
+        sceneBounds = SceneBounds()
         selectedPrimPath = nil
         loadError = nil
         primPathToEntityID.removeAll()
@@ -316,11 +317,18 @@ public final class RealityKitProvider {
     
     internal func updateSceneBoundsFromAttachedEntity(_ entity: Entity) {
         let bounds = entity.visualBounds(relativeTo: nil)
-        
-        let extents = bounds.extents
-        if extents.x.isFinite, extents.y.isFinite, extents.z.isFinite, bounds.max != bounds.min {
-            self.sceneBounds = SceneBounds(min: bounds.min, max: bounds.max)
+
+        let nextBounds = SceneBounds(min: bounds.min, max: bounds.max)
+        if nextBounds.isFrameable {
+            self.sceneBounds = nextBounds
+        } else if sceneBounds.isFrameable {
+            providerLogger.error(
+                "Ignoring invalid scene bounds from attached entity; preserving last valid bounds. min=\(String(describing: bounds.min), privacy: .public) max=\(String(describing: bounds.max), privacy: .public) extent=\(String(describing: bounds.extents), privacy: .public)"
+            )
         } else {
+            providerLogger.error(
+                "Ignoring invalid scene bounds from attached entity with no prior valid bounds. min=\(String(describing: bounds.min), privacy: .public) max=\(String(describing: bounds.max), privacy: .public) extent=\(String(describing: bounds.extents), privacy: .public)"
+            )
             self.sceneBounds = SceneBounds()
         }
         emitDiscreteSnapshotIfNeeded()

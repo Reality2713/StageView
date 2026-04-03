@@ -21,4 +21,25 @@ public struct SceneBounds: Equatable, Sendable {
         self.center = .zero
         self.maxExtent = 0
     }
+
+    public var isFinite: Bool {
+        min.x.isFinite
+            && min.y.isFinite
+            && min.z.isFinite
+            && max.x.isFinite
+            && max.y.isFinite
+            && max.z.isFinite
+            && center.x.isFinite
+            && center.y.isFinite
+            && center.z.isFinite
+            && maxExtent.isFinite
+    }
+
+    public var isNonEmpty: Bool {
+        max != min && maxExtent > 0
+    }
+
+    public var isFrameable: Bool {
+        isFinite && isNonEmpty
+    }
 }
