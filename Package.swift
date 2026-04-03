@@ -22,7 +22,10 @@ let package = Package(
                 "StageViewOverlay",
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
             ],
-            resources: [.process("Resources")]
+            resources: [
+                .process("Resources"),
+                .process("SelectionOutline/Shaders"),
+            ]
         ),
         .testTarget(
             name: "StageViewOverlayTests",
