@@ -19,6 +19,7 @@ private let realityKitInternalNames: Set<String> = [
 ]
 
 private let providerLogger = Logger(subsystem: "RealityKitStageView", category: "Provider")
+private let realityKitStageLoadTimeoutSeconds = 60
 
 // MARK: - Discrete Snapshot
 
@@ -168,6 +169,10 @@ public final class RealityKitProvider {
 
     public func load(_ url: URL, viewportID: UUID) async throws {
         guard activeViewportID == viewportID else { return }
+        let loadStart = Date()
+        providerLogger.notice(
+            "viewport_runtime phase=realitykit_provider_load_started url=\(url.path, privacy: .public) viewport=\(viewportID.uuidString, privacy: .public)"
+        )
 
         // Increment generation to invalidate any pending loads
         let generation = currentLoadGeneration &+ 1
@@ -176,11 +181,13 @@ public final class RealityKitProvider {
         // Clear immediately to show empty viewport
         teardownState()
         emitDiscreteSnapshotIfNeeded()
-        
+        let clearedAt = Date()
+
         currentFileURL = url
         
         do {
             let entity = try await loadEntityAsync(url)
+            let importedAt = Date()
             
             // Discard if generation changed (cancelled/stale)
             guard currentLoadGeneration == generation, activeViewportID == viewportID else {
@@ -189,9 +196,16 @@ public final class RealityKitProvider {
             
             self.modelEntity = entity
             self.isLoaded = true
+            let mappingStart = Date()
             buildPrimPathMapping(root: entity)
+            let mappedAt = Date()
             updateSceneBoundsFromAttachedEntity(entity)
+            let boundsAt = Date()
             emitDiscreteSnapshotIfNeeded()
+            let snapshotAt = Date()
+            providerLogger.notice(
+                "viewport_runtime phase=realitykit_provider_load_complete teardown_ms=\(Int(clearedAt.timeIntervalSince(loadStart) * 1000), privacy: .public) import_ms=\(Int(importedAt.timeIntervalSince(clearedAt) * 1000), privacy: .public) mapping_ms=\(Int(mappedAt.timeIntervalSince(mappingStart) * 1000), privacy: .public) bounds_ms=\(Int(boundsAt.timeIntervalSince(mappedAt) * 1000), privacy: .public) snapshot_ms=\(Int(snapshotAt.timeIntervalSince(boundsAt) * 1000), privacy: .public) total_ms=\(Int(snapshotAt.timeIntervalSince(loadStart) * 1000), privacy: .public) url=\(url.path, privacy: .public)"
+            )
         } catch {
             // Discard if generation changed
             guard currentLoadGeneration == generation, activeViewportID == viewportID else {
@@ -200,31 +214,38 @@ public final class RealityKitProvider {
             
             loadError = error.localizedDescription
             emitDiscreteSnapshotIfNeeded()
+            providerLogger.error(
+                "viewport_runtime phase=realitykit_provider_load_failed url=\(url.path, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
             throw error
         }
     }
 
     private func loadEntityAsync(_ url: URL) async throws -> Entity {
-        let timeoutSeconds = 25
+        let start = Date()
         let loaderTask = Task.detached(priority: .userInitiated) {
             try await Entity(contentsOf: url)
         }
         do {
-            return try await withThrowingTaskGroup(of: Entity.self) { group in
+            let entity = try await withThrowingTaskGroup(of: Entity.self) { group in
                 group.addTask {
                     try await loaderTask.value
                 }
                 group.addTask {
-                    try await Task.sleep(for: .seconds(timeoutSeconds))
-                    throw LoadError.timeout(seconds: timeoutSeconds)
+                    try await Task.sleep(for: .seconds(realityKitStageLoadTimeoutSeconds))
+                    throw LoadError.timeout(seconds: realityKitStageLoadTimeoutSeconds)
                 }
                 guard let result = try await group.next() else {
-                    throw LoadError.timeout(seconds: timeoutSeconds)
+                    throw LoadError.timeout(seconds: realityKitStageLoadTimeoutSeconds)
                 }
                 group.cancelAll()
                 loaderTask.cancel()
                 return result
             }
+            providerLogger.notice(
+                "viewport_runtime phase=realitykit_entity_contents_of elapsed_ms=\(Int(Date().timeIntervalSince(start) * 1000), privacy: .public) url=\(url.path, privacy: .public)"
+            )
+            return entity
         } catch {
             loaderTask.cancel()
             throw error
@@ -260,7 +281,6 @@ public final class RealityKitProvider {
 
     public func teardown(viewportID: UUID) {
         guard activeViewportID == viewportID else { return }
-        activeViewportID = nil
         teardownState()
     }
 
@@ -316,6 +336,7 @@ public final class RealityKitProvider {
     }
     
     internal func updateSceneBoundsFromAttachedEntity(_ entity: Entity) {
+        let start = Date()
         let bounds = entity.visualBounds(relativeTo: nil)
 
         let nextBounds = SceneBounds(min: bounds.min, max: bounds.max)
@@ -331,6 +352,9 @@ public final class RealityKitProvider {
             )
             self.sceneBounds = SceneBounds()
         }
+        providerLogger.notice(
+            "viewport_runtime phase=realitykit_scene_bounds elapsed_ms=\(Int(Date().timeIntervalSince(start) * 1000), privacy: .public) frameable=\(self.sceneBounds.isFrameable, privacy: .public)"
+        )
         emitDiscreteSnapshotIfNeeded()
     }
 
@@ -522,6 +546,7 @@ extension RealityKitProvider {
     /// the USD prim tree. The anonymous root wrapper (empty name) is not a prim.
     /// RealityKit appends `_N` suffixes for sibling name collisions.
     internal func buildPrimPathMapping(root: Entity) {
+        let start = Date()
         primPathToEntityID.removeAll()
         entityIDToPrimPath.removeAll()
         
@@ -559,7 +584,9 @@ extension RealityKitProvider {
         }
 
         let mappedPaths = primPathToEntityID.keys.sorted()
-        providerLogger.debug("Built prim path mapping with \(mappedPaths.count, privacy: .public) entries")
+        providerLogger.notice(
+            "viewport_runtime phase=realitykit_prim_mapping elapsed_ms=\(Int(Date().timeIntervalSince(start) * 1000), privacy: .public) entries=\(mappedPaths.count, privacy: .public)"
+        )
         if mappedPaths.count <= 4 || mappedPaths.contains(where: { $0.contains("/merged_") || $0.hasSuffix("/merged") }) {
             let sample = mappedPaths.prefix(8).joined(separator: ", ")
             providerLogger.info("Prim path mapping sample: \(sample, privacy: .public)")

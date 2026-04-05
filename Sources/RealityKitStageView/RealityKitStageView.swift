@@ -119,9 +119,7 @@ public struct RealityKitStageView: View {
 					}
 				}
 			}
-			.task(id: loadTaskID) {
-				await handleLoadRequest()
-			}
+			.task { await observeLoadRequests() }
 	}
 
 	@ViewBuilder
@@ -178,13 +176,8 @@ public struct RealityKitStageView: View {
 
 	/// Combined task ID: fires only after a load request exists and the viewport
 	/// has both mounted its scene root and become active.
-	private var loadTaskID: String? {
-		guard store.activeLoadCommand != nil,
-			rootEntity != nil,
-			runtime.isActiveViewport(viewportInstanceID)
-		else { return nil }
-		return store.loadRequestID.uuidString
-	}
+	/// NOTE: Retained for environment task pattern; load observation now uses
+	/// withObservationTracking in observeLoadRequests().
 
 	@ViewBuilder
 	private var observedViewportEnvironment: some View {
@@ -521,8 +514,50 @@ public struct RealityKitStageView: View {
 	}
 	#endif
 
-	private func handleLoadRequest() async {
+	/// Observes store load request changes using `withObservationTracking` inside
+	/// a long-lived `.task`. This runs independently of SwiftUI's body evaluation,
+	/// so it fires reliably even when the view is behind `AnyView` or
+	/// `NSHostingController` boundaries that break `.onChange` delivery.
+	private func observeLoadRequests() async {
+		var lastHandledRequestID: UUID?
+
+		// Process the initial state on mount
+		await handleLoadRequestIfNeeded(lastHandled: &lastHandledRequestID)
+
+		// Then observe changes via withObservationTracking
+		while !Task.isCancelled {
+			let requestID = await withCheckedContinuation { continuation in
+				withObservationTracking {
+					_ = store.loadRequestID
+				} onChange: {
+					Task { @MainActor in
+						continuation.resume(returning: store.loadRequestID)
+					}
+				}
+			}
+			guard !Task.isCancelled else { break }
+			logger.debug(
+				"observeLoadRequests: detected requestID change to \(requestID.uuidString, privacy: .public) viewport=\(self.viewportInstanceID.uuidString, privacy: .public)"
+			)
+			await handleLoadRequestIfNeeded(lastHandled: &lastHandledRequestID)
+		}
+	}
+
+	private func handleLoadRequestIfNeeded(lastHandled: inout UUID?) async {
+		let currentRequestID = store.loadRequestID
+
+		guard currentRequestID != lastHandled else {
+			logger.debug(
+				"handleLoadRequestIfNeeded: skipping duplicate requestID=\(currentRequestID.uuidString, privacy: .public)"
+			)
+			return
+		}
+		lastHandled = currentRequestID
+
 		guard let command = store.activeLoadCommand else {
+			logger.debug(
+				"handleLoadRequestIfNeeded: no active command for requestID=\(currentRequestID.uuidString, privacy: .public) modelURL=\(store.modelURL?.lastPathComponent ?? "nil", privacy: .public)"
+			)
 			if store.modelURL == nil {
 				logger.debug(
 					"Tearing down viewport \(self.viewportInstanceID.uuidString, privacy: .public) because modelURL is nil"
@@ -534,10 +569,35 @@ public struct RealityKitStageView: View {
 			return
 		}
 
-		guard runtime.isActiveViewport(viewportInstanceID) else { return }
+		// Wait for rootEntity if it hasn't been set yet
+		if rootEntity == nil {
+			logger.debug(
+				"handleLoadRequestIfNeeded: waiting for rootEntity mount, command=\(command.id.uuidString, privacy: .public)"
+			)
+			for _ in 0..<100 {
+				try? await Task.sleep(for: .milliseconds(50))
+				if rootEntity != nil || Task.isCancelled { break }
+			}
+			guard rootEntity != nil else {
+				logger.error(
+					"handleLoadRequestIfNeeded: rootEntity never mounted, failing command=\(command.id.uuidString, privacy: .public)"
+				)
+				await MainActor.run {
+					store.send(.loadCommandFailed(command.id, "Viewport scene root was not mounted"))
+				}
+				return
+			}
+		}
+
+		guard runtime.isActiveViewport(viewportInstanceID) else {
+			logger.warning(
+				"handleLoadRequestIfNeeded skipped: viewport \(self.viewportInstanceID.uuidString, privacy: .public) is not active"
+			)
+			return
+		}
 
 		logger.info(
-			"Viewport \(self.viewportInstanceID.uuidString, privacy: .public) loading model: \(command.url.lastPathComponent, privacy: .public) [\(String(describing: command.mode), privacy: .public)]"
+			"Viewport \(self.viewportInstanceID.uuidString, privacy: .public) loading model: \(command.url.lastPathComponent, privacy: .public) [\(String(describing: command.mode), privacy: .public)] command=\(command.id.uuidString, privacy: .public)"
 		)
 		runtime.setPreserveCameraOnNextLoad(command.preserveCamera)
 		do {
@@ -549,7 +609,15 @@ public struct RealityKitStageView: View {
 			}
 			guard runtime.isActiveViewport(viewportInstanceID) else { return }
 			_ = await MainActor.run { store.send(.loadCommandCompleted(command.id)) }
-			logger.info("Model loaded successfully")
+			logger.info("Model loaded successfully for command \(command.id.uuidString, privacy: .public)")
+		} catch is CancellationError {
+			guard runtime.isActiveViewport(viewportInstanceID) else { return }
+			_ = await MainActor.run {
+				store.send(.loadCommandFailed(command.id, "Load cancelled"))
+			}
+			logger.error(
+				"Model load cancelled for command \(command.id.uuidString, privacy: .public)"
+			)
 		} catch {
 			guard runtime.isActiveViewport(viewportInstanceID) else { return }
 			_ = await MainActor.run {
