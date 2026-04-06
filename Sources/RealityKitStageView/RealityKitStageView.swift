@@ -246,6 +246,12 @@ public struct RealityKitStageView: View {
 				)
 				refreshGrid()
 			}
+			.onChange(of: store.sceneBounds) { _, newBounds in
+				// Sync authored bounds from store to runtime
+				if newBounds.isFrameable {
+					runtime.setSceneBounds(newBounds)
+				}
+			}
 			.onChange(of: runtime.sceneBounds) { _, newBounds in
 				updateSkyboxRadius(for: newBounds)
 				// Throttle grid updates based on time and significant bounds changes
@@ -734,6 +740,8 @@ public struct RealityKitStageView: View {
 			runtime.startEmbeddedAnimationsIfAvailable(autoPlay: false)
 
 			prepareForPicking(entity)
+			// Clear explicit bounds flag for new model so authored bounds can be set
+			runtime.clearExplicitSceneBounds()
 			runtime.updateSceneBoundsFromAttachedEntity(entity)
 			refreshGrid()
 

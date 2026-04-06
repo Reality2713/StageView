@@ -86,6 +86,10 @@ public final class RealityKitProvider {
         didSet { emitDiscreteSnapshotIfNeeded() }
     }
     public private(set) var selectionGeneration: UInt64 = 0
+    
+    /// Tracks whether scene bounds were explicitly set from an external source (e.g., authored bounds).
+    /// When true, RealityKit's computed visual bounds will not overwrite the authored bounds.
+    public private(set) var hasExplicitSceneBounds: Bool = false
 
     /// Update selection from programmatic sync (e.g. TCA).
     public func setSelection(_ path: String?) {
@@ -335,7 +339,33 @@ public final class RealityKitProvider {
         self.cameraDistance = distance
     }
     
+    /// Sets scene bounds from an external source (e.g., authored bounds from USD metadata).
+    /// This marks the bounds as explicit, preventing them from being overwritten by RealityKit's
+    /// computed visual bounds.
+    public func setSceneBounds(_ bounds: SceneBounds) {
+        guard bounds.isFrameable else {
+            providerLogger.warning("Ignoring invalid explicit scene bounds. min=\(String(describing: bounds.min), privacy: .public) max=\(String(describing: bounds.max), privacy: .public)")
+            return
+        }
+        self.sceneBounds = bounds
+        self.hasExplicitSceneBounds = true
+        providerLogger.notice("viewport_runtime phase=explicit_scene_bounds maxExtent=\(bounds.maxExtent, privacy: .public)")
+        emitDiscreteSnapshotIfNeeded()
+    }
+    
+    /// Clears the explicit bounds flag, allowing RealityKit's computed bounds to be used again.
+    public func clearExplicitSceneBounds() {
+        self.hasExplicitSceneBounds = false
+    }
+    
     internal func updateSceneBoundsFromAttachedEntity(_ entity: Entity) {
+        // Skip updating bounds if explicit bounds were already set (e.g., from authored metadata).
+        // This ensures consistent camera framing and scale indicator behavior.
+        guard !hasExplicitSceneBounds else {
+            providerLogger.notice("viewport_runtime phase=realitykit_scene_bounds status=skipped_explicit_bounds_set")
+            return
+        }
+        
         let start = Date()
         let worldBounds = entity.visualBounds(relativeTo: nil)
         let localBounds = entity.visualBounds(relativeTo: entity)
