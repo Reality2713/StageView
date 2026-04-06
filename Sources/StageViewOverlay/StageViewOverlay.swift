@@ -236,6 +236,10 @@ public struct ScaleIndicatorView: View {
 			barWidthPoints: barWidth
 		) {
 			VStack(spacing: 3) {
+				Text(scale.label)
+					.font(.caption)
+					.monospaced()
+				
 				ZStack(alignment: .center) {
 					Rectangle()
 						.fill(.primary)
@@ -252,12 +256,9 @@ public struct ScaleIndicatorView: View {
 					}
 					.frame(width: scale.barWidthPoints)
 				}
-				Text(scale.label)
-					.font(.caption)
-					.monospaced()
 			}
 			.padding(.horizontal, 10)
-			.padding(.top, 6)
+			.padding(.bottom, 6)
 			.stageViewOverlayMaterial(in: RoundedRectangle(cornerRadius: 8))
 		}
 	}
