@@ -72,7 +72,7 @@ struct ViewportTuningTests {
 
         #expect(smallRadius >= 0.06)
         #expect(largeRadius > smallRadius)
-        #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 0.1) == 0.001)
+        #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 0.05) == 0.001)
         #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 1.0) == 0.01)
         #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 40.0) == 0.1)
         #expect(ViewportTuning.majorGridStepMeters(forMinorStep: 0.001) == 0.01)

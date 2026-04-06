@@ -15,6 +15,19 @@ private let gridLogger = Logger(subsystem: "RealityKitStageView", category: "Gri
 /// colors, depth-modulated thickness, and fog fade per-fragment.
 public struct RealityKitGrid {
 
+    public struct Metrics: Sendable, Equatable {
+        public let worldExtent: Double
+        public let metersPerUnit: Double
+        public let worldExtentMeters: Double
+        public let radiusMeters: Double
+        public let minorStepMeters: Double
+        public let majorStepMeters: Double
+        public let edgeFadeStartMeters: Double
+        public let edgeFadeEndMeters: Double
+        public let fogDensity: Float
+        public let fogMax: Float
+    }
+
     // MARK: - Public API
 
     /// Load the procedural grid from the bundled USDA.
@@ -70,14 +83,16 @@ public struct RealityKitGrid {
         majorColorOverride: SIMD3<Float>? = nil
     ) {
         _ = isZUp
-        let safeMetersPerUnit = Swift.max(metersPerUnit, 0.000_001)
-        let worldExtentMeters = worldExtent * safeMetersPerUnit
-        let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
-        let minorStep = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
-        let majorStep = ViewportTuning.majorGridStepMeters(forMinorStep: minorStep)
+        let metrics = metrics(
+            metersPerUnit: metersPerUnit,
+            worldExtent: worldExtent,
+            appearance: appearance
+        )
+        let minorStep = metrics.minorStepMeters
+        let majorStep = metrics.majorStepMeters
         let minorStepFloat = Float(minorStep)
         let majorStepFloat = Float(majorStep)
-        let radiusMetersFloat = Float(radiusMeters)
+        let radiusMetersFloat = Float(metrics.radiusMeters)
 
         let minorScale = Float(1.0 / minorStep)
         let majorScale = Float(1.0 / majorStep)
@@ -96,14 +111,14 @@ public struct RealityKitGrid {
         let axisOpacityScale: Float = 1.15
         // The horizon fade is relative to the total grid radius so the grid
         // reads as a circular field around the model rather than a square plane.
-        let edgeFadeStart = Float(radiusMeters * (2.0 / 3.0))
-        let edgeFadeEnd = radiusMetersFloat
+        let edgeFadeStart = Float(metrics.edgeFadeStartMeters)
+        let edgeFadeEnd = Float(metrics.edgeFadeEndMeters)
         let edgeFadeReciprocalRange = 1 / max(edgeFadeEnd - edgeFadeStart, 0.0001)
 
         // Scale the plane to cover the needed world extent.
         // The USDA plane is ±50m (100m total). Scale to match the grid radius.
         let planeHalfExtent: Float = 50.0
-        let neededHalfExtent = Float(radiusMeters)
+        let neededHalfExtent = radiusMetersFloat
         let scaleFactor = max(neededHalfExtent / planeHalfExtent, 0.001)
         entity.scale = SIMD3<Float>(repeating: scaleFactor)
 
@@ -119,10 +134,14 @@ public struct RealityKitGrid {
         // Keep the shader fog tied to total grid size so large grids do not stay
         // fully crisp out to their hard square edge, and tiny grids do not
         // disappear immediately near the center.
-        let fogDensity = palette.fogDensity / max(radiusMetersFloat, 1.0)
-        let fogMax = palette.fogMax
+        let fogDensity = metrics.fogDensity
+        let fogMax = metrics.fogMax
         let resolvedMinorColor = minorColorOverride ?? palette.minorColor
         let resolvedMajorColor = majorColorOverride ?? palette.majorColor
+
+        gridLogger.notice(
+            "viewport_grid_tuning extent_units=\(metrics.worldExtent, format: .fixed(precision: 4)) mpu=\(metrics.metersPerUnit, format: .fixed(precision: 6)) extent_m=\(metrics.worldExtentMeters, format: .fixed(precision: 4)) radius_m=\(metrics.radiusMeters, format: .fixed(precision: 4)) minor_m=\(metrics.minorStepMeters, format: .fixed(precision: 4)) major_m=\(metrics.majorStepMeters, format: .fixed(precision: 4)) fade_start_m=\(metrics.edgeFadeStartMeters, format: .fixed(precision: 4)) fade_end_m=\(metrics.edgeFadeEndMeters, format: .fixed(precision: 4)) fog_density=\(metrics.fogDensity, format: .fixed(precision: 6)) fog_max=\(metrics.fogMax, format: .fixed(precision: 4))"
+        )
 
         // Thickness values live in frac-space. As the world-space step shrinks,
         // scale them up so the on-screen world-space line width stays stable.
@@ -243,6 +262,34 @@ public struct RealityKitGrid {
 
     private static func cgColor(_ v: SIMD3<Float>) -> CGColor {
         CGColor(red: CGFloat(v.x), green: CGFloat(v.y), blue: CGFloat(v.z), alpha: 1)
+    }
+
+    public static func metrics(
+        metersPerUnit: Double,
+        worldExtent: Double,
+        appearance: ViewportAppearance
+    ) -> Metrics {
+        let safeMetersPerUnit = Swift.max(metersPerUnit, 0.000_001)
+        let worldExtentMeters = worldExtent * safeMetersPerUnit
+        let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
+        let minorStep = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
+        let majorStep = ViewportTuning.majorGridStepMeters(forMinorStep: minorStep)
+        let palette = ProceduralGridPalette(appearance: appearance)
+        let radiusMetersFloat = Float(radiusMeters)
+        let fogDensity = palette.fogDensity / max(radiusMetersFloat, 1.0)
+        let fogMax = palette.fogMax
+        return Metrics(
+            worldExtent: worldExtent,
+            metersPerUnit: safeMetersPerUnit,
+            worldExtentMeters: worldExtentMeters,
+            radiusMeters: radiusMeters,
+            minorStepMeters: minorStep,
+            majorStepMeters: majorStep,
+            edgeFadeStartMeters: radiusMeters * (2.0 / 3.0),
+            edgeFadeEndMeters: radiusMeters,
+            fogDensity: fogDensity,
+            fogMax: fogMax
+        )
     }
 }
 

@@ -354,19 +354,10 @@ public struct RealityKitStageView: View {
 			syncIBLState()
 			updateCamera(state: cameraState)
 			processRuntimeViewRequests()
-			// Apply resolved grid colors on every update cycle so runtime updates
-			// stay in sync with the current appearance intent.
-			if let grid = gridEntity, configuration.showGrid {
-				RealityKitGrid.updateProceduralGrid(
-					entity: grid,
-					metersPerUnit: configuration.metersPerUnit,
-					worldExtent: Double(runtime.sceneBounds.maxExtent),
-					isZUp: configuration.isZUp,
-					appearance: resolvedAppearance.viewportAppearance,
-					minorColorOverride: resolvedAppearance.gridMinorColor,
-					majorColorOverride: resolvedAppearance.gridMajorColor
-				)
-			}
+			// Grid parameters and position are kept in sync via refreshGrid(), which is
+			// triggered by onChange handlers for all relevant state (showGrid,
+			// metersPerUnit, isZUp, sceneBounds, colorScheme, store.appearance).
+			// No per-frame work is needed here.
 			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
 				if let effect = outlineBox.effect as? PostProcessOutlineEffect {
 					if let camera = rootEntity?.findEntity(named: "MainCamera") {
@@ -798,6 +789,7 @@ public struct RealityKitStageView: View {
 	@MainActor
 	private func refreshGrid() {
 		guard let root = rootEntity else { return }
+		let bounds = runtime.sceneBounds
 
 		if !configuration.showGrid {
 			gridLoadRequestID = UUID()
@@ -808,15 +800,24 @@ public struct RealityKitStageView: View {
 
 		// If the grid entity already exists, just update its parameters.
 		if let existing = gridEntity {
+			let metrics = RealityKitGrid.metrics(
+				metersPerUnit: configuration.metersPerUnit,
+				worldExtent: Double(bounds.maxExtent),
+				appearance: resolvedAppearance.viewportAppearance
+			)
+			logger.notice(
+				"viewport_grid_refresh existing=true bounds_min=(\(bounds.min.x, format: .fixed(precision: 4)),\(bounds.min.y, format: .fixed(precision: 4)),\(bounds.min.z, format: .fixed(precision: 4))) bounds_max=(\(bounds.max.x, format: .fixed(precision: 4)),\(bounds.max.y, format: .fixed(precision: 4)),\(bounds.max.z, format: .fixed(precision: 4))) center=(\(bounds.center.x, format: .fixed(precision: 4)),\(bounds.center.y, format: .fixed(precision: 4)),\(bounds.center.z, format: .fixed(precision: 4))) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4)) radius_m=\(metrics.radiusMeters, format: .fixed(precision: 4)) minor_m=\(metrics.minorStepMeters, format: .fixed(precision: 4)) major_m=\(metrics.majorStepMeters, format: .fixed(precision: 4))"
+			)
 			RealityKitGrid.updateProceduralGrid(
 				entity: existing,
 				metersPerUnit: configuration.metersPerUnit,
-				worldExtent: Double(runtime.sceneBounds.maxExtent),
+				worldExtent: Double(bounds.maxExtent),
 				isZUp: configuration.isZUp,
 				appearance: resolvedAppearance.viewportAppearance,
 				minorColorOverride: resolvedAppearance.gridMinorColor,
 				majorColorOverride: resolvedAppearance.gridMajorColor
 			)
+			alignGrid(existing)
 			// Re-parent if needed when the viewport root is recreated during refreshes.
 			if existing.parent !== root {
 				existing.removeFromParent()
@@ -828,6 +829,9 @@ public struct RealityKitStageView: View {
 		// First time — async load.
 		let requestID = UUID()
 		gridLoadRequestID = requestID
+		logger.notice(
+			"viewport_grid_refresh existing=false bounds_min=(\(bounds.min.x, format: .fixed(precision: 4)),\(bounds.min.y, format: .fixed(precision: 4)),\(bounds.min.z, format: .fixed(precision: 4))) bounds_max=(\(bounds.max.x, format: .fixed(precision: 4)),\(bounds.max.y, format: .fixed(precision: 4)),\(bounds.max.z, format: .fixed(precision: 4))) center=(\(bounds.center.x, format: .fixed(precision: 4)),\(bounds.center.y, format: .fixed(precision: 4)),\(bounds.center.z, format: .fixed(precision: 4))) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4))"
+		)
 		Task {
 			await loadProceduralGrid(into: root, requestID: requestID)
 		}
@@ -882,8 +886,31 @@ public struct RealityKitStageView: View {
 		// Remove any stale grid attached to the current root before adopting the new one.
 		root.findEntity(named: "ReferenceGrid")?.removeFromParent()
 		gridEntity?.removeFromParent()
+		alignGrid(grid)
 		self.gridEntity = grid
 		root.addChild(grid)
+	}
+
+	@MainActor
+	private func alignGrid(_ grid: Entity) {
+		let bounds = runtime.sceneBounds
+		let verticalInset = Float(
+			Swift.max(
+				0.0005,
+				Swift.min(
+					Double(configuration.metersPerUnit) * 0.001,
+					Swift.max(Double(bounds.maxExtent) * 0.001, 0.01)
+				)
+			)
+		)
+		grid.position = SIMD3<Float>(
+			bounds.center.x,
+			bounds.min.y - verticalInset,
+			bounds.center.z
+		)
+		logger.notice(
+			"viewport_grid_align position=(\(grid.position.x, format: .fixed(precision: 4)),\(grid.position.y, format: .fixed(precision: 4)),\(grid.position.z, format: .fixed(precision: 4))) vertical_inset=\(verticalInset, format: .fixed(precision: 6)) bounds_min_y=\(bounds.min.y, format: .fixed(precision: 4)) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4))"
+		)
 	}
 
 	private func processRuntimeViewRequests() {
@@ -904,10 +931,19 @@ public struct RealityKitStageView: View {
 
 	@MainActor
 	private func resetCameraInternal() {
+		let bounds = runtime.sceneBounds
+		let focus = bounds.isFrameable ? bounds.center : .zero
+		let distance =
+			bounds.isFrameable
+			? ViewportTuning.defaultCameraDistance(
+				sceneBounds: bounds,
+				metersPerUnit: configuration.metersPerUnit
+			)
+			: 5.0
 		cameraState = ArcballCameraState(
-			focus: .zero,
+			focus: focus,
 			rotation: SIMD3<Float>(-20 * .pi / 180, 0, 0),
-			distance: 5.0
+			distance: distance
 		)
 	}
 

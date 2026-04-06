@@ -44,10 +44,9 @@ enum ViewportTuning {
     }
 
     static func minimumDistance(sceneBounds: SceneBounds, metersPerUnit: Double) -> Float {
-        let radiusUnits = sceneRadiusUnits(sceneBounds: sceneBounds)
-        // The absolute floor should be 2mm in world space, converted back to scene units.
-        let absoluteFloorUnits = metersToSceneUnits(0.002, metersPerUnit: metersPerUnit)
-        return Swift.max(absoluteFloorUnits, radiusUnits * 0.03)
+        // Keep only a small technical floor so close inspection is limited by
+        // renderer precision and clipping stability, not by scene-relative heuristics.
+        metersToSceneUnits(0.0001, metersPerUnit: metersPerUnit)
     }
 
     static func maximumDistance(sceneBounds: SceneBounds, metersPerUnit: Double) -> Float {
@@ -108,7 +107,7 @@ enum ViewportTuning {
 
     static func minorGridStepMeters(forGridRadius radiusMeters: Double) -> Double {
         switch radiusMeters {
-        case ..<0.6:
+        case ..<0.1:
             return 0.001
         case ..<6.0:
             return 0.01

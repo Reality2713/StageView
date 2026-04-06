@@ -337,25 +337,50 @@ public final class RealityKitProvider {
     
     internal func updateSceneBoundsFromAttachedEntity(_ entity: Entity) {
         let start = Date()
-        let bounds = entity.visualBounds(relativeTo: nil)
+        let worldBounds = entity.visualBounds(relativeTo: nil)
+        let localBounds = entity.visualBounds(relativeTo: entity)
+        logEntityBoundsDiagnostics(entity)
 
-        let nextBounds = SceneBounds(min: bounds.min, max: bounds.max)
+        let nextBounds = SceneBounds(min: worldBounds.min, max: worldBounds.max)
         if nextBounds.isFrameable {
             self.sceneBounds = nextBounds
         } else if sceneBounds.isFrameable {
             providerLogger.error(
-                "Ignoring invalid scene bounds from attached entity; preserving last valid bounds. min=\(String(describing: bounds.min), privacy: .public) max=\(String(describing: bounds.max), privacy: .public) extent=\(String(describing: bounds.extents), privacy: .public)"
+                "Ignoring invalid scene bounds from attached entity; preserving last valid bounds. min=\(String(describing: worldBounds.min), privacy: .public) max=\(String(describing: worldBounds.max), privacy: .public) extent=\(String(describing: worldBounds.extents), privacy: .public)"
             )
         } else {
             providerLogger.error(
-                "Ignoring invalid scene bounds from attached entity with no prior valid bounds. min=\(String(describing: bounds.min), privacy: .public) max=\(String(describing: bounds.max), privacy: .public) extent=\(String(describing: bounds.extents), privacy: .public)"
+                "Ignoring invalid scene bounds from attached entity with no prior valid bounds. min=\(String(describing: worldBounds.min), privacy: .public) max=\(String(describing: worldBounds.max), privacy: .public) extent=\(String(describing: worldBounds.extents), privacy: .public)"
             )
             self.sceneBounds = SceneBounds()
         }
         providerLogger.notice(
-            "viewport_runtime phase=realitykit_scene_bounds elapsed_ms=\(Int(Date().timeIntervalSince(start) * 1000), privacy: .public) frameable=\(self.sceneBounds.isFrameable, privacy: .public)"
+            "viewport_runtime phase=realitykit_scene_bounds elapsed_ms=\(Int(Date().timeIntervalSince(start) * 1000), privacy: .public) frameable=\(self.sceneBounds.isFrameable, privacy: .public) world_min=\(String(describing: worldBounds.min), privacy: .public) world_max=\(String(describing: worldBounds.max), privacy: .public) local_min=\(String(describing: localBounds.min), privacy: .public) local_max=\(String(describing: localBounds.max), privacy: .public)"
         )
         emitDiscreteSnapshotIfNeeded()
+    }
+
+    private func logEntityBoundsDiagnostics(_ entity: Entity) {
+        let rootTransform = entity.transform
+        providerLogger.notice(
+            "viewport_entity_bounds root name=\(entity.name, privacy: .public) children=\(entity.children.count, privacy: .public) scale=\(String(describing: rootTransform.scale), privacy: .public) translation=\(String(describing: rootTransform.translation), privacy: .public)"
+        )
+        for child in entity.children.prefix(8) {
+            logEntityBoundsDiagnostics(child, depth: 1)
+        }
+    }
+
+    private func logEntityBoundsDiagnostics(_ entity: Entity, depth: Int) {
+        let localBounds = entity.visualBounds(relativeTo: entity)
+        let worldBounds = entity.visualBounds(relativeTo: nil)
+        let transform = entity.transform
+        providerLogger.notice(
+            "viewport_entity_bounds depth=\(depth, privacy: .public) name=\(entity.name, privacy: .public) children=\(entity.children.count, privacy: .public) scale=\(String(describing: transform.scale), privacy: .public) translation=\(String(describing: transform.translation), privacy: .public) local_min=\(String(describing: localBounds.min), privacy: .public) local_max=\(String(describing: localBounds.max), privacy: .public) world_min=\(String(describing: worldBounds.min), privacy: .public) world_max=\(String(describing: worldBounds.max), privacy: .public)"
+        )
+        guard depth < 2 else { return }
+        for child in entity.children.prefix(8) {
+            logEntityBoundsDiagnostics(child, depth: depth + 1)
+        }
     }
 
     

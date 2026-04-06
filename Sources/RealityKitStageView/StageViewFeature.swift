@@ -86,6 +86,7 @@ public struct StageViewFeature {
         public var loadRequestID: UUID
         public var modelURL: URL?
         public var navigationMapping: RealityKitNavigationMapping
+        public var sceneBounds: SceneBounds
         public var selectedPrimPath: String?
 
         public init(
@@ -101,6 +102,7 @@ public struct StageViewFeature {
             loadRequestID: UUID = UUID(),
             modelURL: URL? = nil,
             navigationMapping: RealityKitNavigationMapping = .apple,
+            sceneBounds: SceneBounds = .init(),
             selectedPrimPath: String? = nil
         ) {
             self.activeLoadCommand = activeLoadCommand
@@ -115,6 +117,7 @@ public struct StageViewFeature {
             self.loadRequestID = loadRequestID
             self.modelURL = modelURL
             self.navigationMapping = navigationMapping
+            self.sceneBounds = sceneBounds
             self.selectedPrimPath = selectedPrimPath
         }
     }
@@ -136,6 +139,7 @@ public struct StageViewFeature {
         case refreshRequested(commandID: UUID, url: URL, preserveCamera: Bool)
         case resetCameraRequested
         case selectionChanged(String?)
+        case setSceneBounds(SceneBounds)
         case updateEnvironmentURL(URL?)
         /// Updates the viewport's appearance intent.
         ///
@@ -175,6 +179,7 @@ public struct StageViewFeature {
                 state.blendShapeRuntimeWeights = []
                 state.blendShapeRuntimeRequestID = nil
                 state.modelURL = nil
+                state.sceneBounds = .init()
                 state.selectedPrimPath = nil
                 return .none
 
@@ -226,6 +231,10 @@ public struct StageViewFeature {
 
             case let .selectionChanged(path):
                 state.selectedPrimPath = path
+                return .none
+
+            case let .setSceneBounds(bounds):
+                state.sceneBounds = bounds
                 return .none
 
             case let .updateEnvironmentURL(url):
