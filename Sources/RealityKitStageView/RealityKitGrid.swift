@@ -97,18 +97,18 @@ public struct RealityKitGrid {
         let minorScale = Float(1.0 / minorStep)
         let majorScale = Float(1.0 / majorStep)
         let axisBaseThicknessWorld = Float(
-            min(max(minorStepFloat * 0.012, 0.00008), majorStepFloat * 0.0015)
+            min(max(minorStepFloat * 0.016, 0.00012), majorStepFloat * 0.0025)
         )
         let axisDepthFactorWorld = Float(
-            min(max(minorStepFloat * 0.0006, 0.00001), majorStepFloat * 0.0001)
+            min(max(minorStepFloat * 0.0008, 0.000015), majorStepFloat * 0.00016)
         )
         let axisThicknessWorldMax = Float(
-            min(max(minorStepFloat * 0.02, 0.00014), majorStepFloat * 0.002)
+            min(max(minorStepFloat * 0.028, 0.00022), majorStepFloat * 0.0035)
         )
         let axisHalfLengthWorld = Float(
             max(radiusMetersFloat * 2.0, majorStepFloat * 8.0)
         )
-        let axisOpacityScale: Float = 1.15
+        let axisOpacityScale: Float = 1.3
         // The horizon fade is relative to the total grid radius so the grid
         // reads as a circular field around the model rather than a square plane.
         let edgeFadeStart = Float(metrics.edgeFadeStartMeters)
