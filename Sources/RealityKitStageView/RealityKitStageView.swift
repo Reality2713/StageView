@@ -289,7 +289,7 @@ public struct RealityKitStageView: View {
 					.allowsHitTesting(false)
 			}
 			.task(id: store.imageCaptureRequestID) {
-				await captureViewportImageIfRequested()
+				await captureViewportImageIfRequested(resolvedBackgroundColor: resolvedBackgroundColor)
 			}
 			#endif
 	}
@@ -1445,8 +1445,10 @@ public struct RealityKitStageView: View {
 
 	#if os(iOS)
 	@MainActor
-	private func captureViewportImageIfRequested() async {
+	private func captureViewportImageIfRequested(resolvedBackgroundColor: Color) async {
 		guard store.imageCaptureRequestID != nil else { return }
+
+		imageCaptureBridge.backgroundColor = UIColor(resolvedBackgroundColor)
 
 		do {
 			let image = try await imageCaptureBridge.captureImage()
@@ -1540,6 +1542,7 @@ extension SIMD4 where Scalar == Float {
 @MainActor
 private final class ViewportImageCaptureBridge {
 	weak var probeView: UIView?
+	var backgroundColor: UIColor?
 
 	func captureImage() async throws -> UIImage {
 		guard let captureView = resolvedCaptureView() else {
@@ -1556,7 +1559,7 @@ private final class ViewportImageCaptureBridge {
 		format.scale = captureView.window?.screen.scale ?? UIScreen.main.scale
 		let renderer = UIGraphicsImageRenderer(bounds: captureView.bounds, format: format)
 		return renderer.image { _ in
-			resolvedBackgroundColor(in: captureView).setFill()
+			(backgroundColor ?? resolvedBackgroundColor(in: captureView)).setFill()
 			UIBezierPath(rect: captureView.bounds).fill()
 			captureView.drawHierarchy(in: captureView.bounds, afterScreenUpdates: true)
 		}
