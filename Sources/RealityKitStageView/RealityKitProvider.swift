@@ -330,6 +330,44 @@ public final class RealityKitProvider {
     
     internal var cameraWorldTransform: simd_float4x4 = matrix_identity_float4x4
 
+    /// Approximate visible subject depth for overlay scale references.
+    ///
+    /// This uses the front-most depth of the current scene bounds along the
+    /// camera's forward axis rather than the orbit radius to the bounds center.
+    /// For a map-like scale indicator this is a better proxy for the visible
+    /// model surface the user is judging by eye.
+    public var overlayReferenceDepthMeters: Double {
+        let fallback = Double(cameraDistance)
+        guard sceneBounds.isFrameable else { return fallback }
+
+        let cameraPosition = SIMD3<Float>(
+            cameraWorldTransform.columns.3.x,
+            cameraWorldTransform.columns.3.y,
+            cameraWorldTransform.columns.3.z
+        )
+        let forward = simd_normalize(
+            SIMD3<Float>(
+                -cameraWorldTransform.columns.2.x,
+                -cameraWorldTransform.columns.2.y,
+                -cameraWorldTransform.columns.2.z
+            )
+        )
+        guard forward.x.isFinite, forward.y.isFinite, forward.z.isFinite else {
+            return fallback
+        }
+
+        let centerDepth = simd_dot(sceneBounds.center - cameraPosition, forward)
+        let extents = sceneBounds.max - sceneBounds.min
+        let halfExtents = extents * 0.5
+        let projectedHalfDepth =
+            Swift.abs(forward.x) * halfExtents.x
+            + Swift.abs(forward.y) * halfExtents.y
+            + Swift.abs(forward.z) * halfExtents.z
+        let frontDepth = centerDepth - projectedHalfDepth
+        let clamped = Swift.max(frontDepth, 0.000_001)
+        return clamped.isFinite ? Double(clamped) : fallback
+    }
+
     internal func updateCameraState(rotation: simd_quatf, distance: Float) {
         self.cameraRotation = rotation
         self.cameraDistance = distance

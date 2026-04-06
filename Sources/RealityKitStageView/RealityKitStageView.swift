@@ -343,8 +343,7 @@ public struct RealityKitStageView: View {
             cameraRotation: cameraState.quaternion,
             horizontalFOVDegrees: 60,
             isZUp: runtime.isZUp,
-            // Camera state lives in RealityKit world space, which is already meters.
-            referenceDepthMeters: Double(runtime.cameraDistance)
+            referenceDepthMeters: runtime.overlayReferenceDepthMeters
         )
     }
 
