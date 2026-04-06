@@ -24,17 +24,21 @@ public typealias ViewportOverlayConfiguration = ViewportOverlayCollection
 public struct DynamicScaleReference: Equatable {
 	public let meters: Double
 	public let label: String
+	public let barWidthPoints: Double
 
-	public init(meters: Double, label: String) {
+	public init(meters: Double, label: String, barWidthPoints: Double) {
 		self.meters = meters
 		self.label = label
+		self.barWidthPoints = barWidthPoints
 	}
 
 	public static func compute(
 		referenceDepthMeters: Double,
 		horizontalFOVDegrees: Double,
 		viewportWidthPoints: Double,
-		barWidthPoints: Double
+		barWidthPoints: Double,
+		minBarWidthPoints: Double = 56,
+		maxBarWidthPoints: Double = 132
 	) -> DynamicScaleReference? {
 		guard referenceDepthMeters.isFinite, referenceDepthMeters > 0 else {
 			return nil
@@ -46,6 +50,10 @@ public struct DynamicScaleReference: Equatable {
 			return nil
 		}
 		guard barWidthPoints.isFinite, barWidthPoints > 1 else { return nil }
+		guard minBarWidthPoints.isFinite, minBarWidthPoints > 1 else { return nil }
+		guard maxBarWidthPoints.isFinite, maxBarWidthPoints >= minBarWidthPoints else {
+			return nil
+		}
 
 		let fovRadians = horizontalFOVDegrees * .pi / 180.0
 		let visibleWidthMeters = 2.0 * referenceDepthMeters * tan(fovRadians / 2.0)
@@ -53,11 +61,64 @@ public struct DynamicScaleReference: Equatable {
 			return nil
 		}
 
-		let rawMeters = visibleWidthMeters * (barWidthPoints / viewportWidthPoints)
-		guard rawMeters.isFinite, rawMeters > 0 else { return nil }
+		let metersPerPoint = visibleWidthMeters / viewportWidthPoints
+		guard metersPerPoint.isFinite, metersPerPoint > 0 else { return nil }
 
-		let snappedMeters = snapToNiceMetricStep(rawMeters)
-		return .init(meters: snappedMeters, label: formatMetric(snappedMeters))
+		let targetMeters = metersPerPoint * barWidthPoints
+		guard targetMeters.isFinite, targetMeters > 0 else { return nil }
+
+		let snappedMeters = snappedMetricStep(
+			near: targetMeters,
+			metersPerPoint: metersPerPoint,
+			preferredBarWidthPoints: barWidthPoints,
+			minBarWidthPoints: minBarWidthPoints,
+			maxBarWidthPoints: maxBarWidthPoints
+		)
+		let resolvedBarWidthPoints = snappedMeters / metersPerPoint
+		guard resolvedBarWidthPoints.isFinite, resolvedBarWidthPoints > 0 else {
+			return nil
+		}
+
+		return .init(
+			meters: snappedMeters,
+			label: formatMetric(snappedMeters),
+			barWidthPoints: resolvedBarWidthPoints
+		)
+	}
+
+	private static func snappedMetricStep(
+		near targetMeters: Double,
+		metersPerPoint: Double,
+		preferredBarWidthPoints: Double,
+		minBarWidthPoints: Double,
+		maxBarWidthPoints: Double
+	) -> Double {
+		let candidates = niceMetricCandidates(around: targetMeters)
+		let boundedCandidates = candidates.filter { candidate in
+			let width = candidate / metersPerPoint
+			return width >= minBarWidthPoints && width <= maxBarWidthPoints
+		}
+		let pool = boundedCandidates.isEmpty ? candidates : boundedCandidates
+		return pool.min { lhs, rhs in
+			let lhsDistance = Swift.abs((lhs / metersPerPoint) - preferredBarWidthPoints)
+			let rhsDistance = Swift.abs((rhs / metersPerPoint) - preferredBarWidthPoints)
+			if lhsDistance == rhsDistance {
+				return lhs < rhs
+			}
+			return lhsDistance < rhsDistance
+		} ?? snapToNiceMetricStep(targetMeters)
+	}
+
+	private static func niceMetricCandidates(around value: Double) -> [Double] {
+		let clamped = min(1_000_000.0, max(0.000_001, value))
+		let exponent = Int(floor(log10(clamped)))
+		let multipliers: [Double] = [1, 2, 5]
+		return (-2...2)
+			.flatMap { offset -> [Double] in
+				let magnitude = pow(10.0, Double(exponent + offset))
+				return multipliers.map { $0 * magnitude }
+			}
+			.sorted()
 	}
 
 	private static func snapToNiceMetricStep(_ value: Double) -> Double {
@@ -175,9 +236,22 @@ public struct ScaleIndicatorView: View {
 			barWidthPoints: barWidth
 		) {
 			VStack(spacing: 3) {
-				Rectangle()
-					.fill(.primary)
-					.frame(width: barWidth, height: 1.5)
+				ZStack(alignment: .center) {
+					Rectangle()
+						.fill(.primary)
+						.frame(width: scale.barWidthPoints, height: 1.5)
+
+					HStack {
+						Rectangle()
+							.fill(.primary)
+							.frame(width: 1.5, height: 8)
+						Spacer(minLength: 0)
+						Rectangle()
+							.fill(.primary)
+							.frame(width: 1.5, height: 8)
+					}
+					.frame(width: scale.barWidthPoints)
+				}
 				Text(scale.label)
 					.font(.caption)
 					.monospaced()
