@@ -66,19 +66,18 @@ struct ViewportTuningTests {
     }
 
     @Test
-    func gridRadiusUsesAdaptiveExtentButFixedMajorReference() {
+    func gridUsesTieredFixedQuadrantSizesAndAdaptiveRadius() {
         let smallRadius = ViewportTuning.gridRadiusMeters(worldExtentMeters: 0.05)
         let largeRadius = ViewportTuning.gridRadiusMeters(worldExtentMeters: 20.0)
 
-        #expect(smallRadius >= 0.25)
-        #expect(smallRadius < 5.0)
+        #expect(smallRadius >= 0.06)
         #expect(largeRadius > smallRadius)
-        #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 4.0) == 0.1)
-        #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 40.0) == 0.5)
-        #expect(ViewportTuning.majorGridStepMeters(forMinorStep: 0.1) == 1.0)
-        #expect(ViewportTuning.majorGridStepMeters(forMinorStep: 0.5) == 5.0)
+        #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 0.1) == 0.001)
+        #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 1.0) == 0.01)
+        #expect(ViewportTuning.minorGridStepMeters(forGridRadius: 40.0) == 0.1)
+        #expect(ViewportTuning.majorGridStepMeters(forMinorStep: 0.001) == 0.01)
         #expect(ViewportTuning.majorGridStepMeters(forMinorStep: 0.01) == 0.1)
-        #expect(ViewportTuning.majorGridStepMeters(forMinorStep: 1.0) == 10.0)
+        #expect(ViewportTuning.majorGridStepMeters(forMinorStep: 0.1) == 1.0)
     }
 
     @Test

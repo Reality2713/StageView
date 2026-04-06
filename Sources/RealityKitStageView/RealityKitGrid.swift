@@ -82,20 +82,22 @@ public struct RealityKitGrid {
         let minorScale = Float(1.0 / minorStep)
         let majorScale = Float(1.0 / majorStep)
         let axisBaseThicknessWorld = Float(
-            min(max(minorStepFloat * 0.006, 0.00003), majorStepFloat * 0.0009)
+            min(max(minorStepFloat * 0.012, 0.00008), majorStepFloat * 0.0015)
         )
         let axisDepthFactorWorld = Float(
-            min(max(minorStepFloat * 0.00035, 0.000005), majorStepFloat * 0.00006)
+            min(max(minorStepFloat * 0.0006, 0.00001), majorStepFloat * 0.0001)
         )
         let axisThicknessWorldMax = Float(
-            min(max(minorStepFloat * 0.012, 0.00006), majorStepFloat * 0.0012)
+            min(max(minorStepFloat * 0.02, 0.00014), majorStepFloat * 0.002)
         )
         let axisHalfLengthWorld = Float(
             max(radiusMetersFloat * 2.0, majorStepFloat * 8.0)
         )
-        let axisOpacityScale: Float = 0.9
-        let edgeFadeStart = Float(radiusMeters * 0.72)
-        let edgeFadeEnd = Float(radiusMeters * 1.08)
+        let axisOpacityScale: Float = 1.15
+        // The horizon fade is relative to the total grid radius so the grid
+        // reads as a circular field around the model rather than a square plane.
+        let edgeFadeStart = Float(radiusMeters * (2.0 / 3.0))
+        let edgeFadeEnd = radiusMetersFloat
         let edgeFadeReciprocalRange = 1 / max(edgeFadeEnd - edgeFadeStart, 0.0001)
 
         // Scale the plane to cover the needed world extent.
@@ -108,15 +110,17 @@ public struct RealityKitGrid {
         // RealityKit imports USD scenes into a Y-up world, even when the source
         // stage metadata says Z-up. Keep the procedural floor aligned to the
         // RealityKit world ground plane so it does not double-rotate for Z-up assets.
-        let yOffset = Float(-0.001)
+        // Position is NOT set here — that is the caller's responsibility via alignGrid(),
+        // which derives the correct floor Y from the loaded scene's bounds.
         entity.transform.rotation = .init()
-        entity.position = SIMD3<Float>(0, yOffset, 0)
 
         // Resolve colors for appearance, applying any caller-provided overrides.
         let palette = ProceduralGridPalette(appearance: appearance)
-        let fogDensityRadiusScale = min(1.0, 3.0 / max(radiusMetersFloat, 3.0))
-        let fogDensity = palette.fogDensity * fogDensityRadiusScale
-        let fogMax = radiusMetersFloat > 5.0 ? min(palette.fogMax, 0.72) : palette.fogMax
+        // Keep the shader fog tied to total grid size so large grids do not stay
+        // fully crisp out to their hard square edge, and tiny grids do not
+        // disappear immediately near the center.
+        let fogDensity = palette.fogDensity / max(radiusMetersFloat, 1.0)
+        let fogMax = palette.fogMax
         let resolvedMinorColor = minorColorOverride ?? palette.minorColor
         let resolvedMajorColor = majorColorOverride ?? palette.majorColor
 

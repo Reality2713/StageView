@@ -14,6 +14,18 @@ struct ViewportCameraClipping: Equatable, Sendable {
 }
 
 enum ViewportTuning {
+    /// Gantry/StageView grid contract:
+    /// - Quadrant size is stable in world-space within a scale tier so the grid
+    ///   remains a real scale cue without forcing one spacing across mm-, cm-,
+    ///   and meter-scale assets.
+    /// - Total grid radius adapts to the model's maximum world-space extent.
+    /// - Metadata changes such as meters-per-unit alter the interpreted world size,
+    ///   which naturally changes the number of visible quadrants without changing
+    ///   the active spacing tier.
+    private static let gridMajorStepMultiplier: Double = 10.0
+    private static let minimumMajorQuadrantsFromCenter: Double = 6.0
+    private static let gridRadiusToMaxExtentMultiplier: Double = 2.0
+
     static func defaultCameraDistance(
         sceneBounds: SceneBounds,
         metersPerUnit: Double,
@@ -35,7 +47,7 @@ enum ViewportTuning {
         let radiusUnits = sceneRadiusUnits(sceneBounds: sceneBounds)
         // The absolute floor should be 2mm in world space, converted back to scene units.
         let absoluteFloorUnits = metersToSceneUnits(0.002, metersPerUnit: metersPerUnit)
-        return Swift.max(absoluteFloorUnits, radiusUnits * 0.12)
+        return Swift.max(absoluteFloorUnits, radiusUnits * 0.03)
     }
 
     static func maximumDistance(sceneBounds: SceneBounds, metersPerUnit: Double) -> Float {
@@ -84,31 +96,38 @@ enum ViewportTuning {
     }
 
     static func gridRadiusMeters(worldExtentMeters: Double) -> Double {
-        // Keep a generous floor plane even for tiny assets so depth cues and
-        // fog remain legible at normal editing camera distances without
-        // forcing millimeter-scale assets onto a centimeter-scale grid.
-        Swift.max(0.03, worldExtentMeters * 15.0)
+        let minimumRadius = majorGridStepMeters(
+            forMinorStep: minorGridStepMeters(forWorldExtentMeters: worldExtentMeters)
+        )
+            * minimumMajorQuadrantsFromCenter
+        return Swift.max(
+            minimumRadius,
+            worldExtentMeters * gridRadiusToMaxExtentMultiplier
+        )
     }
 
     static func minorGridStepMeters(forGridRadius radiusMeters: Double) -> Double {
         switch radiusMeters {
-        case ..<0.08:
-            return 0.001 // 1mm grid for tiny assets
-        case ..<0.5:
-            return 0.01 // 1cm grid for tiny assets
-        case ..<10:
-            return 0.1
-        case ..<30:
-            return 0.25
-        case ..<80:
-            return 0.5
+        case ..<0.6:
+            return 0.001
+        case ..<6.0:
+            return 0.01
         default:
-            return 1.0
+            return 0.1
         }
     }
 
     static func majorGridStepMeters(forMinorStep minorStep: Double) -> Double {
-        minorStep * 10.0
+        minorStep * gridMajorStepMultiplier
+    }
+
+    private static func minorGridStepMeters(forWorldExtentMeters worldExtentMeters: Double) -> Double {
+        minorGridStepMeters(
+            forGridRadius: Swift.max(
+                worldExtentMeters * gridRadiusToMaxExtentMultiplier,
+                0
+            )
+        )
     }
 
     private static func sceneRadiusUnits(sceneBounds: SceneBounds) -> Float {
