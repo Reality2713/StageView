@@ -32,6 +32,9 @@ public struct RealityKitConfiguration: Sendable {
     /// TCA-first hosts should drive mutable per-viewport IBL through
     /// `StageViewFeature.State.environmentURL` instead of this property.
     public var environmentMapURL: URL?
+    /// Normalized blur amount for generated soft-reflection HDRs.
+    /// `0` preserves the sharp authored map, `1` applies the default soft blur.
+    public var environmentBlurAmount: Float = 1.0
     public var environmentExposure: Float = 0.0
     public var environmentRotation: Float = 0.0
     public var showEnvironmentBackground: Bool = true
@@ -56,6 +59,7 @@ public struct RealityKitConfiguration: Sendable {
         metersPerUnit: Double = 1.0,
         isZUp: Bool = false,
         environmentMapURL: URL? = nil,
+        environmentBlurAmount: Float = 1.0,
         environmentExposure: Float = 0.0,
         environmentRotation: Float = 0.0,
         showEnvironmentBackground: Bool = true,
@@ -69,6 +73,7 @@ public struct RealityKitConfiguration: Sendable {
         self.metersPerUnit = metersPerUnit
         self.isZUp = isZUp
         self.environmentMapURL = environmentMapURL
+        self.environmentBlurAmount = environmentBlurAmount
         self.environmentExposure = environmentExposure
         self.environmentRotation = environmentRotation
         self.showEnvironmentBackground = showEnvironmentBackground
@@ -78,28 +83,11 @@ public struct RealityKitConfiguration: Sendable {
         self.showScaleIndicator = showScaleIndicator
     }
 
-    /// RealityKit currently renders hotter than Hydra for the same EV slider
-    /// value, so both the IBL exponent and visible skybox gain need the same
-    /// calibration before applying the base-2 multiplier.
+    /// Treat StageView exposure as a direct stop offset over the authored HDR
+    /// environment intensity. A value of 0 uses the environment as-authored,
+    /// +1 doubles the contribution, and -1 halves it.
     private static func realityKitMappedEV(forHydraEV ev: Float) -> Float {
-        let baselineOffset: Float = -1.0
-        let calibratedEV = ev + baselineOffset
-
-        // Keep the previous high-end protection so the top of the slider
-        // still does not run away once the baseline is corrected.
-        let softKneeStart: Float = 2.7
-        let kneeAdjustedEV: Float
-        if calibratedEV > softKneeStart {
-            kneeAdjustedEV = softKneeStart + (calibratedEV - softKneeStart) * 0.5
-        } else {
-            kneeAdjustedEV = calibratedEV
-        }
-
-        // RealityKit becomes unstable near the top of the slider and can
-        // effectively reset exposure, so cap the mapped exponent below that
-        // threshold for both the IBL and visible skybox.
-        let maxStableEV: Float = 1.8
-        return min(kneeAdjustedEV, maxStableEV)
+        ev
     }
 
     /// Linear gain from EV after RealityKit-specific calibration. Used for skybox tint.

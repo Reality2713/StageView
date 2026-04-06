@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import CoreImage
 import ImageIO
 import OSLog
 import RealityKit
@@ -25,7 +26,6 @@ private let preflightRealityKitAnimationTimeNotification = Notification.Name(
 )
 private let preflightRealityKitAnimationPlaybackNotification =
 	Notification.Name("preflight.realitykit.animation.playback")
-
 /// Stores a PostProcessOutlineEffect across SwiftUI render cycles without
 /// requiring @available on the view struct itself.
 private final class OutlineEffectBox: @unchecked Sendable {
@@ -61,6 +61,7 @@ public struct RealityKitStageView: View {
 	@State private var pendingExposure: Float?
 	@State private var pendingRotation: Float?
 	private static let environmentSliderDebounceMs: UInt64 = 50 // 50ms debounce
+	private static let environmentBlurDebounceMs: UInt64 = 120 // heavier than exposure/rotation
 	#if os(iOS)
 	@State private var imageCaptureBridge = ViewportImageCaptureBridge()
 	#endif
@@ -171,7 +172,17 @@ public struct RealityKitStageView: View {
 	/// to a value, causing this ID to change from nil → UUID string → task fires.
 	private var environmentTaskID: String? {
 		guard rootEntity != nil else { return nil }
-		return store.environmentRequestID?.uuidString
+		guard let requestID = store.environmentRequestID?.uuidString else { return nil }
+		return "\(requestID)-\(effectiveEnvironmentBlurBucket)"
+	}
+
+	private var effectiveEnvironmentBlurBucket: Int {
+		guard store.environmentURL?.lastPathComponent.lowercased().hasPrefix("ibl.") == true else {
+			return 0
+		}
+		let bucketCount = 12.0
+		let normalized = Double(min(max(configuration.environmentBlurAmount, 0), 1))
+		return Int((normalized * bucketCount).rounded(.toNearestOrAwayFromZero))
 	}
 
 	/// Combined task ID: fires only after a load request exists and the viewport
@@ -184,6 +195,7 @@ public struct RealityKitStageView: View {
 		observedViewportLifecycle
 			.task(id: environmentTaskID) {
 				guard environmentTaskID != nil else { return }
+				try? await Task.sleep(for: .milliseconds(Self.environmentBlurDebounceMs))
 				await updateEnvironment(store.environmentURL)
 			}
 		.task(id: configuration.environmentExposure) {
@@ -200,8 +212,8 @@ public struct RealityKitStageView: View {
 				updateIBLRotation(configuration.environmentRotation)
 			}
 		}
-		.onChange(of: configuration.showEnvironmentBackground) { _, newValue in
-			skyboxEntity?.isEnabled = newValue
+		.onChange(of: configuration.showEnvironmentBackground) { _, _ in
+			skyboxEntity?.isEnabled = configuration.showEnvironmentBackground
 		}
 		.onChange(of: configuration.selectionHighlightStyle) { _, _ in
 			updateSelectionHighlight(for: runtime.selectedPrimPath)
@@ -1157,12 +1169,12 @@ public struct RealityKitStageView: View {
 	private func updateEnvironment(_ url: URL?) async {
 		guard let ibl = iblEntity else { return }
 
-		// Clear existing IBL; skybox stays (just update its material).
-		ibl.components.remove(ImageBasedLightComponent.self)
-
 		guard let url = url else {
 			// No environment — hide skybox, clear its texture.
+			ibl.components.remove(ImageBasedLightComponent.self)
+			updateIBLLightIntensity()
 			skyboxEntity?.isEnabled = false
+			logger.debug("Environment cleared: customIBL=false showBackground=false")
 			return
 		}
 
@@ -1183,56 +1195,143 @@ public struct RealityKitStageView: View {
 			return
 		}
 
-		// IBL lighting — uses the full HDR float image via EnvironmentResource.
-		do {
-			let resource = try await EnvironmentResource(equirectangular: cgImage, withName: resourceName)
-			var iblComp = ImageBasedLightComponent(source: .single(resource))
-			iblComp.intensityExponent = configuration.realityKitIntensityExponent
-			iblComp.inheritsRotation = true
-			ibl.components.set(iblComp)
-			if let model = runtime.modelEntity {
-				applyIBLReceiver(to: model)
+		// Image processing: If the user requested "Soft Reflections" by pointing to 'ibl.hdr',
+		// we intercept it to avoid feeding a low-energy irradiance map to RealityKit.
+		// Instead, we find the sharp 'ref.hdr', apply a hardware blur to it, and pass THAT
+		// to RealityKit. This preserves HDR peaks (allowing max exposure to work properly) while
+		// still providing soft specular and a soft background.
+		let isBlurRequested = ["ibl.hdr", "ibl.exr"].contains(url.lastPathComponent.lowercased())
+		let blurURL = url.deletingLastPathComponent().appendingPathComponent(
+			url.lastPathComponent.lowercased().replacingOccurrences(of: "ibl", with: "blur")
+		)
+		let refURL = url.deletingLastPathComponent().appendingPathComponent(
+			url.lastPathComponent.lowercased().replacingOccurrences(of: "ibl", with: "ref")
+		)
+		let resolvedFileURL: URL = {
+			if !isBlurRequested {
+				return url
 			}
+			if FileManager.default.fileExists(atPath: blurURL.path) {
+				return blurURL
+			}
+			if FileManager.default.fileExists(atPath: refURL.path) {
+				return refURL
+			}
+			return url
+		}()
+
+		let blurAmount = min(max(configuration.environmentBlurAmount, 0), 1)
+
+		let resolvedCGImage: CGImage = await Task.detached(priority: .userInitiated) {
+			let fileName = url.lastPathComponent.lowercased()
+			
+			if !isBlurRequested {
+				return cgImage
+			}
+			
+			let opts: [String: Any] = [
+				kCGImageSourceShouldAllowFloat as String: true,
+				kCGImageSourceShouldCache as String: false,
+			]
+			
+			// Priority 1: User-provided pre-blurred HDR image
+			if FileManager.default.fileExists(atPath: blurURL.path) {
+				if let src = CGImageSourceCreateWithURL(blurURL as CFURL, opts as CFDictionary),
+				   let img = CGImageSourceCreateImageAtIndex(src, 0, opts as CFDictionary) {
+					return img
+				}
+			}
+			
+			// Priority 2: Load the sharp ref map and blur it at runtime to preserve peak brightness
+			if FileManager.default.fileExists(atPath: refURL.path) {
+				if let src = CGImageSourceCreateWithURL(refURL as CFURL, opts as CFDictionary),
+				   let img = CGImageSourceCreateImageAtIndex(src, 0, opts as CFDictionary) {
+					guard blurAmount > 0.001 else {
+						return img
+					}
+					
+					let ciImage = CIImage(cgImage: img)
+					if let filter = CIFilter(name: "CIGaussianBlur") {
+						filter.setValue(ciImage, forKey: kCIInputImageKey)
+						// Scale the default soft-reflection blur with a normalized user control.
+						let radius = (CGFloat(img.height) / 35.0) * CGFloat(blurAmount)
+						filter.setValue(radius, forKey: kCIInputRadiusKey)
+						if let output = filter.outputImage {
+							// NSNull() tells CoreImage not to apply color management, preserving raw HDR values
+							// Use .RGBAf to preserve 32-bit float precision through the blur.
+							// The default createCGImage(_:from:) produces 8-bit output which
+							// strips HDR peak values, causing EnvironmentResource to throw or
+							// receive a non-HDR image with no light energy above 1.0.
+							let context = CIContext(options: [.workingColorSpace: NSNull()])
+							if let blurredCGImage = context.createCGImage(
+								output,
+								from: ciImage.extent,
+								format: .RGBAf,
+								colorSpace: nil
+							) {
+								return blurredCGImage
+							}
+						}
+					}
+					// If blur fails, return sharp map rather than diffuse map
+					return img
+				}
+			}
+			
+			return cgImage
+		}.value
+
+		let nextEnvironmentResource: EnvironmentResource?
+		do {
+			let resource = try await EnvironmentResource(equirectangular: resolvedCGImage, withName: resourceName)
+			nextEnvironmentResource = resource
 		} catch {
 			logger.error("Environment IBL failed: \(error.localizedDescription, privacy: .public)")
+			nextEnvironmentResource = nil
 		}
 
 		// Update skybox texture on the existing sphere entity.
+		var nextSkyboxModel: ModelComponent?
 		if let skybox = skyboxEntity,
 		   let existingModel = skybox.components[ModelComponent.self]
 		{
 			do {
-				let texture: TextureResource
-				do {
-					// Use the already-decoded float CGImage and mark it as HDR so
-					// the visible dome does not go through the generic file loader's
-					// `.color` path, which can flatten the skybox relative to the IBL.
-					texture = try await TextureResource(
-						image: cgImage,
-						withName: resourceName + "_skybox",
-						options: .init(semantic: .hdrColor)
-					)
-				} catch {
-					logger.warning("HDR skybox texture creation failed; falling back to file load: \(error.localizedDescription, privacy: .public)")
-					texture = try await TextureResource(
-						contentsOf: url,
-						withName: resourceName + "_skybox",
-						options: .init(semantic: .color)
-					)
-				}
+				// Use the same resolved runtime image as the IBL input so the visible
+				// background tracks soft-reflection blur, but keep it as a 2D texture
+				// for the unlit sphere to avoid cube-texture binding crashes on iOS.
+				let texture = try TextureResource.generate(
+					from: resolvedCGImage,
+					options: .init(semantic: .color)
+				)
 				var material = UnlitMaterial()
 				material.color = .init(texture: .init(texture))
-				skybox.components.set(ModelComponent(
+				nextSkyboxModel = ModelComponent(
 					mesh: existingModel.mesh,
 					materials: [material]
-				))
-				skybox.isEnabled = configuration.showEnvironmentBackground
-				logger.debug("Skybox updated: enabled=\(configuration.showEnvironmentBackground)")
+				)
 			} catch {
 				logger.error("Skybox texture load failed: \(error.localizedDescription, privacy: .public)")
 			}
 		} else {
 			logger.warning("Skybox entity not found or has no ModelComponent")
+		}
+
+		// Only swap lighting/background once replacements are ready. This avoids
+		// flicker during blur scrubs when in-flight loads are canceled.
+		if let nextEnvironmentResource {
+			var nextIBLComponent = ImageBasedLightComponent(source: .single(nextEnvironmentResource))
+			nextIBLComponent.intensityExponent = configuration.realityKitIntensityExponent
+			nextIBLComponent.inheritsRotation = true
+			ibl.components.set(nextIBLComponent)
+			if let model = runtime.modelEntity {
+				applyIBLReceiver(to: model)
+			}
+		}
+
+		if let nextSkyboxModel, let skybox = skyboxEntity {
+			skybox.components.set(nextSkyboxModel)
+			skybox.isEnabled = configuration.showEnvironmentBackground
+			logger.debug("Skybox updated: enabled=\(self.configuration.showEnvironmentBackground, privacy: .public)")
 		}
 
 		// Apply all current visual state immediately — don't wait for the next
@@ -1241,6 +1340,9 @@ public struct RealityKitStageView: View {
 		updateIBLExposure(configuration.environmentExposure)
 		updateIBLRotation(configuration.environmentRotation)
 		updateIBLLightIntensity()
+		logger.debug(
+			"Environment updated: customIBL=\(ibl.components[ImageBasedLightComponent.self] != nil, privacy: .public) exposure=\(configuration.environmentExposure, privacy: .public) showBackground=\(self.configuration.showEnvironmentBackground, privacy: .public)"
+		)
 	}
 
 
@@ -1275,6 +1377,7 @@ public struct RealityKitStageView: View {
 			var newModel = model
 			newModel.materials = [material]
 			skybox.components.set(newModel)
+			skybox.isEnabled = configuration.showEnvironmentBackground
 		}
 	}
 
@@ -1322,13 +1425,18 @@ public struct RealityKitStageView: View {
 	@MainActor
 	private func updateIBLLightIntensity() {
 		guard let root = rootEntity else { return }
-		let useIBL = store.environmentURL != nil
+		let useIBL = iblEntity?.components[ImageBasedLightComponent.self] != nil
 		if let key = root.findEntity(named: "KeyLight") as? DirectionalLight {
 			key.light.intensity = useIBL ? 0 : 2000
 		}
 		if let fill = root.findEntity(named: "FillLight") as? DirectionalLight {
 			fill.light.intensity = useIBL ? 0 : 1000
 		}
+		let keyIntensity = (root.findEntity(named: "KeyLight") as? DirectionalLight)?.light.intensity ?? -1
+		let fillIntensity = (root.findEntity(named: "FillLight") as? DirectionalLight)?.light.intensity ?? -1
+		logger.debug(
+			"Lighting mode: customIBL=\(useIBL, privacy: .public) keyLight=\(keyIntensity, privacy: .public) fillLight=\(fillIntensity, privacy: .public)"
+		)
 	}
 
 	#if os(iOS)
@@ -1401,7 +1509,7 @@ public struct RealityKitStageView: View {
 			}
 
 		let software = "Gantry\(versionSuffix)"
-		let description = "Exported from Gantry viewport"
+		let description = "Exported from Gantry: Scene Converter"
 		return [
 			kCGImageDestinationLossyCompressionQuality: 0.92,
 			kCGImagePropertyTIFFDictionary: [
