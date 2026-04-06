@@ -160,6 +160,10 @@ public struct RealityKitStageView: View {
 				newId in
 				if let entity = runtime.modelEntity, newId != nil {
 					loadModel(entity)
+				} else {
+					// Clear the loaded model when modelEntity becomes nil
+					let anchor = rootEntity?.findEntity(named: "ModelAnchor")
+					anchor?.children.first(where: { $0.name == "LoadedModel" })?.removeFromParent()
 				}
 			}
 				.onChange(of: runtime.selectionGeneration) { _, _ in
