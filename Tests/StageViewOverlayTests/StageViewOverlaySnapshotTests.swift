@@ -29,12 +29,4 @@ struct StageViewOverlaySnapshotTests {
         )
         #expect(gizmoOnly.showsBuiltInContent == true)
     }
-
-    @Test
-    func stageViewOverlaySlotsReportsPresenceWhenAnySlotIsFilled() {
-        let slots = StageViewOverlaySlots.empty.top {
-            Text("Viewport")
-        }
-        #expect(slots.hasContent == true)
-    }
 }

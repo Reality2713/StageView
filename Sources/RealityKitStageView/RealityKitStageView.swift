@@ -35,9 +35,6 @@ public struct RealityKitStageView: View {
 	let runtime: RealityKitProvider
 	var configuration: RealityKitConfiguration
 
-    /// Deprecated slot-based overlay configuration - will be removed in future version.
-    var overlaySlots: StageViewOverlaySlots
-
 	var store: StoreOf<StageViewFeature>
 
 	@State private var rootEntity: Entity?
@@ -75,12 +72,10 @@ public struct RealityKitStageView: View {
 	public init(
 		provider: RealityKitProvider,
 		store: StoreOf<StageViewFeature>,
-		configuration: RealityKitConfiguration = RealityKitConfiguration(),
-        overlaySlots: StageViewOverlaySlots = .empty
+		configuration: RealityKitConfiguration = RealityKitConfiguration()
 	) {
 		self.runtime = provider
 		self.configuration = configuration
-        self.overlaySlots = overlaySlots
 		self.store = store
 	}
 
@@ -306,19 +301,7 @@ public struct RealityKitStageView: View {
 						)
 					)
 				#endif
-			// Legacy overlay system for backward compatibility
-			if overlaySlots.hasContent {
-				legacyOverlayContainer
-			}
 		}
-	}
-
-	@ViewBuilder
-	private var legacyOverlayContainer: some View {
-		StageViewOverlayContainer(
-			slots: overlaySlots,
-			snapshot: overlaySnapshot
-		)
 	}
 
     private var overlaySnapshot: StageViewOverlaySnapshot {
