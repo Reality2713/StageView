@@ -341,7 +341,7 @@ public struct RealityKitStageView: View {
 	}
 
     private var overlaySnapshot: StageViewOverlaySnapshot {
-        let metersPerUnit = configuration.metersPerUnit > 0 ? configuration.metersPerUnit : 1.0
+        let metersPerUnit = runtime.metersPerUnit > 0 ? runtime.metersPerUnit : 1.0
         return StageViewOverlaySnapshot(
             builtInVisibility: .init(
                 showsOrientationGizmo: configuration.showOrientationGizmo,
@@ -349,7 +349,7 @@ public struct RealityKitStageView: View {
             ),
             cameraRotation: cameraState.quaternion,
             horizontalFOVDegrees: 60,
-            isZUp: configuration.isZUp,
+            isZUp: runtime.isZUp,
             referenceDepthMeters: Double(runtime.cameraDistance) * metersPerUnit
         )
     }
