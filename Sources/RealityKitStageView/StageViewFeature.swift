@@ -58,27 +58,28 @@ public struct StageViewFeature {
         }
     }
 
-	    @ObservableState
-	    public struct State: Equatable {
-	        public var activeLoadCommand: LoadCommand?
-	        /// Stable viewport appearance intent.
-	        ///
-	        /// Host applications should map user preferences and document overrides
-	        /// into this value. `RealityKitStageView` resolves it against the current
-	        /// SwiftUI environment locally, without sending hot-path actions.
-	        public var appearance: StageViewAppearance
-	        public var cameraResetRequestID: UUID?
-	        /// Monotonic request token for environment/IBL reloads.
-	        ///
-	        /// Update this whenever `environmentURL` changes so the view can reload
-	        /// document-scoped lighting without polling or per-frame reducer traffic.
-	        public var environmentRequestID: UUID?
-	        /// Per-viewport environment map intent.
-	        ///
-	        /// Hosts should derive this from document or scene state and keep it in
-	        /// the stage feature. `RealityKitConfiguration` is not the source of
-	        /// truth for mutable IBL in the TCA-first integration.
-	        public var environmentURL: URL?
+    @ObservableState
+    public struct State: Equatable {
+        public var activeLoadCommand: LoadCommand?
+        /// Stable viewport appearance intent.
+        ///
+        /// Host applications should map user preferences and document overrides
+        /// into this value. `RealityKitStageView` resolves it against the current
+        /// SwiftUI environment locally, without sending hot-path actions.
+        public var appearance: StageViewAppearance
+        public var cameraResetRequestID: UUID?
+        /// Monotonic request token for environment/IBL reloads.
+        ///
+        /// Update this whenever `environmentURL` changes so the view can reload
+        /// document-scoped lighting without polling or per-frame reducer traffic.
+        public var environmentRequestID: UUID?
+        /// Per-viewport environment map intent.
+        ///
+        /// Hosts should derive this from document or scene state and keep it in
+        /// the stage feature. `RealityKitConfiguration` is not the source of
+        /// truth for mutable IBL in the TCA-first integration.
+        public var environmentURL: URL?
+        public var imageCaptureRequestID: UUID?
         public var liveTransform: LiveTransformData?
         public var liveTransformRequestID: UUID?
         public var blendShapeRuntimeWeights: [BlendShapeRuntimeWeight]
@@ -95,6 +96,7 @@ public struct StageViewFeature {
             cameraResetRequestID: UUID? = nil,
             environmentRequestID: UUID? = nil,
             environmentURL: URL? = nil,
+            imageCaptureRequestID: UUID? = nil,
             liveTransform: LiveTransformData? = nil,
             liveTransformRequestID: UUID? = nil,
             blendShapeRuntimeWeights: [BlendShapeRuntimeWeight] = [],
@@ -110,6 +112,7 @@ public struct StageViewFeature {
             self.cameraResetRequestID = cameraResetRequestID
             self.environmentRequestID = environmentRequestID
             self.environmentURL = environmentURL
+            self.imageCaptureRequestID = imageCaptureRequestID
             self.liveTransform = liveTransform
             self.liveTransformRequestID = liveTransformRequestID
             self.blendShapeRuntimeWeights = blendShapeRuntimeWeights
@@ -129,6 +132,7 @@ public struct StageViewFeature {
         case applyLiveTransform(LiveTransformData)
         /// Apply runtime blend-shape weights to the viewport (not persisted to USD)
         case applyBlendShapeWeights([BlendShapeRuntimeWeight])
+        case captureImageRequested
         case clearRequested
         case delegate(Delegate)
         case entityPicked(String?)
@@ -151,6 +155,8 @@ public struct StageViewFeature {
         case viewportAppeared
 
         public enum Delegate: Equatable {
+            case imageCaptureFailed(String)
+            case imageCaptured(URL)
             case userPickedPrim(String?)
         }
     }
@@ -168,11 +174,16 @@ public struct StageViewFeature {
                 state.blendShapeRuntimeRequestID = uuid()
                 return .none
 
+            case .captureImageRequested:
+                state.imageCaptureRequestID = uuid()
+                return .none
+
             case .clearRequested:
                 state.activeLoadCommand = nil
                 state.cameraResetRequestID = nil
                 state.environmentRequestID = nil
                 state.environmentURL = nil
+                state.imageCaptureRequestID = nil
                 state.loadRequestID = uuid()
                 state.liveTransform = nil
                 state.liveTransformRequestID = nil

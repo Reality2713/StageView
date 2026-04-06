@@ -5,11 +5,13 @@ import RealityKit
 import StageViewOverlay
 import SwiftUI
 import simd
+import UniformTypeIdentifiers
 
 #if os(macOS)
 	import AppKit
 	private typealias PlatformColor = NSColor
 #elseif os(iOS) || os(visionOS)
+	import QuartzCore
 	import UIKit
 	private typealias PlatformColor = UIColor
 #endif
@@ -59,6 +61,9 @@ public struct RealityKitStageView: View {
 	@State private var pendingExposure: Float?
 	@State private var pendingRotation: Float?
 	private static let environmentSliderDebounceMs: UInt64 = 50 // 50ms debounce
+	#if os(iOS)
+	@State private var imageCaptureBridge = ViewportImageCaptureBridge()
+	#endif
 
 	/// Looked up by name from rootEntity — always available after makeSceneRoot().
 	private var iblEntity: Entity? { rootEntity?.findEntity(named: "ImageBasedLight") }
@@ -262,6 +267,15 @@ public struct RealityKitStageView: View {
 			.withLiveTransform(store: store, provider: runtime)
 			.withRuntimeBlendShapes(store: store, provider: runtime)
 			.background(resolvedBackgroundColor)
+			#if os(iOS)
+			.overlay {
+				ViewportImageCaptureProbe(bridge: imageCaptureBridge)
+					.allowsHitTesting(false)
+			}
+			.task(id: store.imageCaptureRequestID) {
+				await captureViewportImageIfRequested()
+			}
+			#endif
 	}
 
 	private var resolvedBackgroundColor: Color {
@@ -1317,6 +1331,91 @@ public struct RealityKitStageView: View {
 		}
 	}
 
+	#if os(iOS)
+	@MainActor
+	private func captureViewportImageIfRequested() async {
+		guard store.imageCaptureRequestID != nil else { return }
+
+		do {
+			let image = try await imageCaptureBridge.captureImage()
+			let fileURL = try persistCapturedViewportImage(image)
+			store.send(.delegate(.imageCaptured(fileURL)))
+		} catch {
+			logger.error("Viewport capture failed: \(error.localizedDescription, privacy: .public)")
+			store.send(.delegate(.imageCaptureFailed(error.localizedDescription)))
+		}
+	}
+
+	private func persistCapturedViewportImage(_ image: UIImage) throws -> URL {
+		guard let cgImage = image.cgImage else {
+			throw ViewportImageCaptureError.encodingFailed
+		}
+
+		let directoryURL = FileManager.default.temporaryDirectory
+			.appendingPathComponent("gantry-viewport-captures", isDirectory: true)
+		try FileManager.default.createDirectory(
+			at: directoryURL,
+			withIntermediateDirectories: true
+		)
+
+		let fileURL = directoryURL
+			.appendingPathComponent("viewport-\(UUID().uuidString)")
+			.appendingPathExtension(UTType.jpeg.preferredFilenameExtension ?? "jpg")
+
+		guard let destination = CGImageDestinationCreateWithURL(
+			fileURL as CFURL,
+			UTType.jpeg.identifier as CFString,
+			1,
+			nil
+		) else {
+			throw ViewportImageCaptureError.encodingFailed
+		}
+
+		CGImageDestinationAddImage(
+			destination,
+			cgImage,
+			viewportImageMetadata() as CFDictionary
+		)
+		guard CGImageDestinationFinalize(destination) else {
+			throw ViewportImageCaptureError.encodingFailed
+		}
+		return fileURL
+	}
+
+	private func viewportImageMetadata() -> [CFString: Any] {
+		let shortVersion = Bundle.main.object(
+			forInfoDictionaryKey: "CFBundleShortVersionString"
+		) as? String
+		let buildVersion = Bundle.main.object(
+			forInfoDictionaryKey: "CFBundleVersion"
+		) as? String
+		let versionSuffix =
+			if let shortVersion, let buildVersion {
+				" \(shortVersion) (\(buildVersion))"
+			} else if let shortVersion {
+				" \(shortVersion)"
+			} else if let buildVersion {
+				" (\(buildVersion))"
+			} else {
+				""
+			}
+
+		let software = "Gantry\(versionSuffix)"
+		let description = "Exported from Gantry viewport"
+		return [
+			kCGImageDestinationLossyCompressionQuality: 0.92,
+			kCGImagePropertyTIFFDictionary: [
+				kCGImagePropertyTIFFSoftware: software,
+				kCGImagePropertyTIFFImageDescription: description,
+				kCGImagePropertyTIFFArtist: "Preflight",
+			],
+			kCGImagePropertyExifDictionary: [
+				kCGImagePropertyExifUserComment: description,
+			],
+		]
+	}
+	#endif
+
 }
 
 extension SIMD4 where Scalar == Float {
@@ -1324,6 +1423,139 @@ extension SIMD4 where Scalar == Float {
 		x.isFinite && y.isFinite && z.isFinite && w.isFinite
 	}
 }
+
+#if os(iOS)
+@MainActor
+private final class ViewportImageCaptureBridge {
+	weak var probeView: UIView?
+
+	func captureImage() async throws -> UIImage {
+		guard let captureView = resolvedCaptureView() else {
+			throw ViewportImageCaptureError.captureViewUnavailable
+		}
+		guard captureView.bounds.isEmpty == false else {
+			throw ViewportImageCaptureError.emptyBounds
+		}
+
+		await Task.yield()
+
+		let format = UIGraphicsImageRendererFormat(for: captureView.traitCollection)
+		format.opaque = true
+		format.scale = captureView.window?.screen.scale ?? UIScreen.main.scale
+		let renderer = UIGraphicsImageRenderer(bounds: captureView.bounds, format: format)
+		return renderer.image { _ in
+			resolvedBackgroundColor(in: captureView).setFill()
+			UIBezierPath(rect: captureView.bounds).fill()
+			captureView.drawHierarchy(in: captureView.bounds, afterScreenUpdates: true)
+		}
+	}
+
+	private func resolvedCaptureView() -> UIView? {
+		guard let probeView else { return nil }
+
+		for candidate in probeView.superviewChain() {
+			if let target = candidate.deepestRenderableDescendant() {
+				return target
+			}
+		}
+
+		return probeView.superview
+	}
+
+	private func resolvedBackgroundColor(in view: UIView) -> UIColor {
+		for candidate in view.superviewChain() {
+			let color = candidate.backgroundColor
+			if let color, color.cgColor.alpha > 0 {
+				return color
+			}
+		}
+		return .systemBackground
+	}
+}
+
+private enum ViewportImageCaptureError: LocalizedError {
+	case captureViewUnavailable
+	case emptyBounds
+	case encodingFailed
+
+	var errorDescription: String? {
+		switch self {
+		case .captureViewUnavailable:
+			return "Could not locate the active viewport for image export."
+		case .emptyBounds:
+			return "The active viewport has no visible bounds to export."
+		case .encodingFailed:
+			return "Failed to encode the captured viewport image."
+		}
+	}
+}
+
+private struct ViewportImageCaptureProbe: UIViewRepresentable {
+	let bridge: ViewportImageCaptureBridge
+
+	func makeUIView(context: Context) -> ViewportImageCaptureProbeView {
+		let view = ViewportImageCaptureProbeView()
+		view.bridge = bridge
+		return view
+	}
+
+	func updateUIView(_ uiView: ViewportImageCaptureProbeView, context: Context) {
+		uiView.bridge = bridge
+	}
+}
+
+private final class ViewportImageCaptureProbeView: UIView {
+	weak var bridge: ViewportImageCaptureBridge? {
+		didSet {
+			bridge?.probeView = self
+		}
+	}
+
+	override init(frame: CGRect) {
+		super.init(frame: frame)
+		backgroundColor = .clear
+		isOpaque = false
+		isUserInteractionEnabled = false
+	}
+
+	required init?(coder: NSCoder) {
+		super.init(coder: coder)
+		backgroundColor = .clear
+		isOpaque = false
+		isUserInteractionEnabled = false
+	}
+}
+
+private extension UIView {
+	func superviewChain() -> [UIView] {
+		var result: [UIView] = []
+		var current = superview
+		while let view = current {
+			result.append(view)
+			current = view.superview
+		}
+		return result
+	}
+
+	func deepestRenderableDescendant() -> UIView? {
+		if subviews.isEmpty {
+			return hasRenderableContent ? self : nil
+		}
+
+		for subview in subviews.reversed() {
+			if let match = subview.deepestRenderableDescendant() {
+				return match
+			}
+		}
+
+		return hasRenderableContent ? self : nil
+	}
+
+	var hasRenderableContent: Bool {
+		layer is CAMetalLayer || subviews.contains(where: { $0.hasRenderableContent })
+	}
+}
+#endif
 
 extension SIMD3 where Scalar == Float {
 	fileprivate var isFinite: Bool {
