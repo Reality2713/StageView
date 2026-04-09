@@ -182,7 +182,10 @@ public final class RealityKitProvider {
             
             // Discard if generation changed (cancelled/stale)
             guard currentLoadGeneration == generation, activeViewportID == viewportID else {
-                return
+                providerLogger.notice(
+                    "viewport_runtime phase=realitykit_provider_load_discarded reason=stale_result url=\(url.path, privacy: .public) viewport=\(viewportID.uuidString, privacy: .public) generation=\(generation, privacy: .public) current_generation=\(self.currentLoadGeneration, privacy: .public)"
+                )
+                throw CancellationError()
             }
             
             self.modelEntity = entity
@@ -200,7 +203,10 @@ public final class RealityKitProvider {
         } catch {
             // Discard if generation changed
             guard currentLoadGeneration == generation, activeViewportID == viewportID else {
-                return
+                providerLogger.notice(
+                    "viewport_runtime phase=realitykit_provider_load_discarded reason=stale_error url=\(url.path, privacy: .public) viewport=\(viewportID.uuidString, privacy: .public) generation=\(generation, privacy: .public) current_generation=\(self.currentLoadGeneration, privacy: .public)"
+                )
+                throw CancellationError()
             }
             
             loadError = error.localizedDescription
@@ -287,6 +293,7 @@ public final class RealityKitProvider {
     }
 
     private func teardownState() {
+        currentLoadGeneration &+= 1
         stopEmbeddedAnimations()
         modelEntity = nil
         currentFileURL = nil
