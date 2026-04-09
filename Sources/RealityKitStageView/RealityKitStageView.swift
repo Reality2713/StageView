@@ -416,6 +416,10 @@ public struct RealityKitStageView: View {
 		store: StoreOf<StageViewFeature>
 	) {
 		logger.debug("macOSPick called at \(location.x, privacy: .public),\(location.y, privacy: .public) size=\(size.width, privacy: .public)x\(size.height, privacy: .public)")
+		guard shouldAcceptViewportPick(runtime: runtime, store: store) else {
+			logger.debug("macOSPick ignored because RealityKit viewport is not in a stable loaded state")
+			return
+		}
 		guard size.width > 0, size.height > 0 else {
 			logger.debug("macOSPick: invalid size, returning")
 			return
@@ -483,6 +487,7 @@ public struct RealityKitStageView: View {
 		runtime: RealityKitProvider,
 		store: StoreOf<StageViewFeature>
 	) {
+		guard shouldAcceptViewportPick(runtime: runtime, store: store) else { return }
 		guard size.width > 0, size.height > 0 else { return }
 		guard let scene = runtime.rootEntity?.scene else { return }
 
@@ -522,6 +527,18 @@ public struct RealityKitStageView: View {
 		}
 	}
 	#endif
+
+	@MainActor
+	private static func shouldAcceptViewportPick(
+		runtime: RealityKitProvider,
+		store: StoreOf<StageViewFeature>
+	) -> Bool {
+		guard store.activeLoadCommand == nil else { return false }
+		guard store.modelURL != nil else { return false }
+		guard runtime.isLoaded else { return false }
+		guard runtime.modelEntity != nil else { return false }
+		return true
+	}
 
 	/// Observes store load request changes using `withObservationTracking` inside
 	/// a long-lived `.task`. This runs independently of SwiftUI's body evaluation,
