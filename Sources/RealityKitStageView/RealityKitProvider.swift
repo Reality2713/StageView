@@ -284,16 +284,17 @@ public final class RealityKitProvider {
     /// Clear the current model
     public func teardown() {
         activeViewportID = nil
+        currentLoadGeneration &+= 1
         teardownState()
     }
 
     public func teardown(viewportID: UUID) {
         guard activeViewportID == viewportID else { return }
+        currentLoadGeneration &+= 1
         teardownState()
     }
 
     private func teardownState() {
-        currentLoadGeneration &+= 1
         stopEmbeddedAnimations()
         modelEntity = nil
         currentFileURL = nil
