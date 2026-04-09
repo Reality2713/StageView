@@ -19,7 +19,6 @@ private let realityKitInternalNames: Set<String> = [
 ]
 
 private let providerLogger = Logger(subsystem: "RealityKitStageView", category: "Provider")
-private let realityKitStageLoadTimeoutSeconds = 60
 
 // MARK: - Discrete Snapshot
 
@@ -59,15 +58,6 @@ public struct RealityKitDiscreteSnapshot: Equatable, Sendable {
 public final class RealityKitProvider {
     public typealias PickPathResolver = @MainActor (_ directPath: String, _ entity: Entity, _ provider: RealityKitProvider) -> String?
 
-    private enum LoadError: LocalizedError {
-        case timeout(seconds: Int)
-        var errorDescription: String? {
-            switch self {
-            case let .timeout(seconds):
-                return "Stage load timed out after \(seconds)s"
-            }
-        }
-    }
     // MARK: - Scene Feedback (Read-only)
     public private(set) var cameraRotation: simd_quatf = simd_quatf(angle: 0, axis: [0, 1, 0])
     public private(set) var cameraDistance: Float = 5.0
@@ -118,6 +108,7 @@ public final class RealityKitProvider {
     private var activeViewportID: UUID?
     private var animationController: AnimationPlaybackController?
     public private(set) var hasEmbeddedAnimation: Bool = false
+    private var externallySuppliedSceneBounds: SceneBounds?
     private var discreteStateObservers = DiscreteStateObservers()
     
     /// Generation counter for stale-result detection
@@ -223,30 +214,32 @@ public final class RealityKitProvider {
 
     private func loadEntityAsync(_ url: URL) async throws -> Entity {
         let start = Date()
-        let loaderTask = Task.detached(priority: .userInitiated) {
-            try await Entity(contentsOf: url)
+        providerLogger.notice(
+            "viewport_runtime phase=realitykit_entity_load_started url=\(url.path, privacy: .public)"
+        )
+        let loaderTask = Task(priority: .userInitiated) { () async throws -> Entity in
+            providerLogger.notice(
+                "viewport_runtime phase=realitykit_entity_contents_of_started url=\(url.path, privacy: .public)"
+            )
+            return try await Entity(contentsOf: url)
         }
         do {
-            let entity = try await withThrowingTaskGroup(of: Entity.self) { group in
-                group.addTask {
-                    try await loaderTask.value
-                }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(realityKitStageLoadTimeoutSeconds))
-                    throw LoadError.timeout(seconds: realityKitStageLoadTimeoutSeconds)
-                }
-                guard let result = try await group.next() else {
-                    throw LoadError.timeout(seconds: realityKitStageLoadTimeoutSeconds)
-                }
-                group.cancelAll()
-                loaderTask.cancel()
-                return result
-            }
+            let entity = try await loaderTask.value
             providerLogger.notice(
                 "viewport_runtime phase=realitykit_entity_contents_of elapsed_ms=\(Int(Date().timeIntervalSince(start) * 1000), privacy: .public) url=\(url.path, privacy: .public)"
             )
             return entity
+        } catch is CancellationError {
+            providerLogger.notice(
+                "viewport_runtime phase=realitykit_entity_load_cancelled elapsed_ms=\(Int(Date().timeIntervalSince(start) * 1000), privacy: .public) url=\(url.path, privacy: .public)"
+            )
+            loaderTask.cancel()
+            throw CancellationError()
         } catch {
+            let nsError = error as NSError
+            providerLogger.error(
+                "viewport_runtime phase=realitykit_entity_load_failed elapsed_ms=\(Int(Date().timeIntervalSince(start) * 1000), privacy: .public) url=\(url.path, privacy: .public) domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
             loaderTask.cancel()
             throw error
         }
@@ -272,6 +265,15 @@ public final class RealityKitProvider {
         self.isZUp = isZUp
         emitDiscreteSnapshotIfNeeded()
     }
+
+    /// Accept host-provided authored bounds before RealityKit has imported the model.
+    /// This allows camera/grid framing to avoid a zero-bounds startup state.
+    public func setExternalSceneBounds(_ bounds: SceneBounds) {
+        externallySuppliedSceneBounds = bounds.isFrameable ? bounds : nil
+        guard sceneBounds != bounds else { return }
+        sceneBounds = bounds
+        emitDiscreteSnapshotIfNeeded()
+    }
     
     /// Clear the current model
     public func teardown() {
@@ -289,7 +291,7 @@ public final class RealityKitProvider {
         modelEntity = nil
         currentFileURL = nil
         isLoaded = false
-        sceneBounds = SceneBounds()
+        sceneBounds = externallySuppliedSceneBounds ?? SceneBounds()
         selectedPrimPath = nil
         loadError = nil
         primPathToEntityID.removeAll()

@@ -133,6 +133,7 @@ public struct RealityKitStageView: View {
 		taskBoundViewport
 			.onAppear {
 				runtime.activateViewport(viewportInstanceID)
+				runtime.setExternalSceneBounds(store.sceneBounds)
 				logger.debug(
 					"RealityKit viewport appeared: \(self.viewportInstanceID.uuidString, privacy: .public)"
 				)
@@ -153,6 +154,11 @@ public struct RealityKitStageView: View {
 				guard requestID != nil else { return }
 				Task { @MainActor in
 					runtime.resetCamera()
+				}
+			}
+			.onChange(of: store.sceneBounds) { _, newBounds in
+				Task { @MainActor in
+					runtime.setExternalSceneBounds(newBounds)
 				}
 			}
 			.onChange(of: runtime.modelEntity.map { ObjectIdentifier($0) }) {
@@ -523,9 +529,20 @@ public struct RealityKitStageView: View {
 	/// `NSHostingController` boundaries that break `.onChange` delivery.
 	private func observeLoadRequests() async {
 		var lastHandledRequestID: UUID?
+		var activeLoadTask: Task<Void, Never>?
+
+		func scheduleCurrentRequest() {
+			let currentRequestID = store.loadRequestID
+			guard currentRequestID != lastHandledRequestID else { return }
+			lastHandledRequestID = currentRequestID
+			activeLoadTask?.cancel()
+			activeLoadTask = Task {
+				await handleLoadRequestIfNeeded(requestID: currentRequestID)
+			}
+		}
 
 		// Process the initial state on mount
-		await handleLoadRequestIfNeeded(lastHandled: &lastHandledRequestID)
+		scheduleCurrentRequest()
 
 		// Then observe changes via withObservationTracking
 		while !Task.isCancelled {
@@ -542,21 +559,13 @@ public struct RealityKitStageView: View {
 			logger.debug(
 				"observeLoadRequests: detected requestID change to \(requestID.uuidString, privacy: .public) viewport=\(self.viewportInstanceID.uuidString, privacy: .public)"
 			)
-			await handleLoadRequestIfNeeded(lastHandled: &lastHandledRequestID)
+			scheduleCurrentRequest()
 		}
+
+		activeLoadTask?.cancel()
 	}
 
-	private func handleLoadRequestIfNeeded(lastHandled: inout UUID?) async {
-		let currentRequestID = store.loadRequestID
-
-		guard currentRequestID != lastHandled else {
-			logger.debug(
-				"handleLoadRequestIfNeeded: skipping duplicate requestID=\(currentRequestID.uuidString, privacy: .public)"
-			)
-			return
-		}
-		lastHandled = currentRequestID
-
+	private func handleLoadRequestIfNeeded(requestID currentRequestID: UUID) async {
 		guard let command = store.activeLoadCommand else {
 			logger.debug(
 				"handleLoadRequestIfNeeded: no active command for requestID=\(currentRequestID.uuidString, privacy: .public) modelURL=\(store.modelURL?.lastPathComponent ?? "nil", privacy: .public)"
@@ -571,6 +580,7 @@ public struct RealityKitStageView: View {
 			}
 			return
 		}
+		guard !Task.isCancelled else { return }
 
 		// Wait for rootEntity if it hasn't been set yet
 		if rootEntity == nil {
@@ -582,6 +592,7 @@ public struct RealityKitStageView: View {
 				if rootEntity != nil || Task.isCancelled { break }
 			}
 			guard rootEntity != nil else {
+				guard !Task.isCancelled else { return }
 				logger.error(
 					"handleLoadRequestIfNeeded: rootEntity never mounted, failing command=\(command.id.uuidString, privacy: .public)"
 				)
@@ -591,6 +602,7 @@ public struct RealityKitStageView: View {
 				return
 			}
 		}
+		guard !Task.isCancelled else { return }
 
 		guard runtime.isActiveViewport(viewportInstanceID) else {
 			logger.warning(

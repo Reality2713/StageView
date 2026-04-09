@@ -263,8 +263,6 @@ public struct StageViewFeature {
                 return .none
 
             case .viewportAppeared:
-                guard state.activeLoadCommand != nil else { return .none }
-                state.loadRequestID = uuid()
                 return .none
 
             case .delegate:
