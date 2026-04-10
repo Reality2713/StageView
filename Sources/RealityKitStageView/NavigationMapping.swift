@@ -52,6 +52,11 @@ public struct RealityKitNavigationMapping: Sendable, Equatable {
     // SwiftUI gestures (Apple/Touchpad) vs NSEvent monitors (DCC presets)
     public var useSwiftUIGestures: Bool
 
+    // Momentum behavior
+    /// When `false`, pan gestures end immediately on finger lift with no coasting.
+    /// Orbit inertia is unaffected. Defaults to `true` for backward compatibility.
+    public var panInertiaEnabled: Bool
+
     public init(
         orbit: MouseBinding,
         pan: MouseBinding,
@@ -60,7 +65,8 @@ public struct RealityKitNavigationMapping: Sendable, Equatable {
         optionScrollAction: CameraAction = .zoom,
         invertZoomDirection: Bool = false,
         invertScrollDirection: Bool = false,
-        useSwiftUIGestures: Bool = true
+        useSwiftUIGestures: Bool = true,
+        panInertiaEnabled: Bool = true
     ) {
         self.orbit = orbit
         self.pan = pan
@@ -70,6 +76,7 @@ public struct RealityKitNavigationMapping: Sendable, Equatable {
         self.invertZoomDirection = invertZoomDirection
         self.invertScrollDirection = invertScrollDirection
         self.useSwiftUIGestures = useSwiftUIGestures
+        self.panInertiaEnabled = panInertiaEnabled
     }
 }
 

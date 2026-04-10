@@ -592,6 +592,7 @@ final class ArcballTouchController: ObservableObject {
     }
 
     private func startPanMomentum(velocity: CGPoint) {
+        guard navigationMapping.panInertiaEnabled else { return }
         guard hypot(velocity.x, velocity.y) > 50 else { return }
         panVelocity = velocity
         ensureDisplayLink()
