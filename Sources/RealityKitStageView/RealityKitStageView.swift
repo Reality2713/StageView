@@ -294,10 +294,10 @@ public struct RealityKitStageView: View {
 				ViewportImageCaptureProbe(bridge: imageCaptureBridge)
 					.allowsHitTesting(false)
 			}
+			#endif
 			.task(id: store.imageCaptureRequestID) {
 				await captureViewportImageIfRequested(resolvedBackgroundColor: resolvedBackgroundColor)
 			}
-			#endif
 	}
 
 	private var resolvedBackgroundColor: Color {
@@ -1475,16 +1475,15 @@ public struct RealityKitStageView: View {
 		)
 	}
 
-	#if os(iOS)
 	@MainActor
 	private func captureViewportImageIfRequested(resolvedBackgroundColor: Color) async {
 		guard store.imageCaptureRequestID != nil else { return }
 
-		imageCaptureBridge.backgroundColor = UIColor(resolvedBackgroundColor)
-
 		do {
-			let image = try await imageCaptureBridge.captureImage()
-			let fileURL = try persistCapturedViewportImage(image)
+			let cgImage = try await captureComposedViewportImage(
+				resolvedBackgroundColor: resolvedBackgroundColor
+			)
+			let fileURL = try persistCapturedViewportImage(cgImage)
 			store.send(.delegate(.imageCaptured(fileURL)))
 		} catch {
 			logger.error("Viewport capture failed: \(error.localizedDescription, privacy: .public)")
@@ -1492,11 +1491,7 @@ public struct RealityKitStageView: View {
 		}
 	}
 
-	private func persistCapturedViewportImage(_ image: UIImage) throws -> URL {
-		guard let cgImage = image.cgImage else {
-			throw ViewportImageCaptureError.encodingFailed
-		}
-
+	private func persistCapturedViewportImage(_ cgImage: CGImage) throws -> URL {
 		let directoryURL = FileManager.default.temporaryDirectory
 			.appendingPathComponent("gantry-viewport-captures", isDirectory: true)
 		try FileManager.default.createDirectory(
@@ -1560,13 +1555,94 @@ public struct RealityKitStageView: View {
 			],
 		]
 	}
-	#endif
 
+	@MainActor
+	private func captureComposedViewportImage(
+		resolvedBackgroundColor: Color
+	) async throws -> CGImage {
+		if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
+			return try await capturePostProcessedViewportImage()
+		}
+
+		#if os(iOS)
+			imageCaptureBridge.backgroundColor = PlatformColor(resolvedBackgroundColor)
+			let image = try await imageCaptureBridge.captureImage()
+			guard let cgImage = image.cgImage else {
+				throw ViewportImageCaptureError.encodingFailed
+			}
+			return cgImage
+		#else
+			throw ViewportImageCaptureError.captureUnavailable
+		#endif
+	}
+
+	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
+	@MainActor
+	private func capturePostProcessedViewportImage() async throws -> CGImage {
+		let effect = activePostProcessEffect()
+		let colorSpace = currentCaptureColorSpace()
+
+		return try await withCheckedThrowingContinuation { continuation in
+			effect.requestFrameCapture(colorSpace: colorSpace) { result in
+				continuation.resume(with: result)
+			}
+			outlineBox.effect = effect
+			outlineGeneration += 1
+		}
+	}
+
+	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
+	@MainActor
+	private func activePostProcessEffect() -> PostProcessOutlineEffect {
+		if let existing = outlineBox.effect as? PostProcessOutlineEffect {
+			return existing
+		}
+		return PostProcessOutlineEffect(
+			color: configuration.outlineConfiguration.color,
+			radius: 2
+		)
+	}
+
+	@MainActor
+	private func currentCaptureColorSpace() -> CGColorSpace {
+		#if os(macOS)
+			if let colorSpace = NSApp.keyWindow?.colorSpace?.cgColorSpace {
+				return colorSpace
+			}
+		#else
+			let displayGamut = imageCaptureBridge.probeView?.window?.screen.traitCollection.displayGamut
+				?? UIScreen.main.traitCollection.displayGamut
+			if displayGamut == .P3, let p3 = CGColorSpace(name: CGColorSpace.displayP3) {
+				return p3
+			}
+		#endif
+		return CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+	}
 }
 
 extension SIMD4 where Scalar == Float {
 	fileprivate var isFinite: Bool {
 		x.isFinite && y.isFinite && z.isFinite && w.isFinite
+	}
+}
+
+private enum ViewportImageCaptureError: LocalizedError {
+	case captureUnavailable
+	case captureViewUnavailable
+	case emptyBounds
+	case encodingFailed
+
+	var errorDescription: String? {
+		switch self {
+		case .captureUnavailable:
+			return "Image export requires the post-processed renderer on this platform version."
+		case .captureViewUnavailable:
+			return "Could not locate the active viewport for image export."
+		case .emptyBounds:
+			return "The active viewport has no visible bounds to export."
+		case .encodingFailed:
+			return "Failed to encode the captured viewport image."
+		}
 	}
 }
 
@@ -1617,23 +1693,6 @@ private final class ViewportImageCaptureBridge {
 			}
 		}
 		return .systemBackground
-	}
-}
-
-private enum ViewportImageCaptureError: LocalizedError {
-	case captureViewUnavailable
-	case emptyBounds
-	case encodingFailed
-
-	var errorDescription: String? {
-		switch self {
-		case .captureViewUnavailable:
-			return "Could not locate the active viewport for image export."
-		case .emptyBounds:
-			return "The active viewport has no visible bounds to export."
-		case .encodingFailed:
-			return "Failed to encode the captured viewport image."
-		}
 	}
 }
 

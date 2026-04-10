@@ -1,3 +1,4 @@
+import CoreGraphics
 import Metal
 import OSLog
 import RealityKit
@@ -32,6 +33,26 @@ final class OutlineRenderState: @unchecked Sendable {
     var pending: [PendingEntry]? {
         get { lock.withLock { _pending } }
         set { lock.withLock { _pending = newValue } }
+    }
+
+    struct PendingCapture {
+        let colorSpace: CGColorSpace
+        let onComplete: @Sendable (Result<CGImage, Error>) -> Void
+    }
+
+    private var _pendingCapture: PendingCapture?
+
+    var pendingCapture: PendingCapture? {
+        get { lock.withLock { _pendingCapture } }
+        set { lock.withLock { _pendingCapture = newValue } }
+    }
+
+    func takePendingCapture() -> PendingCapture? {
+        lock.withLock {
+            let capture = _pendingCapture
+            _pendingCapture = nil
+            return capture
+        }
     }
 
     // MARK: Compiled Metal state
@@ -144,6 +165,14 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
     public init(color: Color = .cyan, radius: Int = 2) {
         self.color = color
         self.radius = radius
+    }
+
+    @MainActor
+    public func requestFrameCapture(
+        colorSpace: CGColorSpace,
+        onComplete: @escaping @Sendable (Result<CGImage, Error>) -> Void
+    ) {
+        state.pendingCapture = .init(colorSpace: colorSpace, onComplete: onComplete)
     }
 
     // MARK: Selection API
@@ -352,6 +381,7 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         let device = context.device
         let textureWidth = context.sourceColorTexture.width
         let textureHeight = context.sourceColorTexture.height
+        let cb = context.commandBuffer
 
         state.flushPending(device: device)
 
@@ -370,12 +400,16 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
             let compositePipeline = state.compositePipeline
         else {
             passThrough(context: context)
+            enqueueFrameCaptureIfNeeded(
+                texture: context.targetColorTexture,
+                commandBuffer: cb,
+                device: device
+            )
             return
         }
 
         let w = textureWidth
         let h = textureHeight
-        let cb = context.commandBuffer
 
         guard
             let maskTex  = makeSingleChannelTexture(device: device, width: w, height: h,
@@ -432,6 +466,11 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         cenc2.setBytes(&c, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
         dispatchFullscreen(encoder: cenc2, pipeline: compositePipeline, width: w, height: h)
         cenc2.endEncoding()
+        enqueueFrameCaptureIfNeeded(
+            texture: context.targetColorTexture,
+            commandBuffer: cb,
+            device: device
+        )
     }
 
     // MARK: Helpers
@@ -457,6 +496,77 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
             destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
         )
         blit.endEncoding()
+    }
+
+    private func enqueueFrameCaptureIfNeeded(
+        texture: any MTLTexture,
+        commandBuffer: any MTLCommandBuffer,
+        device: any MTLDevice
+    ) {
+        guard let capture = state.takePendingCapture() else { return }
+        guard texture.pixelFormat == .bgra8Unorm || texture.pixelFormat == .bgra8Unorm_srgb else {
+            capture.onComplete(
+                .failure(PostProcessFrameCaptureError.unsupportedPixelFormat(texture.pixelFormat))
+            )
+            return
+        }
+
+        let bytesPerPixel = 4
+        let unalignedBytesPerRow = texture.width * bytesPerPixel
+        let bytesPerRow = ((unalignedBytesPerRow + 0xFF) / 0x100) * 0x100
+        let byteCount = bytesPerRow * texture.height
+
+        guard let buffer = device.makeBuffer(length: byteCount, options: .storageModeShared) else {
+            capture.onComplete(.failure(PostProcessFrameCaptureError.bufferAllocationFailed))
+            return
+        }
+
+        guard let blit = commandBuffer.makeBlitCommandEncoder() else {
+            capture.onComplete(.failure(PostProcessFrameCaptureError.blitEncodingFailed))
+            return
+        }
+        blit.copy(
+            from: texture,
+            sourceSlice: 0,
+            sourceLevel: 0,
+            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+            sourceSize: MTLSize(width: texture.width, height: texture.height, depth: 1),
+            to: buffer,
+            destinationOffset: 0,
+            destinationBytesPerRow: bytesPerRow,
+            destinationBytesPerImage: byteCount
+        )
+        blit.endEncoding()
+
+        commandBuffer.addCompletedHandler { _ in
+            let data = Data(bytes: buffer.contents(), count: byteCount)
+            guard let provider = CGDataProvider(data: data as CFData) else {
+                capture.onComplete(.failure(PostProcessFrameCaptureError.providerCreationFailed))
+                return
+            }
+
+            let bitmapInfo = CGBitmapInfo.byteOrder32Little.union(
+                CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
+            )
+            guard let cgImage = CGImage(
+                width: texture.width,
+                height: texture.height,
+                bitsPerComponent: 8,
+                bitsPerPixel: 32,
+                bytesPerRow: bytesPerRow,
+                space: capture.colorSpace,
+                bitmapInfo: bitmapInfo,
+                provider: provider,
+                decode: nil,
+                shouldInterpolate: false,
+                intent: .defaultIntent
+            ) else {
+                capture.onComplete(.failure(PostProcessFrameCaptureError.imageCreationFailed))
+                return
+            }
+
+            capture.onComplete(.success(cgImage))
+        }
     }
 
     private func makeSingleChannelTexture(
@@ -493,5 +603,30 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
             depth:  1
         )
         encoder.dispatchThreadgroups(grid, threadsPerThreadgroup: tgs)
+    }
+}
+
+@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
+@available(visionOS, unavailable)
+private enum PostProcessFrameCaptureError: LocalizedError {
+    case blitEncodingFailed
+    case bufferAllocationFailed
+    case imageCreationFailed
+    case providerCreationFailed
+    case unsupportedPixelFormat(MTLPixelFormat)
+
+    var errorDescription: String? {
+        switch self {
+        case .blitEncodingFailed:
+            return "Failed to encode the GPU readback for viewport capture."
+        case .bufferAllocationFailed:
+            return "Failed to allocate GPU readback storage for viewport capture."
+        case .imageCreationFailed:
+            return "Failed to construct an image from the captured viewport buffer."
+        case .providerCreationFailed:
+            return "Failed to prepare the captured viewport data for export."
+        case let .unsupportedPixelFormat(pixelFormat):
+            return "Viewport capture does not support pixel format \(pixelFormat.rawValue)."
+        }
     }
 }
