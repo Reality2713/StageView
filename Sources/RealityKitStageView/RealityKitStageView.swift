@@ -461,12 +461,14 @@ public struct RealityKitStageView: View {
 		if let hit = hits.first {
 			let path = runtime.preferredPickPrimPath(from: hits.map(\.entity))
 			logger.debug("macOSPick hit entity='\(hit.entity.name, privacy: .public)' path=\(path ?? "nil", privacy: .public)")
+			guard let path else {
+				logger.debug("macOSPick hit had no mapped prim path — preserving existing selection")
+				return
+			}
 			runtime.userDidPick(path)
 			store.send(.entityPicked(path))
 		} else {
-			logger.debug("macOSPick no hit — clearing selection")
-			runtime.userDidPick(nil)
-			store.send(.entityPicked(nil))
+			logger.debug("macOSPick no hit — preserving existing selection")
 		}
 	}
 	#endif
@@ -519,11 +521,9 @@ public struct RealityKitStageView: View {
 
 		if let _ = hits.first {
 			let path = runtime.preferredPickPrimPath(from: hits.map(\.entity))
+			guard let path else { return }
 			runtime.userDidPick(path)
 			store.send(.entityPicked(path))
-		} else {
-			runtime.userDidPick(nil)
-			store.send(.entityPicked(nil))
 		}
 	}
 	#endif

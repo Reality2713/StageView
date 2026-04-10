@@ -195,6 +195,9 @@ public struct StageViewFeature {
                 return .none
 
             case let .entityPicked(path):
+                guard let path else {
+                    return .none
+                }
                 return .send(.delegate(.userPickedPrim(path)))
 
             case .frameRequested:

@@ -685,18 +685,9 @@ extension RealityKitProvider {
             return exact
         }
 
-        if let ancestorPath = nearestAncestorMappedPath(for: normalized),
-           let ancestor = entity(for: ancestorPath) {
-            return ancestor
-        }
-
         for shiftedPath in droppedLeadingSegmentCandidates(for: normalized) {
             if let direct = entity(for: shiftedPath) {
                 return direct
-            }
-            if let ancestorPath = nearestAncestorMappedPath(for: shiftedPath),
-               let ancestor = entity(for: ancestorPath) {
-                return ancestor
             }
         }
 
@@ -708,6 +699,18 @@ extension RealityKitProvider {
         if let suffixPath = bestSuffixMatchPath(for: normalized),
            let suffix = entity(for: suffixPath) {
             return suffix
+        }
+
+        if let ancestorPath = nearestAncestorMappedPath(for: normalized),
+           let ancestor = entity(for: ancestorPath) {
+            return ancestor
+        }
+
+        for shiftedPath in droppedLeadingSegmentCandidates(for: normalized) {
+            if let ancestorPath = nearestAncestorMappedPath(for: shiftedPath),
+               let ancestor = entity(for: ancestorPath) {
+                return ancestor
+            }
         }
 
         return nil
