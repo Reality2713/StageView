@@ -17,6 +17,16 @@ struct StageViewFeatureLifecycleTests {
     }
 
     @Test
+    func nilEntityPickDelegatesDeselectionToApp() async {
+        let store = TestStore(initialState: StageViewFeature.State()) {
+            StageViewFeature()
+        }
+
+        await store.send(.entityPicked(nil))
+        await store.receive(.delegate(.userPickedPrim(nil)))
+    }
+
+    @Test
     func clearResetsOnlyCommandState() async {
         let url = URL(fileURLWithPath: "/tmp/model.usda")
         let store = TestStore(
