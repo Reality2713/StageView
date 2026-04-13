@@ -187,9 +187,7 @@ public struct RealityKitStageView: View {
 	}
 
 	private var effectiveEnvironmentBlurBucket: Int {
-		guard store.environmentURL?.lastPathComponent.lowercased().hasPrefix("ibl.") == true else {
-			return 0
-		}
+		guard store.environmentURL != nil else { return 0 }
 		let bucketCount = 12.0
 		let normalized = Double(min(max(configuration.environmentBlurAmount, 0), 1))
 		return Int((normalized * bucketCount).rounded(.toNearestOrAwayFromZero))
@@ -1231,100 +1229,61 @@ public struct RealityKitStageView: View {
 			return
 		}
 
-		// Image processing: If the user requested "Soft Reflections" by pointing to 'ibl.hdr',
-		// we intercept it to avoid feeding a low-energy irradiance map to RealityKit.
-		// Instead, we find the sharp 'ref.hdr', apply a hardware blur to it, and pass THAT
-		// to RealityKit. This preserves HDR peaks (allowing max exposure to work properly) while
-		// still providing soft specular and a soft background.
-		let isBlurRequested = ["ibl.hdr", "ibl.exr"].contains(url.lastPathComponent.lowercased())
-		let blurURL = url.deletingLastPathComponent().appendingPathComponent(
-			url.lastPathComponent.lowercased().replacingOccurrences(of: "ibl", with: "blur")
-		)
-		let refURL = url.deletingLastPathComponent().appendingPathComponent(
-			url.lastPathComponent.lowercased().replacingOccurrences(of: "ibl", with: "ref")
-		)
-		let resolvedFileURL: URL = {
-			if !isBlurRequested {
-				return url
-			}
-			if FileManager.default.fileExists(atPath: blurURL.path) {
-				return blurURL
-			}
-			if FileManager.default.fileExists(atPath: refURL.path) {
-				return refURL
-			}
-			return url
-		}()
-
+		// Blur is driven entirely by environmentBlurAmount — no filename-based detection.
+		// The caller always provides the render-quality ref.* URL; cgImage is its content.
 		let blurAmount = min(max(configuration.environmentBlurAmount, 0), 1)
+		let isBlurRequested = blurAmount > 0.001
+
+		// Optional user-provided pre-blurred sibling (blur.hdr / blur.exr next to ref.hdr).
+		let blurFileName = url.lastPathComponent.lowercased()
+			.replacingOccurrences(of: "ref", with: "blur")
+		let blurURL = url.deletingLastPathComponent().appendingPathComponent(blurFileName)
 
 		let resolvedCGImage: CGImage = await Task.detached(priority: .userInitiated) {
-			let fileName = url.lastPathComponent.lowercased()
-			
 			if !isBlurRequested {
 				return cgImage
 			}
-			
+
 			let opts: [String: Any] = [
 				kCGImageSourceShouldAllowFloat as String: true,
 				kCGImageSourceShouldCache as String: false,
 			]
-			
-			// Priority 1: User-provided pre-blurred HDR image
+
+			// Priority 1: User-provided pre-blurred HDR sibling.
 			if FileManager.default.fileExists(atPath: blurURL.path) {
-				if let src = CGImageSourceCreateWithURL(blurURL as CFURL, opts as CFDictionary),
-				   let img = CGImageSourceCreateImageAtIndex(src, 0, opts as CFDictionary) {
-					return img
-				}
-			}
-			
-			// Priority 2: Load the sharp ref map and blur it at runtime to preserve peak brightness
-			if FileManager.default.fileExists(atPath: refURL.path) {
-				// Use CGDataProvider (same as the non-blur outer load path) so both routes
-				// produce CGImages with identical color-space tagging on linear HDR data.
-				// CGImageSourceCreateWithURL can apply color management that shifts linear
-				// float values, making blur=0 appear darker than Soft Reflections OFF.
-				if let dp = CGDataProvider(url: refURL as CFURL),
+				if let dp = CGDataProvider(url: blurURL as CFURL),
 				   let src = CGImageSourceCreateWithDataProvider(dp, opts as CFDictionary),
 				   let img = CGImageSourceCreateImageAtIndex(src, 0, opts as CFDictionary) {
-					guard blurAmount > 0.001 else {
-						return img
-					}
-
-					let ciImage = CIImage(cgImage: img)
-					if let filter = CIFilter(name: "CIGaussianBlur") {
-						filter.setValue(ciImage, forKey: kCIInputImageKey)
-						// Scale the default soft-reflection blur with a normalized user control.
-						let radius = (CGFloat(img.height) / 35.0) * CGFloat(blurAmount)
-						filter.setValue(radius, forKey: kCIInputRadiusKey)
-						if let output = filter.outputImage {
-							// NSNull() tells CoreImage not to apply color management, preserving raw HDR values.
-							// Use .RGBAf to preserve 32-bit float precision through the blur.
-							// The default createCGImage(_:from:) produces 8-bit output which
-							// strips HDR peak values, causing EnvironmentResource to throw or
-							// receive a non-HDR image with no light energy above 1.0.
-							//
-							// IMPORTANT: pass the original image's colorSpace so the output
-							// CGImage retains the same tag (e.g. kCGColorSpaceExtendedLinearSRGB).
-							// With `colorSpace: nil` the output is untagged, and downstream consumers
-							// (EnvironmentResource) may assume sRGB gamma, double-boosting
-							// linear HDR values and causing blown-out reflections.
-							let context = CIContext(options: [.workingColorSpace: NSNull()])
-							if let blurredCGImage = context.createCGImage(
-								output,
-								from: ciImage.extent,
-								format: .RGBAf,
-								colorSpace: img.colorSpace
-							) {
-								return blurredCGImage
-							}
-						}
-					}
-					// If blur fails, return sharp map rather than diffuse map
 					return img
 				}
 			}
-			
+
+			// Priority 2: Gaussian blur the ref.* image at runtime.
+			// cgImage is already the render-quality ref.* content — no secondary load needed.
+			let ciImage = CIImage(cgImage: cgImage)
+			if let filter = CIFilter(name: "CIGaussianBlur") {
+				filter.setValue(ciImage, forKey: kCIInputImageKey)
+				let radius = (CGFloat(cgImage.height) / 35.0) * CGFloat(blurAmount)
+				filter.setValue(radius, forKey: kCIInputRadiusKey)
+				if let output = filter.outputImage {
+					// workingColorSpace: NSNull() — skip color management, keep raw HDR values.
+					// format: .RGBAf — 32-bit float, preserves HDR peaks above 1.0.
+					// colorSpace: cgImage.colorSpace — retain the original linear-HDR tag so
+					// EnvironmentResource interprets the data correctly. Without this the
+					// output is untagged and callers may assume sRGB gamma, blowing out
+					// linear float values.
+					let context = CIContext(options: [.workingColorSpace: NSNull()])
+					if let blurredCGImage = context.createCGImage(
+						output,
+						from: ciImage.extent,
+						format: .RGBAf,
+						colorSpace: cgImage.colorSpace
+					) {
+						return blurredCGImage
+					}
+				}
+			}
+			// Blur failed — return the sharp map rather than nothing.
 			return cgImage
 		}.value
 
