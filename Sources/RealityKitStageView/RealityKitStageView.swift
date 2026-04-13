@@ -1280,15 +1280,33 @@ public struct RealityKitStageView: View {
 			
 			// Priority 2: Load the sharp ref map and blur it at runtime to preserve peak brightness
 			if FileManager.default.fileExists(atPath: refURL.path) {
-				if let src = CGImageSourceCreateWithURL(refURL as CFURL, opts as CFDictionary),
+				// Use CGDataProvider (same as the non-blur outer load path) so both routes
+				// produce CGImages with identical color-space tagging on linear HDR data.
+				// CGImageSourceCreateWithURL can apply color management that shifts linear
+				// float values, making blur=0 appear darker than Soft Reflections OFF.
+				if let dp = CGDataProvider(url: refURL as CFURL),
+				   let src = CGImageSourceCreateWithDataProvider(dp, opts as CFDictionary),
 				   let img = CGImageSourceCreateImageAtIndex(src, 0, opts as CFDictionary) {
 					guard blurAmount > 0.001 else {
 						return img
 					}
-					
+
 					let ciImage = CIImage(cgImage: img)
+					// Clamp edges before blurring so the Gaussian kernel samples repeated
+					// border pixels instead of transparent black. Without this the blur
+					// "bleeds" energy outside the image boundary; cropping back to the
+					// original extent then discards that energy, making the result darker
+					// at higher blur amounts.
+					let clampedImage: CIImage
+					if let clampFilter = CIFilter(name: "CIAffineClamp") {
+						clampFilter.setValue(ciImage, forKey: kCIInputImageKey)
+						clampFilter.setValue(CGAffineTransform.identity, forKey: kCIInputTransformKey)
+						clampedImage = clampFilter.outputImage ?? ciImage
+					} else {
+						clampedImage = ciImage
+					}
 					if let filter = CIFilter(name: "CIGaussianBlur") {
-						filter.setValue(ciImage, forKey: kCIInputImageKey)
+						filter.setValue(clampedImage, forKey: kCIInputImageKey)
 						// Scale the default soft-reflection blur with a normalized user control.
 						let radius = (CGFloat(img.height) / 35.0) * CGFloat(blurAmount)
 						filter.setValue(radius, forKey: kCIInputRadiusKey)
@@ -1492,6 +1510,7 @@ public struct RealityKitStageView: View {
 	}
 
 	private func persistCapturedViewportImage(_ cgImage: CGImage) throws -> URL {
+		let imageType = preferredViewportImageType(for: cgImage)
 		let directoryURL = FileManager.default.temporaryDirectory
 			.appendingPathComponent("gantry-viewport-captures", isDirectory: true)
 		try FileManager.default.createDirectory(
@@ -1501,11 +1520,11 @@ public struct RealityKitStageView: View {
 
 		let fileURL = directoryURL
 			.appendingPathComponent("viewport-\(UUID().uuidString)")
-			.appendingPathExtension(UTType.jpeg.preferredFilenameExtension ?? "jpg")
+			.appendingPathExtension(imageType.preferredFilenameExtension ?? "img")
 
 		guard let destination = CGImageDestinationCreateWithURL(
 			fileURL as CFURL,
-			UTType.jpeg.identifier as CFString,
+			imageType.identifier as CFString,
 			1,
 			nil
 		) else {
@@ -1515,7 +1534,7 @@ public struct RealityKitStageView: View {
 		CGImageDestinationAddImage(
 			destination,
 			cgImage,
-			viewportImageMetadata() as CFDictionary
+			viewportImageMetadata(for: imageType) as CFDictionary
 		)
 		guard CGImageDestinationFinalize(destination) else {
 			throw ViewportImageCaptureError.encodingFailed
@@ -1523,7 +1542,54 @@ public struct RealityKitStageView: View {
 		return fileURL
 	}
 
-	private func viewportImageMetadata() -> [CFString: Any] {
+	private func preferredViewportImageType(for cgImage: CGImage) -> UTType {
+		imageHasMeaningfulAlpha(cgImage) ? .png : .jpeg
+	}
+
+	private func imageHasMeaningfulAlpha(_ cgImage: CGImage) -> Bool {
+		let alphaInfo = cgImage.alphaInfo
+		let alphaCapable: Bool
+		switch alphaInfo {
+		case .none, .noneSkipFirst, .noneSkipLast:
+			alphaCapable = false
+		default:
+			alphaCapable = true
+		}
+		guard alphaCapable else { return false }
+
+		let width = cgImage.width
+		let height = cgImage.height
+		guard width > 0, height > 0 else { return false }
+
+		let bytesPerPixel = 4
+		let bytesPerRow = width * bytesPerPixel
+		let byteCount = bytesPerRow * height
+		var rgba = [UInt8](repeating: 0, count: byteCount)
+
+		guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+			let context = CGContext(
+				data: &rgba,
+				width: width,
+				height: height,
+				bitsPerComponent: 8,
+				bytesPerRow: bytesPerRow,
+				space: colorSpace,
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
+			return false
+		}
+
+		context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+		for pixelStart in stride(from: 0, to: byteCount, by: bytesPerPixel) {
+			if rgba[pixelStart + 3] < 255 {
+				return true
+			}
+		}
+		return false
+	}
+
+	private func viewportImageMetadata(for imageType: UTType) -> [CFString: Any] {
 		let shortVersion = Bundle.main.object(
 			forInfoDictionaryKey: "CFBundleShortVersionString"
 		) as? String
@@ -1543,8 +1609,7 @@ public struct RealityKitStageView: View {
 
 		let software = "Gantry\(versionSuffix)"
 		let description = "Exported from Gantry: Scene Converter"
-		return [
-			kCGImageDestinationLossyCompressionQuality: 0.92,
+		var metadata: [CFString: Any] = [
 			kCGImagePropertyTIFFDictionary: [
 				kCGImagePropertyTIFFSoftware: software,
 				kCGImagePropertyTIFFImageDescription: description,
@@ -1554,6 +1619,10 @@ public struct RealityKitStageView: View {
 				kCGImagePropertyExifUserComment: description,
 			],
 		]
+		if imageType == .jpeg {
+			metadata[kCGImageDestinationLossyCompressionQuality] = 0.92
+		}
+		return metadata
 	}
 
 	@MainActor
