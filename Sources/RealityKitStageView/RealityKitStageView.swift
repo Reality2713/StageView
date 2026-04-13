@@ -1298,17 +1298,23 @@ public struct RealityKitStageView: View {
 						let radius = (CGFloat(img.height) / 35.0) * CGFloat(blurAmount)
 						filter.setValue(radius, forKey: kCIInputRadiusKey)
 						if let output = filter.outputImage {
-							// NSNull() tells CoreImage not to apply color management, preserving raw HDR values
+							// NSNull() tells CoreImage not to apply color management, preserving raw HDR values.
 							// Use .RGBAf to preserve 32-bit float precision through the blur.
 							// The default createCGImage(_:from:) produces 8-bit output which
 							// strips HDR peak values, causing EnvironmentResource to throw or
 							// receive a non-HDR image with no light energy above 1.0.
+							//
+							// IMPORTANT: pass the original image's colorSpace so the output
+							// CGImage retains the same tag (e.g. kCGColorSpaceExtendedLinearSRGB).
+							// With `colorSpace: nil` the output is untagged, and downstream consumers
+							// (EnvironmentResource) may assume sRGB gamma, double-boosting
+							// linear HDR values and causing blown-out reflections.
 							let context = CIContext(options: [.workingColorSpace: NSNull()])
 							if let blurredCGImage = context.createCGImage(
 								output,
 								from: ciImage.extent,
 								format: .RGBAf,
-								colorSpace: nil
+								colorSpace: img.colorSpace
 							) {
 								return blurredCGImage
 							}
