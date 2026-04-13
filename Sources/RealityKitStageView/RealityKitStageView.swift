@@ -1292,21 +1292,8 @@ public struct RealityKitStageView: View {
 					}
 
 					let ciImage = CIImage(cgImage: img)
-					// Clamp edges before blurring so the Gaussian kernel samples repeated
-					// border pixels instead of transparent black. Without this the blur
-					// "bleeds" energy outside the image boundary; cropping back to the
-					// original extent then discards that energy, making the result darker
-					// at higher blur amounts.
-					let clampedImage: CIImage
-					if let clampFilter = CIFilter(name: "CIAffineClamp") {
-						clampFilter.setValue(ciImage, forKey: kCIInputImageKey)
-						clampFilter.setValue(CGAffineTransform.identity, forKey: kCIInputTransformKey)
-						clampedImage = clampFilter.outputImage ?? ciImage
-					} else {
-						clampedImage = ciImage
-					}
 					if let filter = CIFilter(name: "CIGaussianBlur") {
-						filter.setValue(clampedImage, forKey: kCIInputImageKey)
+						filter.setValue(ciImage, forKey: kCIInputImageKey)
 						// Scale the default soft-reflection blur with a normalized user control.
 						let radius = (CGFloat(img.height) / 35.0) * CGFloat(blurAmount)
 						filter.setValue(radius, forKey: kCIInputRadiusKey)
