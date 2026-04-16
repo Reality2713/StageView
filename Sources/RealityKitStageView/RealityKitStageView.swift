@@ -273,11 +273,7 @@ public struct RealityKitStageView: View {
 				refreshGrid()
 			}
 			.onChange(of: cameraState) { _, newState in
-				runtime.updateCameraState(
-					rotation: newState.quaternion,
-					distance: newState.distance
-				)
-				runtime.cameraWorldTransform = newState.transform
+				updateCamera(state: newState)
 			}
 	}
 
@@ -320,7 +316,8 @@ public struct RealityKitStageView: View {
 							metersPerUnit: configuration.metersPerUnit,
 							maxDistance: Float(environmentRadius * 0.9),
 							navigationMapping: store.navigationMapping,
-							onPick: macOSPickHandler
+							onPick: macOSPickHandler,
+							applyEntityTransform: { [runtime] state in runtime.applyCameraTransform(state) }
 						)
 					)
 				#else
@@ -331,7 +328,8 @@ public struct RealityKitStageView: View {
 							metersPerUnit: configuration.metersPerUnit,
 							maxDistance: Float(environmentRadius * 0.9),
 							navigationMapping: store.navigationMapping,
-							onPick: nonMacPickHandler
+							onPick: nonMacPickHandler,
+							applyEntityTransform: { [runtime] state in runtime.applyCameraTransform(state) }
 						)
 					)
 				#endif
@@ -361,6 +359,9 @@ public struct RealityKitStageView: View {
 			content.add(root)
 			self.rootEntity = root
 			runtime.updateRootEntity(root, viewportID: viewportInstanceID)
+			if let camera = root.findEntity(named: "MainCamera") {
+				runtime.setCameraEntity(camera)
+			}
 			refreshGrid()
 
 			if runtime.isActiveViewport(viewportInstanceID), let entity = runtime.modelEntity {
@@ -368,7 +369,6 @@ public struct RealityKitStageView: View {
 			}
 		} update: { content in
 			syncIBLState()
-			updateCamera(state: cameraState)
 			processRuntimeViewRequests()
 			// Grid parameters and position are kept in sync via refreshGrid(), which is
 			// triggered by onChange handlers for all relevant state (showGrid,

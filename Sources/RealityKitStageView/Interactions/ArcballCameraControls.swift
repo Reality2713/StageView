@@ -73,6 +73,9 @@ final class ArcballEventController {
 
     // Written back to the ViewModifier's @Binding each frame
     var onCameraStateChanged: ((ArcballCameraState) -> Void)?
+    /// Direct entity update — called before publishState() so the camera moves
+    /// at event time, not after the SwiftUI update: cycle.
+    var applyCameraEntityTransform: ((ArcballCameraState) -> Void)?
     /// Called with (location in view coords y-down, view size) when a click is detected.
     var onPick: ((CGPoint, CGSize) -> Void)?
 
@@ -84,6 +87,28 @@ final class ArcballEventController {
     private var lastClampedEdge: ClampEdge?
     private var mouseDownLocation: CGPoint = .zero
     private var mouseDownTime: Date = Date()
+
+    // Per-frame SwiftUI gesture scratch lives on the controller (not `@State`)
+    // so 60fps `onChanged` callbacks don't invalidate the ViewModifier body.
+    var startDistance: Float?
+    var previousOrbitValue: DragGesture.Value?
+    var previousPanValue: DragGesture.Value?
+    private var activeSwiftUIGestureCount: Int = 0
+
+    /// True while any camera interaction (NSEvent drag or SwiftUI gesture) is in flight.
+    /// Consumers use this to short-circuit the `state` binding writeback during
+    /// active interaction and avoid a per-frame round-trip.
+    var isInteracting: Bool {
+        activeMouseInteraction != nil || activeSwiftUIGestureCount > 0
+    }
+
+    func beginSwiftUIGesture() {
+        activeSwiftUIGestureCount += 1
+    }
+
+    func endSwiftUIGesture() {
+        activeSwiftUIGestureCount = Swift.max(0, activeSwiftUIGestureCount - 1)
+    }
 
     private enum ClampEdge { case min, max }
     enum MouseInteraction { case orbit, pan, zoom }
@@ -130,6 +155,7 @@ final class ArcballEventController {
             let deltaY = Float(event.scrollingDeltaY) * scrollInvert
             applyOrbit(deltaX: deltaX, deltaY: deltaY)
         }
+        applyCameraEntityTransform?(cameraState)
         publishState()
         return nil
     }
@@ -197,6 +223,7 @@ final class ArcballEventController {
             }
 
             lastMousePoint = localPoint
+            applyCameraEntityTransform?(cameraState)
             publishState()
             return nil
 
@@ -315,11 +342,9 @@ public struct ArcballCameraControls: ViewModifier {
     let maxDistanceOverride: Float?
     let navigationMapping: RealityKitNavigationMapping
     var onPick: ((CGPoint, CGSize) -> Void)?
+    var applyEntityTransform: ((ArcballCameraState) -> Void)?
 
     @State private var controller = ArcballEventController()
-    @State private var startDistance: Float?
-    @State private var previousOrbitValue: DragGesture.Value?
-    @State private var previousPanValue: DragGesture.Value?
 
     public init(
         state: Binding<ArcballCameraState>,
@@ -327,7 +352,8 @@ public struct ArcballCameraControls: ViewModifier {
         metersPerUnit: Double = 1.0,
         maxDistance: Float? = nil,
         navigationMapping: RealityKitNavigationMapping = .apple,
-        onPick: ((CGPoint, CGSize) -> Void)? = nil
+        onPick: ((CGPoint, CGSize) -> Void)? = nil,
+        applyEntityTransform: ((ArcballCameraState) -> Void)? = nil
     ) {
         self._state = state
         self.sceneBounds = sceneBounds
@@ -335,36 +361,55 @@ public struct ArcballCameraControls: ViewModifier {
         self.maxDistanceOverride = maxDistance
         self.navigationMapping = navigationMapping
         self.onPick = onPick
+        self.applyEntityTransform = applyEntityTransform
     }
 
     public func body(content: Content) -> some View {
         let orbitDrag = DragGesture(minimumDistance: 1)
             .onChanged { value in
+                if controller.previousOrbitValue == nil {
+                    controller.beginSwiftUIGesture()
+                }
                 handleOrbitDrag(value)
-                previousOrbitValue = value
+                controller.previousOrbitValue = value
             }
             .onEnded { _ in
-                startDistance = nil
-                previousOrbitValue = nil
+                if controller.previousOrbitValue != nil {
+                    controller.endSwiftUIGesture()
+                }
+                controller.startDistance = nil
+                controller.previousOrbitValue = nil
             }
 
         let panDrag = DragGesture(minimumDistance: 1)
             .modifiers(.option)
             .onChanged { value in
+                if controller.previousPanValue == nil {
+                    controller.beginSwiftUIGesture()
+                }
                 handlePanDrag(value)
-                previousPanValue = value
+                controller.previousPanValue = value
             }
             .onEnded { _ in
-                startDistance = nil
-                previousPanValue = nil
+                if controller.previousPanValue != nil {
+                    controller.endSwiftUIGesture()
+                }
+                controller.startDistance = nil
+                controller.previousPanValue = nil
             }
 
         let magnifyGesture = MagnificationGesture()
             .onChanged { value in
+                if controller.startDistance == nil {
+                    controller.beginSwiftUIGesture()
+                }
                 handleMagnification(value)
             }
             .onEnded { _ in
-                startDistance = nil
+                if controller.startDistance != nil {
+                    controller.endSwiftUIGesture()
+                }
+                controller.startDistance = nil
             }
 
         modifiedContent(
@@ -381,12 +426,14 @@ public struct ArcballCameraControls: ViewModifier {
             controller.onCameraStateChanged = { newState in
                 state = newState
             }
+            controller.applyCameraEntityTransform = applyEntityTransform
             controller.installMonitors()
         }
         .onChange(of: navigationMapping) { _, _ in syncController() }
         .onChange(of: sceneBounds) { _, _ in syncController() }
         .onChange(of: metersPerUnit) { _, _ in syncController() }
         .onChange(of: state) { _, newState in
+            guard !controller.isInteracting else { return }
             controller.cameraState = newState
         }
         .onDisappear {
@@ -401,6 +448,7 @@ public struct ArcballCameraControls: ViewModifier {
         controller.maxDistanceOverride = maxDistanceOverride
         controller.cameraState = state
         controller.onPick = onPick
+        controller.applyCameraEntityTransform = applyEntityTransform
     }
 
     @ViewBuilder
@@ -424,33 +472,36 @@ public struct ArcballCameraControls: ViewModifier {
     // MARK: - SwiftUI gesture handlers (use controller for shared logic)
 
     private func handleOrbitDrag(_ value: DragGesture.Value) {
-        let deltaX = Float(value.translation.width - (previousOrbitValue?.translation.width ?? 0))
-        let deltaY = Float(value.translation.height - (previousOrbitValue?.translation.height ?? 0))
+        let deltaX = Float(value.translation.width - (controller.previousOrbitValue?.translation.width ?? 0))
+        let deltaY = Float(value.translation.height - (controller.previousOrbitValue?.translation.height ?? 0))
         controller.applyOrbit(deltaX: deltaX, deltaY: deltaY)
+        controller.applyCameraEntityTransform?(controller.cameraState)
         state = controller.cameraState
     }
 
     private func handlePanDrag(_ value: DragGesture.Value) {
-        let deltaX = Float(value.translation.width - (previousPanValue?.translation.width ?? 0))
-        let deltaY = Float(value.translation.height - (previousPanValue?.translation.height ?? 0))
+        let deltaX = Float(value.translation.width - (controller.previousPanValue?.translation.width ?? 0))
+        let deltaY = Float(value.translation.height - (controller.previousPanValue?.translation.height ?? 0))
         let scale = ViewportTuning.panScale(
             distance: state.distance,
             sceneBounds: sceneBounds,
             metersPerUnit: metersPerUnit
         )
         controller.applyPan(deltaX: deltaX, deltaY: -deltaY, scale: scale)
+        controller.applyCameraEntityTransform?(controller.cameraState)
         state = controller.cameraState
     }
 
     private func handleMagnification(_ magnification: CGFloat) {
-        if startDistance == nil { startDistance = state.distance }
-        guard let start = startDistance else { return }
+        if controller.startDistance == nil { controller.startDistance = state.distance }
+        guard let start = controller.startDistance else { return }
         guard magnification > 0 else { return }
         let effective = controller.navigationMapping.invertZoomDirection
             ? 1.0 / magnification
             : magnification
         let newDistance = start / Float(effective)
         controller.cameraState.distance = controller.clampDistance(newDistance)
+        controller.applyCameraEntityTransform?(controller.cameraState)
         state = controller.cameraState
     }
 }
@@ -464,6 +515,7 @@ final class ArcballTouchController: ObservableObject {
     var maxDistanceOverride: Float?
     var onCameraStateChanged: ((ArcballCameraState) -> Void)?
     var onPick: ((CGPoint, CGSize) -> Void)?
+    var applyCameraEntityTransform: ((ArcballCameraState) -> Void)?
 
     private var startDistance: Float?
     private var lastClampedEdge: ClampEdge?
@@ -519,7 +571,9 @@ final class ArcballTouchController: ObservableObject {
             activeGestureCount = Swift.max(0, activeGestureCount - 1)
             let v = gesture.velocity(in: view)
             touchGestureLogger.debug("orbit ended velocity=\(v.x, privacy: .public),\(v.y, privacy: .public)")
-            startOrbitMomentum(velocity: v)
+            if activeGestureCount == 0 {
+                startOrbitMomentum(velocity: v)
+            }
         case .cancelled, .failed:
             activeGestureCount = Swift.max(0, activeGestureCount - 1)
             touchGestureLogger.debug("orbit cancelled/failed")
@@ -552,7 +606,9 @@ final class ArcballTouchController: ObservableObject {
             activeGestureCount = Swift.max(0, activeGestureCount - 1)
             let v = gesture.velocity(in: view)
             touchGestureLogger.debug("pan ended velocity=\(v.x, privacy: .public),\(v.y, privacy: .public)")
-            startPanMomentum(velocity: v)
+            if activeGestureCount == 0 {
+                startPanMomentum(velocity: v)
+            }
         case .cancelled, .failed:
             activeGestureCount = Swift.max(0, activeGestureCount - 1)
             touchGestureLogger.debug("pan cancelled/failed")
@@ -649,6 +705,7 @@ final class ArcballTouchController: ObservableObject {
     }
 
     private func publishState() {
+        applyCameraEntityTransform?(cameraState)
         onCameraStateChanged?(cameraState)
     }
 
@@ -794,6 +851,7 @@ public struct ArcballCameraControls: ViewModifier {
     let maxDistanceOverride: Float?
     let navigationMapping: RealityKitNavigationMapping
     var onPick: ((CGPoint, CGSize) -> Void)?
+    var applyEntityTransform: ((ArcballCameraState) -> Void)?
 
     @State private var controller = ArcballTouchController()
 
@@ -803,7 +861,8 @@ public struct ArcballCameraControls: ViewModifier {
         metersPerUnit: Double = 1.0,
         maxDistance: Float? = nil,
         navigationMapping: RealityKitNavigationMapping = .touchpad,
-        onPick: ((CGPoint, CGSize) -> Void)? = nil
+        onPick: ((CGPoint, CGSize) -> Void)? = nil,
+        applyEntityTransform: ((ArcballCameraState) -> Void)? = nil
     ) {
         self._state = state
         self.sceneBounds = sceneBounds
@@ -811,6 +870,7 @@ public struct ArcballCameraControls: ViewModifier {
         self.maxDistanceOverride = maxDistance
         self.navigationMapping = navigationMapping
         self.onPick = onPick
+        self.applyEntityTransform = applyEntityTransform
     }
 
     public func body(content: Content) -> some View {
@@ -823,6 +883,7 @@ public struct ArcballCameraControls: ViewModifier {
                 controller.onCameraStateChanged = { newState in
                     state = newState
                 }
+                controller.applyCameraEntityTransform = applyEntityTransform
             }
             .onChange(of: navigationMapping) { _, _ in syncController() }
             .onChange(of: sceneBounds) { _, _ in syncController() }
@@ -840,6 +901,7 @@ public struct ArcballCameraControls: ViewModifier {
         controller.maxDistanceOverride = maxDistanceOverride
         controller.cameraState = state
         controller.onPick = onPick
+        controller.applyCameraEntityTransform = applyEntityTransform
     }
 }
 #endif

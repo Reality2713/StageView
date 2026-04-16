@@ -57,8 +57,12 @@ public struct RealityKitDiscreteSnapshot: Equatable, Sendable {
 @MainActor
 public final class RealityKitProvider {
     public typealias PickPathResolver = @MainActor (_ directPath: String, _ entity: Entity, _ provider: RealityKitProvider) -> String?
+    private static let cameraFocusEpsilon: Float = 0.000_5
+    private static let cameraDistanceEpsilonRatio: Float = 0.01
+    private static let minimumCameraDistanceEpsilon: Float = 0.000_5
 
     // MARK: - Scene Feedback (Read-only)
+    public private(set) var cameraFocus: SIMD3<Float> = .zero
     public private(set) var cameraRotation: simd_quatf = simd_quatf(angle: 0, axis: [0, 1, 0])
     public private(set) var cameraDistance: Float = 5.0
     public private(set) var sceneBounds: SceneBounds = SceneBounds()
@@ -340,6 +344,26 @@ public final class RealityKitProvider {
     
     internal var cameraWorldTransform: simd_float4x4 = matrix_identity_float4x4
 
+    // Weak reference captured once in RealityView make: so gesture handlers can
+    // write directly to the entity without going through the update: closure.
+    private weak var cameraEntity: Entity?
+
+    internal func setCameraEntity(_ entity: Entity?) {
+        cameraEntity = entity
+    }
+
+    /// Apply an ArcballCameraState directly to the camera entity.
+    /// Called from gesture/scroll handlers (outside SwiftUI view-body scope per
+    /// WWDC 2025 session 274) so the entity moves at input time, not render time.
+    internal func applyCameraTransform(_ state: ArcballCameraState) {
+        let transform = state.transform
+        cameraEntity?.transform.matrix = transform
+        cameraWorldTransform = transform
+        cameraFocus = state.focus
+        cameraRotation = state.quaternion
+        cameraDistance = state.distance
+    }
+
     /// Approximate visible subject depth for overlay scale references.
     ///
     /// This uses the front-most depth of the current scene bounds along the
@@ -378,7 +402,29 @@ public final class RealityKitProvider {
         return clamped.isFinite ? Double(clamped) : fallback
     }
 
-    internal func updateCameraState(rotation: simd_quatf, distance: Float) {
+    public var needsCameraRecentering: Bool {
+        let defaultFocus = sceneBounds.isFrameable ? sceneBounds.center : .zero
+        let defaultDistance = sceneBounds.isFrameable
+            ? ViewportTuning.defaultCameraDistance(
+                sceneBounds: sceneBounds,
+                metersPerUnit: metersPerUnit
+            )
+            : 5.0
+        let focusDelta = simd_length(cameraFocus - defaultFocus)
+        let distanceDelta = Swift.abs(cameraDistance - defaultDistance)
+        let distanceEpsilon = Swift.max(
+            Self.minimumCameraDistanceEpsilon,
+            defaultDistance * Self.cameraDistanceEpsilonRatio
+        )
+        return focusDelta > Self.cameraFocusEpsilon || distanceDelta > distanceEpsilon
+    }
+
+    internal func updateCameraState(
+        focus: SIMD3<Float>,
+        rotation: simd_quatf,
+        distance: Float
+    ) {
+        self.cameraFocus = focus
         self.cameraRotation = rotation
         self.cameraDistance = distance
     }
