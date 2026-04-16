@@ -825,7 +825,6 @@ public struct RealityKitStageView: View {
 				camera.components.set(component)
 			}
 		}
-		camera.transform.matrix = state.transform
 		updateSkyboxPosition(using: camera)
 	}
 

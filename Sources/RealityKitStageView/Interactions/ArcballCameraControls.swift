@@ -140,6 +140,17 @@ final class ArcballEventController {
             ? navigationMapping.optionScrollAction
             : navigationMapping.scrollAction
 
+        // Trackpad scroll momentum continues after finger lift. That feels wrong for
+        // camera zoom/orbit, and pan momentum is only desirable when explicitly enabled.
+        if !event.momentumPhase.isEmpty {
+            switch action {
+            case .pan:
+                guard navigationMapping.panInertiaEnabled else { return nil }
+            case .zoom, .orbit:
+                return nil
+            }
+        }
+
         switch action {
         case .zoom:
             let delta = Float(event.scrollingDeltaY) * zoomInvert
@@ -434,7 +445,9 @@ public struct ArcballCameraControls: ViewModifier {
         .onChange(of: metersPerUnit) { _, _ in syncController() }
         .onChange(of: state) { _, newState in
             guard !controller.isInteracting else { return }
+            guard controller.cameraState != newState else { return }
             controller.cameraState = newState
+            controller.applyCameraEntityTransform?(newState)
         }
         .onDisappear {
             controller.tearDown()
@@ -890,7 +903,9 @@ public struct ArcballCameraControls: ViewModifier {
             .onChange(of: metersPerUnit) { _, _ in syncController() }
             .onChange(of: state) { _, newState in
                 guard !controller.isInteracting else { return }
+                guard controller.cameraState != newState else { return }
                 controller.cameraState = newState
+                controller.applyCameraEntityTransform?(newState)
             }
     }
 
