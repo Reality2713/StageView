@@ -459,15 +459,9 @@ public struct RealityKitStageView: View {
 		)
 
 		logger.debug("macOSPick raycast hit count: \(hits.count, privacy: .public)")
-		if let hit = hits.first {
-			let path = runtime.preferredPickPrimPath(from: hits.map(\.entity))
-			logger.debug("macOSPick hit entity='\(hit.entity.name, privacy: .public)' path=\(path ?? "nil", privacy: .public)")
-			guard let path else {
-				logger.debug("macOSPick hit had no mapped prim path — clearing selection")
-				runtime.userDidPick(nil)
-				store.send(.entityPicked(nil))
-				return
-			}
+		let path = runtime.preferredPickPrimPath(from: hits.map(\.entity))
+		if let hit = hits.first, let path {
+			logger.debug("macOSPick hit entity='\(hit.entity.name, privacy: .public)' path=\(path, privacy: .public)")
 			runtime.userDidPick(path)
 			store.send(.entityPicked(path))
 		} else {
@@ -524,11 +518,13 @@ public struct RealityKitStageView: View {
 			relativeTo: nil
 		)
 
-		if let _ = hits.first {
-			let path = runtime.preferredPickPrimPath(from: hits.map(\.entity))
-			guard let path else { return }
+		let path = runtime.preferredPickPrimPath(from: hits.map(\.entity))
+		if let _ = hits.first, let path {
 			runtime.userDidPick(path)
 			store.send(.entityPicked(path))
+		} else {
+			runtime.userDidPick(nil)
+			store.send(.entityPicked(nil))
 		}
 	}
 	#endif
@@ -788,11 +784,18 @@ public struct RealityKitStageView: View {
 				newState.focus = bounds.center
 				newState.distance = distance
 				newState.rotation = SIMD3<Float>(-20 * .pi / 180, 0, 0)
-				cameraState = newState
+				applyCameraStateImmediately(newState)
 			}
 
 			applyIBLReceiver(to: entity)
 		}
+	}
+
+	@MainActor
+	private func applyCameraStateImmediately(_ newState: ArcballCameraState) {
+		cameraState = newState
+		runtime.applyCameraTransform(newState)
+		updateCamera(state: newState)
 	}
 
 	private func prepareForPicking(_ entity: Entity) {
@@ -985,10 +988,12 @@ public struct RealityKitStageView: View {
 				metersPerUnit: configuration.metersPerUnit
 			)
 			: 5.0
-		cameraState = ArcballCameraState(
-			focus: focus,
-			rotation: SIMD3<Float>(-20 * .pi / 180, 0, 0),
-			distance: distance
+		applyCameraStateImmediately(
+			ArcballCameraState(
+				focus: focus,
+				rotation: SIMD3<Float>(-20 * .pi / 180, 0, 0),
+				distance: distance
+			)
 		)
 	}
 
