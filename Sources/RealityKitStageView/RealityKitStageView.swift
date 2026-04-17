@@ -60,6 +60,9 @@ public struct RealityKitStageView: View {
 	// Environment slider throttling: track pending values and debounce updates
 	@State private var pendingExposure: Float?
 	@State private var pendingRotation: Float?
+	@State private var lastSyncedIBLExposure: Float?
+	@State private var lastSyncedIBLRotation: Float?
+	@State private var lastSyncedIBLIntensityExponent: Float?
 	private static let environmentSliderDebounceMs: UInt64 = 50 // 50ms debounce
 	private static let environmentBlurDebounceMs: UInt64 = 120 // heavier than exposure/rotation
 	#if os(iOS)
@@ -1193,9 +1196,23 @@ public struct RealityKitStageView: View {
 
 	@MainActor
 	private func syncIBLState() {
-		updateIBLExposure(configuration.environmentExposure)
-		updateIBLRotation(configuration.environmentRotation)
-		updateIBLLightIntensity()
+		let exposure = configuration.environmentExposure
+		if lastSyncedIBLExposure != exposure {
+			updateIBLExposure(exposure)
+			lastSyncedIBLExposure = exposure
+		}
+
+		let rotation = configuration.environmentRotation
+		if lastSyncedIBLRotation != rotation {
+			updateIBLRotation(rotation)
+			lastSyncedIBLRotation = rotation
+		}
+
+		let intensityExponent = configuration.realityKitIntensityExponent
+		if lastSyncedIBLIntensityExponent != intensityExponent {
+			updateIBLLightIntensity()
+			lastSyncedIBLIntensityExponent = intensityExponent
+		}
 	}
 
 	@MainActor
@@ -1343,8 +1360,11 @@ public struct RealityKitStageView: View {
 		// syncIBLState() call from the update: closure, which would cause a
 		// brief flash at default exposure after every environment reload.
 		updateIBLExposure(configuration.environmentExposure)
+		lastSyncedIBLExposure = configuration.environmentExposure
 		updateIBLRotation(configuration.environmentRotation)
+		lastSyncedIBLRotation = configuration.environmentRotation
 		updateIBLLightIntensity()
+		lastSyncedIBLIntensityExponent = configuration.realityKitIntensityExponent
 		logger.debug(
 			"Environment updated: customIBL=\(ibl.components[ImageBasedLightComponent.self] != nil, privacy: .public) exposure=\(configuration.environmentExposure, privacy: .public) showBackground=\(self.configuration.showEnvironmentBackground, privacy: .public)"
 		)
