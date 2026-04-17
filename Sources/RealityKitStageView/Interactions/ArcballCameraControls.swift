@@ -281,6 +281,15 @@ final class ArcballEventController {
     func isEventInsideViewport(_ event: NSEvent) -> Bool {
         guard let view = eventRegionView else { return false }
         guard let window = view.window, window == event.window else { return false }
+        if let contentView = window.contentView {
+            let pointInContent = contentView.convert(event.locationInWindow, from: nil)
+            if let hitView = contentView.hitTest(pointInContent) {
+                if hitView.enclosingScrollView != nil {
+                    let viewportRoot = view.superview ?? view
+                    guard hitView.isDescendant(of: viewportRoot) else { return false }
+                }
+            }
+        }
         let viewRectInWindow = view.convert(view.bounds, to: nil)
         let viewRectOnScreen = window.convertToScreen(viewRectInWindow)
         return viewRectOnScreen.contains(NSEvent.mouseLocation)
