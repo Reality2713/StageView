@@ -60,9 +60,7 @@ public struct RealityKitStageView: View {
 	// Environment slider throttling: track pending values and debounce updates
 	@State private var pendingExposure: Float?
 	@State private var pendingRotation: Float?
-	@State private var lastSyncedIBLExposure: Float?
-	@State private var lastSyncedIBLRotation: Float?
-	@State private var lastSyncedIBLIntensityExponent: Float?
+	@State private var iblSyncCache = IBLSyncCache()
 	private static let environmentSliderDebounceMs: UInt64 = 50 // 50ms debounce
 	private static let environmentBlurDebounceMs: UInt64 = 120 // heavier than exposure/rotation
 	#if os(iOS)
@@ -72,6 +70,12 @@ public struct RealityKitStageView: View {
 	/// Looked up by name from rootEntity — always available after makeSceneRoot().
 	private var iblEntity: Entity? { rootEntity?.findEntity(named: "ImageBasedLight") }
 	private var skyboxEntity: Entity? { rootEntity?.findEntity(named: "SkyboxSphere") }
+
+	private final class IBLSyncCache {
+		var exposure: Float?
+		var rotation: Float?
+		var intensityExponent: Float?
+	}
 
 	private var environmentRadius: Double {
 		let extent = Double(runtime.sceneBounds.maxExtent)
@@ -1202,21 +1206,21 @@ public struct RealityKitStageView: View {
 	@MainActor
 	private func syncIBLState() {
 		let exposure = configuration.environmentExposure
-		if lastSyncedIBLExposure != exposure {
+		if iblSyncCache.exposure != exposure {
 			updateIBLExposure(exposure)
-			lastSyncedIBLExposure = exposure
+			iblSyncCache.exposure = exposure
 		}
 
 		let rotation = configuration.environmentRotation
-		if lastSyncedIBLRotation != rotation {
+		if iblSyncCache.rotation != rotation {
 			updateIBLRotation(rotation)
-			lastSyncedIBLRotation = rotation
+			iblSyncCache.rotation = rotation
 		}
 
 		let intensityExponent = configuration.realityKitIntensityExponent
-		if lastSyncedIBLIntensityExponent != intensityExponent {
+		if iblSyncCache.intensityExponent != intensityExponent {
 			updateIBLLightIntensity()
-			lastSyncedIBLIntensityExponent = intensityExponent
+			iblSyncCache.intensityExponent = intensityExponent
 		}
 	}
 
@@ -1365,11 +1369,11 @@ public struct RealityKitStageView: View {
 		// syncIBLState() call from the update: closure, which would cause a
 		// brief flash at default exposure after every environment reload.
 		updateIBLExposure(configuration.environmentExposure)
-		lastSyncedIBLExposure = configuration.environmentExposure
+		iblSyncCache.exposure = configuration.environmentExposure
 		updateIBLRotation(configuration.environmentRotation)
-		lastSyncedIBLRotation = configuration.environmentRotation
+		iblSyncCache.rotation = configuration.environmentRotation
 		updateIBLLightIntensity()
-		lastSyncedIBLIntensityExponent = configuration.realityKitIntensityExponent
+		iblSyncCache.intensityExponent = configuration.realityKitIntensityExponent
 		logger.debug(
 			"Environment updated: customIBL=\(ibl.components[ImageBasedLightComponent.self] != nil, privacy: .public) exposure=\(configuration.environmentExposure, privacy: .public) showBackground=\(self.configuration.showEnvironmentBackground, privacy: .public)"
 		)

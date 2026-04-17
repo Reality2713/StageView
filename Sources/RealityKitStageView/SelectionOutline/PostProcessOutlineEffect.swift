@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import Metal
 import OSLog
 import RealityKit
@@ -504,10 +505,17 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         device: any MTLDevice
     ) {
         guard let capture = state.takePendingCapture() else { return }
-        guard texture.pixelFormat == .bgra8Unorm || texture.pixelFormat == .bgra8Unorm_srgb else {
-            capture.onComplete(
-                .failure(PostProcessFrameCaptureError.unsupportedPixelFormat(texture.pixelFormat))
-            )
+        let supportsDirectReadback =
+            texture.pixelFormat == .bgra8Unorm || texture.pixelFormat == .bgra8Unorm_srgb
+
+        if supportsDirectReadback == false {
+            commandBuffer.addCompletedHandler { _ in
+                self.completeFrameCaptureUsingCoreImage(
+                    texture: texture,
+                    device: device,
+                    capture: capture
+                )
+            }
             return
         }
 
@@ -567,6 +575,29 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
 
             capture.onComplete(.success(cgImage))
         }
+    }
+
+    private func completeFrameCaptureUsingCoreImage(
+        texture: any MTLTexture,
+        device: any MTLDevice,
+        capture: OutlineRenderState.PendingCapture
+    ) {
+        let options: [CIImageOption: Any] = [
+            .colorSpace: capture.colorSpace,
+        ]
+        guard let ciImage = CIImage(mtlTexture: texture, options: options) else {
+            capture.onComplete(.failure(PostProcessFrameCaptureError.imageCreationFailed))
+            return
+        }
+
+        let context = CIContext(mtlDevice: device)
+        let bounds = CGRect(x: 0, y: 0, width: texture.width, height: texture.height)
+        guard let cgImage = context.createCGImage(ciImage, from: bounds, format: .RGBA8, colorSpace: capture.colorSpace) else {
+            capture.onComplete(.failure(PostProcessFrameCaptureError.imageCreationFailed))
+            return
+        }
+
+        capture.onComplete(.success(cgImage))
     }
 
     private func makeSingleChannelTexture(
