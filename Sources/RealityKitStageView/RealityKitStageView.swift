@@ -297,7 +297,10 @@ public struct RealityKitStageView: View {
 			}
 			#endif
 			.task(id: store.imageCaptureRequestID) {
-				await captureViewportImageIfRequested(resolvedBackgroundColor: resolvedBackgroundColor)
+				let captureColor: Color = configuration.showEnvironmentBackground
+					? resolvedBackgroundColor
+					: .clear
+				await captureViewportImageIfRequested(resolvedBackgroundColor: captureColor)
 			}
 	}
 
@@ -1609,10 +1612,6 @@ public struct RealityKitStageView: View {
 	private func captureComposedViewportImage(
 		resolvedBackgroundColor: Color
 	) async throws -> CGImage {
-		if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-			return try await capturePostProcessedViewportImage()
-		}
-
 		#if os(iOS)
 			imageCaptureBridge.backgroundColor = PlatformColor(resolvedBackgroundColor)
 			let image = try await imageCaptureBridge.captureImage()
@@ -1621,6 +1620,9 @@ public struct RealityKitStageView: View {
 			}
 			return cgImage
 		#else
+			if #available(macOS 26.0, tvOS 26.0, *) {
+				return try await capturePostProcessedViewportImage()
+			}
 			throw ViewportImageCaptureError.captureUnavailable
 		#endif
 	}
@@ -1659,9 +1661,7 @@ public struct RealityKitStageView: View {
 				return colorSpace
 			}
 		#else
-			let displayGamut = imageCaptureBridge.probeView?.window?.screen.traitCollection.displayGamut
-				?? UIScreen.main.traitCollection.displayGamut
-			if displayGamut == .P3, let p3 = CGColorSpace(name: CGColorSpace.displayP3) {
+			if let p3 = CGColorSpace(name: CGColorSpace.displayP3) {
 				return p3
 			}
 		#endif
@@ -1711,13 +1711,19 @@ private final class ViewportImageCaptureBridge {
 
 		await Task.yield()
 
+		let fillColor = backgroundColor ?? resolvedBackgroundColor(in: captureView)
+		let opaque = fillColor.cgColor.alpha >= 1.0
+
 		let format = UIGraphicsImageRendererFormat(for: captureView.traitCollection)
-		format.opaque = true
+		format.opaque = opaque
 		format.scale = captureView.window?.screen.scale ?? UIScreen.main.scale
+		format.preferredRange = .extended
 		let renderer = UIGraphicsImageRenderer(bounds: captureView.bounds, format: format)
 		return renderer.image { _ in
-			(backgroundColor ?? resolvedBackgroundColor(in: captureView)).setFill()
-			UIBezierPath(rect: captureView.bounds).fill()
+			if opaque {
+				fillColor.setFill()
+				UIBezierPath(rect: captureView.bounds).fill()
+			}
 			captureView.drawHierarchy(in: captureView.bounds, afterScreenUpdates: true)
 		}
 	}

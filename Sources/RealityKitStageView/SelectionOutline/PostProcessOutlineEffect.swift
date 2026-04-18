@@ -505,75 +505,12 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         device: any MTLDevice
     ) {
         guard let capture = state.takePendingCapture() else { return }
-        let supportsDirectReadback =
-            texture.pixelFormat == .bgra8Unorm || texture.pixelFormat == .bgra8Unorm_srgb
-
-        if supportsDirectReadback == false {
-            commandBuffer.addCompletedHandler { _ in
-                self.completeFrameCaptureUsingCoreImage(
-                    texture: texture,
-                    device: device,
-                    capture: capture
-                )
-            }
-            return
-        }
-
-        let bytesPerPixel = 4
-        let unalignedBytesPerRow = texture.width * bytesPerPixel
-        let bytesPerRow = ((unalignedBytesPerRow + 0xFF) / 0x100) * 0x100
-        let byteCount = bytesPerRow * texture.height
-
-        guard let buffer = device.makeBuffer(length: byteCount, options: .storageModeShared) else {
-            capture.onComplete(.failure(PostProcessFrameCaptureError.bufferAllocationFailed))
-            return
-        }
-
-        guard let blit = commandBuffer.makeBlitCommandEncoder() else {
-            capture.onComplete(.failure(PostProcessFrameCaptureError.blitEncodingFailed))
-            return
-        }
-        blit.copy(
-            from: texture,
-            sourceSlice: 0,
-            sourceLevel: 0,
-            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-            sourceSize: MTLSize(width: texture.width, height: texture.height, depth: 1),
-            to: buffer,
-            destinationOffset: 0,
-            destinationBytesPerRow: bytesPerRow,
-            destinationBytesPerImage: byteCount
-        )
-        blit.endEncoding()
-
         commandBuffer.addCompletedHandler { _ in
-            let data = Data(bytes: buffer.contents(), count: byteCount)
-            guard let provider = CGDataProvider(data: data as CFData) else {
-                capture.onComplete(.failure(PostProcessFrameCaptureError.providerCreationFailed))
-                return
-            }
-
-            let bitmapInfo = CGBitmapInfo.byteOrder32Little.union(
-                CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
+            self.completeFrameCaptureUsingCoreImage(
+                texture: texture,
+                device: device,
+                capture: capture
             )
-            guard let cgImage = CGImage(
-                width: texture.width,
-                height: texture.height,
-                bitsPerComponent: 8,
-                bitsPerPixel: 32,
-                bytesPerRow: bytesPerRow,
-                space: capture.colorSpace,
-                bitmapInfo: bitmapInfo,
-                provider: provider,
-                decode: nil,
-                shouldInterpolate: false,
-                intent: .defaultIntent
-            ) else {
-                capture.onComplete(.failure(PostProcessFrameCaptureError.imageCreationFailed))
-                return
-            }
-
-            capture.onComplete(.success(cgImage))
         }
     }
 
@@ -582,8 +519,12 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         device: any MTLDevice,
         capture: OutlineRenderState.PendingCapture
     ) {
+        let sourceColorSpace = sourceColorSpace(
+            for: texture.pixelFormat,
+            captureColorSpace: capture.colorSpace
+        )
         let options: [CIImageOption: Any] = [
-            .colorSpace: capture.colorSpace,
+            .colorSpace: sourceColorSpace,
         ]
         guard let ciImage = CIImage(mtlTexture: texture, options: options) else {
             capture.onComplete(.failure(PostProcessFrameCaptureError.imageCreationFailed))
@@ -592,12 +533,47 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
 
         let context = CIContext(mtlDevice: device)
         let bounds = CGRect(x: 0, y: 0, width: texture.width, height: texture.height)
-        guard let cgImage = context.createCGImage(ciImage, from: bounds, format: .RGBA8, colorSpace: capture.colorSpace) else {
+        let uprightImage = ciImage
+            .transformed(by: CGAffineTransform(scaleX: 1, y: -1))
+            .transformed(by: CGAffineTransform(translationX: 0, y: CGFloat(texture.height)))
+        guard let cgImage = context.createCGImage(uprightImage, from: bounds, format: .RGBA8, colorSpace: capture.colorSpace) else {
             capture.onComplete(.failure(PostProcessFrameCaptureError.imageCreationFailed))
             return
         }
 
         capture.onComplete(.success(cgImage))
+    }
+
+    /// Interprets the source texture's pixels using the drawable's color
+    /// primaries (inferred from `captureColorSpace`) rather than forcing an
+    /// sRGB-primaries interpretation. On a P3 display the drawable stores
+    /// P3-primaries values; treating them as sRGB would cause Core Image to
+    /// apply an unnecessary gamut conversion that visibly darkens the output.
+    private func sourceColorSpace(
+        for pixelFormat: MTLPixelFormat,
+        captureColorSpace: CGColorSpace
+    ) -> CGColorSpace {
+        let usesP3 = captureColorSpace.name == CGColorSpace.displayP3
+            || captureColorSpace.name == CGColorSpace.extendedDisplayP3
+            || captureColorSpace.name == CGColorSpace.extendedLinearDisplayP3
+        switch pixelFormat {
+        case .bgra10_xr_srgb, .bgr10_xr_srgb, .bgra8Unorm_srgb:
+            if usesP3, let p3 = CGColorSpace(name: CGColorSpace.extendedDisplayP3) {
+                return p3
+            }
+            return CGColorSpace(name: CGColorSpace.extendedSRGB)
+                ?? CGColorSpace(name: CGColorSpace.sRGB)
+                ?? CGColorSpaceCreateDeviceRGB()
+        case .bgra10_xr, .bgr10_xr:
+            if usesP3, let p3 = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) {
+                return p3
+            }
+            return CGColorSpace(name: CGColorSpace.extendedLinearSRGB)
+                ?? CGColorSpace(name: CGColorSpace.sRGB)
+                ?? CGColorSpaceCreateDeviceRGB()
+        default:
+            return captureColorSpace
+        }
     }
 
     private func makeSingleChannelTexture(
