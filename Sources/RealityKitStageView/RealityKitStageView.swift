@@ -141,6 +141,7 @@ public struct RealityKitStageView: View {
 			.onAppear {
 				runtime.activateViewport(viewportInstanceID)
 				runtime.setExternalSceneBounds(store.sceneBounds)
+				runtime.setHiddenPrimPaths(Set(store.hiddenPrimPaths))
 				logger.debug(
 					"RealityKit viewport appeared: \(self.viewportInstanceID.uuidString, privacy: .public)"
 				)
@@ -289,6 +290,7 @@ public struct RealityKitStageView: View {
 		observedViewport
 			.withLiveTransform(store: store, provider: runtime)
 			.withRuntimeBlendShapes(store: store, provider: runtime)
+			.withVisibilityProjection(store: store, provider: runtime)
 			.background(resolvedBackgroundColor)
 			#if os(iOS)
 			.overlay {
@@ -767,6 +769,7 @@ public struct RealityKitStageView: View {
 
 		if let modelAnchor = anchor {
 			modelAnchor.addChild(entity)
+			runtime.setHiddenPrimPaths(Set(store.hiddenPrimPaths))
 			runtime.startEmbeddedAnimationsIfAvailable(autoPlay: false)
 
 			prepareForPicking(entity)

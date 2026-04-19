@@ -125,7 +125,8 @@ public final class RealityKitProvider {
     private(set) var entityIDToPrimPath: [Entity.ID: String] = [:]
     private var pickPathOverrides: [String: String] = [:]
     private var pickPathResolver: PickPathResolver?
-    
+    private var hiddenPrimPaths: Set<String> = []
+    private var projectedHiddenEntityIDs: Set<Entity.ID> = []
     public init() {}
 
     /// Provide consumer-owned remappings from coarse importer paths to more
@@ -197,12 +198,14 @@ public final class RealityKitProvider {
             let mappingStart = Date()
             buildPrimPathMapping(root: entity)
             let mappedAt = Date()
+            applyVisibilityProjection()
+            let visibilityAt = Date()
             updateSceneBoundsFromAttachedEntity(entity)
             let boundsAt = Date()
             emitDiscreteSnapshotIfNeeded()
             let snapshotAt = Date()
             providerLogger.notice(
-                "viewport_runtime phase=realitykit_provider_load_complete teardown_ms=\(Int(clearedAt.timeIntervalSince(loadStart) * 1000), privacy: .public) import_ms=\(Int(importedAt.timeIntervalSince(clearedAt) * 1000), privacy: .public) mapping_ms=\(Int(mappedAt.timeIntervalSince(mappingStart) * 1000), privacy: .public) bounds_ms=\(Int(boundsAt.timeIntervalSince(mappedAt) * 1000), privacy: .public) snapshot_ms=\(Int(snapshotAt.timeIntervalSince(boundsAt) * 1000), privacy: .public) total_ms=\(Int(snapshotAt.timeIntervalSince(loadStart) * 1000), privacy: .public) url=\(url.path, privacy: .public)"
+                "viewport_runtime phase=realitykit_provider_load_complete teardown_ms=\(Int(clearedAt.timeIntervalSince(loadStart) * 1000), privacy: .public) import_ms=\(Int(importedAt.timeIntervalSince(clearedAt) * 1000), privacy: .public) mapping_ms=\(Int(mappedAt.timeIntervalSince(mappingStart) * 1000), privacy: .public) visibility_ms=\(Int(visibilityAt.timeIntervalSince(mappedAt) * 1000), privacy: .public) bounds_ms=\(Int(boundsAt.timeIntervalSince(visibilityAt) * 1000), privacy: .public) snapshot_ms=\(Int(snapshotAt.timeIntervalSince(boundsAt) * 1000), privacy: .public) total_ms=\(Int(snapshotAt.timeIntervalSince(loadStart) * 1000), privacy: .public) url=\(url.path, privacy: .public)"
             )
         } catch {
             // Discard if generation changed
@@ -262,8 +265,20 @@ public final class RealityKitProvider {
         self.isZUp = isZUp
         self.isLoaded = true
         buildPrimPathMapping(root: entity)
+        applyVisibilityProjection()
         updateSceneBoundsFromAttachedEntity(entity)
         emitDiscreteSnapshotIfNeeded()
+    }
+
+    public func setHiddenPrimPaths(_ paths: Set<String>) {
+        let normalized = Set(
+            paths
+                .map(normalizePrimPath(_:))
+                .filter { !$0.isEmpty }
+        )
+        guard hiddenPrimPaths != normalized else { return }
+        hiddenPrimPaths = normalized
+        applyVisibilityProjection()
     }
 
     /// Update scene metadata independently from URL/entity load.
@@ -308,9 +323,10 @@ public final class RealityKitProvider {
         loadError = nil
         primPathToEntityID.removeAll()
         entityIDToPrimPath.removeAll()
+        projectedHiddenEntityIDs.removeAll()
         emitDiscreteSnapshotIfNeeded()
     }
-    
+
     // MARK: - Camera Control
     
     public func resetCamera() {
@@ -761,7 +777,7 @@ extension RealityKitProvider {
 
         return nil
     }
-    
+
     /// Get the USD prim path for an entity.
     public func primPath(for entity: Entity) -> String? {
         entityIDToPrimPath[entity.id]
@@ -770,6 +786,56 @@ extension RealityKitProvider {
     /// Get the USD prim path for an entity ID.
     public func primPath(for entityID: Entity.ID) -> String? {
         entityIDToPrimPath[entityID]
+    }
+
+    private func applyVisibilityProjection() {
+        guard let root = rootEntity ?? modelEntity else {
+            projectedHiddenEntityIDs.removeAll()
+            return
+        }
+
+        for entityID in projectedHiddenEntityIDs {
+            if let entity = findEntity(byID: entityID, in: root) {
+                entity.isEnabled = true
+            }
+        }
+        projectedHiddenEntityIDs.removeAll()
+
+        guard hiddenPrimPaths.isEmpty == false else {
+            providerLogger.notice(
+                "viewport_runtime phase=realitykit_visibility_projection hidden_paths=0 projected_entities=0 unresolved_paths=0"
+            )
+            return
+        }
+
+        let mappedPaths = Array(primPathToEntityID.keys)
+        var nextProjectedEntityIDs: Set<Entity.ID> = []
+        var unresolvedPaths = 0
+
+        for hiddenPath in hiddenPrimPaths {
+            let matchingPaths = mappedPaths.filter { mappedPath in
+                mappedPath == hiddenPath || mappedPath.hasPrefix(hiddenPath + "/")
+            }
+            if matchingPaths.isEmpty {
+                unresolvedPaths += 1
+                continue
+            }
+            for path in matchingPaths {
+                guard let entityID = primPathToEntityID[path] else { continue }
+                nextProjectedEntityIDs.insert(entityID)
+            }
+        }
+
+        for entityID in nextProjectedEntityIDs {
+            if let entity = findEntity(byID: entityID, in: root) {
+                entity.isEnabled = false
+            }
+        }
+        projectedHiddenEntityIDs = nextProjectedEntityIDs
+
+        providerLogger.notice(
+            "viewport_runtime phase=realitykit_visibility_projection hidden_paths=\(self.hiddenPrimPaths.count, privacy: .public) projected_entities=\(self.projectedHiddenEntityIDs.count, privacy: .public) unresolved_paths=\(unresolvedPaths, privacy: .public)"
+        )
     }
     
     /// Walk up an entity's ancestors to find the nearest mapped prim path.

@@ -79,6 +79,10 @@ public struct StageViewFeature {
         /// the stage feature. `RealityKitConfiguration` is not the source of
         /// truth for mutable IBL in the TCA-first integration.
         public var environmentURL: URL?
+        /// Canonical authored hidden prim paths projected into the renderer at runtime.
+        ///
+        /// This is renderer-local preview state, not the source of truth for USD authoring.
+        public var hiddenPrimPaths: [String]
         public var imageCaptureRequestID: UUID?
         public var liveTransform: LiveTransformData?
         public var liveTransformRequestID: UUID?
@@ -96,6 +100,7 @@ public struct StageViewFeature {
             cameraResetRequestID: UUID? = nil,
             environmentRequestID: UUID? = nil,
             environmentURL: URL? = nil,
+            hiddenPrimPaths: [String] = [],
             imageCaptureRequestID: UUID? = nil,
             liveTransform: LiveTransformData? = nil,
             liveTransformRequestID: UUID? = nil,
@@ -112,6 +117,7 @@ public struct StageViewFeature {
             self.cameraResetRequestID = cameraResetRequestID
             self.environmentRequestID = environmentRequestID
             self.environmentURL = environmentURL
+            self.hiddenPrimPaths = hiddenPrimPaths
             self.imageCaptureRequestID = imageCaptureRequestID
             self.liveTransform = liveTransform
             self.liveTransformRequestID = liveTransformRequestID
@@ -144,6 +150,7 @@ public struct StageViewFeature {
         case resetCameraRequested
         case selectionChanged(String?)
         case setSceneBounds(SceneBounds)
+        case updateHiddenPrimPaths([String])
         case updateEnvironmentURL(URL?)
         /// Updates the viewport's appearance intent.
         ///
@@ -183,6 +190,7 @@ public struct StageViewFeature {
                 state.cameraResetRequestID = nil
                 state.environmentRequestID = nil
                 state.environmentURL = nil
+                state.hiddenPrimPaths = []
                 state.imageCaptureRequestID = nil
                 state.loadRequestID = uuid()
                 state.liveTransform = nil
@@ -246,6 +254,19 @@ public struct StageViewFeature {
 
             case let .setSceneBounds(bounds):
                 state.sceneBounds = bounds
+                return .none
+
+            case let .updateHiddenPrimPaths(paths):
+                let normalized = Array(
+                    Set(
+                        paths.map {
+                            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                        .filter { !$0.isEmpty }
+                    )
+                ).sorted()
+                guard state.hiddenPrimPaths != normalized else { return .none }
+                state.hiddenPrimPaths = normalized
                 return .none
 
             case let .updateEnvironmentURL(url):

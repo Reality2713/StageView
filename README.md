@@ -152,6 +152,19 @@ provider.setPickPathResolver { directPath, entity, provider in
 `StageView` applies consumer overrides first, then its built-in generic merged
 node fallback, then the direct imported mapping.
 
+### Prim-to-Entity Mapping
+
+For the full mapping model used by `RealityKitStageView`, including:
+
+- duplicate `_1` / `_2` suffix handling
+- generic importer bucket names such as `merged_1`
+- the distinction between direct mapping, selection mapping, and pick mapping
+- why visibility projection must be more conservative than selection
+
+see:
+
+- [RealityKit Prim-Entity Mapping](resources/REALITYKIT_PRIM_ENTITY_MAPPING.md)
+
 ## Requirements
 
 - **macOS 15.0+**
