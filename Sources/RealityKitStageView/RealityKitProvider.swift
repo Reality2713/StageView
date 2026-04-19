@@ -19,6 +19,7 @@ private let realityKitInternalNames: Set<String> = [
 ]
 
 private let providerLogger = Logger(subsystem: "RealityKitStageView", category: "Provider")
+private let renderableEntityQuery = EntityQuery(where: .has(ModelComponent.self))
 
 // MARK: - Discrete Snapshot
 
@@ -127,6 +128,11 @@ public final class RealityKitProvider {
     private var pickPathResolver: PickPathResolver?
     private var hiddenPrimPaths: Set<String> = []
     private var projectedHiddenEntityIDs: Set<Entity.ID> = []
+
+    /// Prim paths that carry renderable geometry (`ModelComponent`) in the
+    /// imported RealityKit entity graph. Populated from `EntityQuery` results.
+    /// Empty until the first successful load completes.
+    public private(set) var modelComponentPrimPaths: Set<String> = []
     public init() {}
 
     /// Provide consumer-owned remappings from coarse importer paths to more
@@ -324,6 +330,7 @@ public final class RealityKitProvider {
         primPathToEntityID.removeAll()
         entityIDToPrimPath.removeAll()
         projectedHiddenEntityIDs.removeAll()
+        modelComponentPrimPaths.removeAll()
         emitDiscreteSnapshotIfNeeded()
     }
 
@@ -803,36 +810,55 @@ extension RealityKitProvider {
 
         guard hiddenPrimPaths.isEmpty == false else {
             providerLogger.notice(
-                "viewport_runtime phase=realitykit_visibility_projection hidden_paths=0 projected_entities=0 unresolved_paths=0"
+                "viewport_runtime phase=realitykit_visibility_projection hidden_paths=0 projected_entities=0 unresolved_paths=0 unsupported_paths=0 renderable_entities=0"
             )
             return
         }
 
-        let mappedPaths = Array(primPathToEntityID.keys)
+        guard let scene = root.scene, let modelEntity else {
+            providerLogger.notice(
+                "viewport_runtime phase=realitykit_visibility_projection hidden_paths=\(self.hiddenPrimPaths.count, privacy: .public) projected_entities=0 unresolved_paths=0 unsupported_paths=\(self.hiddenPrimPaths.count, privacy: .public) renderable_entities=0"
+            )
+            return
+        }
+
+        let renderableEntities = scene.performQuery(renderableEntityQuery).filter { entity in
+            isDescendantOrSelf(entity, of: modelEntity)
+        }
+        let mappedRenderableEntities: [(entityID: Entity.ID, primPath: String)] = renderableEntities.compactMap { entity in
+            guard let primPath = nearestMappedPrimPath(from: entity) else { return nil }
+            return (entity.id, primPath)
+        }
+
+        let newRenderablePrimPaths = Set(mappedRenderableEntities.map(\.primPath))
+        if newRenderablePrimPaths != modelComponentPrimPaths {
+            modelComponentPrimPaths = newRenderablePrimPaths
+        }
+
         var nextProjectedEntityIDs: Set<Entity.ID> = []
         var unresolvedPaths = 0
         var unsupportedPaths = 0
 
         for hiddenPath in hiddenPrimPaths {
-            let matchingPaths = mappedPaths.filter { mappedPath in
-                mappedPath == hiddenPath || mappedPath.hasPrefix(hiddenPath + "/")
+            let matchingRenderableEntityIDs = mappedRenderableEntities.compactMap { entry -> Entity.ID? in
+                let mappedPath = entry.primPath
+                guard mappedPath == hiddenPath || mappedPath.hasPrefix(hiddenPath + "/") else {
+                    return nil
+                }
+                return entry.entityID
             }
-            if matchingPaths.isEmpty {
-                unresolvedPaths += 1
+
+            if matchingRenderableEntityIDs.isEmpty {
+                if primPathToEntityID.keys.contains(where: { mappedPath in
+                    mappedPath == hiddenPath || mappedPath.hasPrefix(hiddenPath + "/")
+                }) {
+                    unsupportedPaths += 1
+                } else {
+                    unresolvedPaths += 1
+                }
                 continue
             }
-            var pathProjectedEntityIDs: Set<Entity.ID> = []
-            for path in matchingPaths {
-                guard let entityID = primPathToEntityID[path],
-                      let entity = findEntity(byID: entityID, in: root)
-                else { continue }
-                collectRenderableProjectionEntityIDs(from: entity, into: &pathProjectedEntityIDs)
-            }
-            if pathProjectedEntityIDs.isEmpty {
-                unsupportedPaths += 1
-                continue
-            }
-            nextProjectedEntityIDs.formUnion(pathProjectedEntityIDs)
+            nextProjectedEntityIDs.formUnion(matchingRenderableEntityIDs)
         }
 
         for entityID in nextProjectedEntityIDs {
@@ -843,24 +869,22 @@ extension RealityKitProvider {
         projectedHiddenEntityIDs = nextProjectedEntityIDs
 
         providerLogger.notice(
-            "viewport_runtime phase=realitykit_visibility_projection hidden_paths=\(self.hiddenPrimPaths.count, privacy: .public) projected_entities=\(self.projectedHiddenEntityIDs.count, privacy: .public) unresolved_paths=\(unresolvedPaths, privacy: .public) unsupported_paths=\(unsupportedPaths, privacy: .public)"
+            "viewport_runtime phase=realitykit_visibility_projection hidden_paths=\(self.hiddenPrimPaths.count, privacy: .public) projected_entities=\(self.projectedHiddenEntityIDs.count, privacy: .public) unresolved_paths=\(unresolvedPaths, privacy: .public) unsupported_paths=\(unsupportedPaths, privacy: .public) renderable_entities=\(mappedRenderableEntities.count, privacy: .public)"
         )
     }
 
-    private func collectRenderableProjectionEntityIDs(
-        from entity: Entity,
-        into entityIDs: inout Set<Entity.ID>
-    ) {
-        if entity.components.has(ModelComponent.self) {
-            entityIDs.insert(entity.id)
-            return
+    private func isDescendantOrSelf(_ entity: Entity, of ancestor: Entity) -> Bool {
+        if entity.id == ancestor.id { return true }
+        var current: Entity? = entity.parent
+        while let unwrapped = current {
+            if unwrapped.id == ancestor.id {
+                return true
+            }
+            current = unwrapped.parent
         }
-
-        for child in entity.children {
-            collectRenderableProjectionEntityIDs(from: child, into: &entityIDs)
-        }
+        return false
     }
-    
+
     /// Walk up an entity's ancestors to find the nearest mapped prim path.
     /// Useful for pick-to-select when the hit entity might be a descendant.
     public func nearestMappedPrimPath(from entity: Entity) -> String? {

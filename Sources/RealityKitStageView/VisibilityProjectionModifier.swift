@@ -12,6 +12,9 @@ struct VisibilityProjectionModifier: ViewModifier {
                     provider.setHiddenPrimPaths(Set(store.hiddenPrimPaths))
                 }
             }
+            .onChange(of: provider.modelComponentPrimPaths) { _, newPaths in
+                store.send(.updateModelComponentPrimPaths(newPaths))
+            }
     }
 }
 

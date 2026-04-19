@@ -83,6 +83,10 @@ public struct StageViewFeature {
         ///
         /// This is renderer-local preview state, not the source of truth for USD authoring.
         public var hiddenPrimPaths: [String]
+        /// Prim paths that carry renderable geometry in the imported RealityKit entity graph.
+        /// Populated after load from `EntityQuery` results. Used by consumers to gate
+        /// visibility toggleability in the RealityKit workflow.
+        public var modelComponentPrimPaths: Set<String>
         public var imageCaptureRequestID: UUID?
         public var liveTransform: LiveTransformData?
         public var liveTransformRequestID: UUID?
@@ -101,6 +105,7 @@ public struct StageViewFeature {
             environmentRequestID: UUID? = nil,
             environmentURL: URL? = nil,
             hiddenPrimPaths: [String] = [],
+            modelComponentPrimPaths: Set<String> = [],
             imageCaptureRequestID: UUID? = nil,
             liveTransform: LiveTransformData? = nil,
             liveTransformRequestID: UUID? = nil,
@@ -118,6 +123,7 @@ public struct StageViewFeature {
             self.environmentRequestID = environmentRequestID
             self.environmentURL = environmentURL
             self.hiddenPrimPaths = hiddenPrimPaths
+            self.modelComponentPrimPaths = modelComponentPrimPaths
             self.imageCaptureRequestID = imageCaptureRequestID
             self.liveTransform = liveTransform
             self.liveTransformRequestID = liveTransformRequestID
@@ -151,6 +157,7 @@ public struct StageViewFeature {
         case selectionChanged(String?)
         case setSceneBounds(SceneBounds)
         case updateHiddenPrimPaths([String])
+        case updateModelComponentPrimPaths(Set<String>)
         case updateEnvironmentURL(URL?)
         /// Updates the viewport's appearance intent.
         ///
@@ -191,6 +198,7 @@ public struct StageViewFeature {
                 state.environmentRequestID = nil
                 state.environmentURL = nil
                 state.hiddenPrimPaths = []
+                state.modelComponentPrimPaths = []
                 state.imageCaptureRequestID = nil
                 state.loadRequestID = uuid()
                 state.liveTransform = nil
@@ -267,6 +275,11 @@ public struct StageViewFeature {
                 ).sorted()
                 guard state.hiddenPrimPaths != normalized else { return .none }
                 state.hiddenPrimPaths = normalized
+                return .none
+
+            case let .updateModelComponentPrimPaths(paths):
+                guard state.modelComponentPrimPaths != paths else { return .none }
+                state.modelComponentPrimPaths = paths
                 return .none
 
             case let .updateEnvironmentURL(url):

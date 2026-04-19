@@ -11,10 +11,12 @@ import UniformTypeIdentifiers
 #if os(macOS)
 	import AppKit
 	private typealias PlatformColor = NSColor
+	private typealias PlatformImage = NSImage
 #elseif os(iOS) || os(visionOS)
 	import QuartzCore
 	import UIKit
 	private typealias PlatformColor = UIColor
+	private typealias PlatformImage = UIImage
 #endif
 
 private let logger = Logger(
@@ -63,9 +65,7 @@ public struct RealityKitStageView: View {
 	@State private var iblSyncCache = IBLSyncCache()
 	private static let environmentSliderDebounceMs: UInt64 = 50 // 50ms debounce
 	private static let environmentBlurDebounceMs: UInt64 = 120 // heavier than exposure/rotation
-	#if os(iOS)
 	@State private var imageCaptureBridge = ViewportImageCaptureBridge()
-	#endif
 
 	/// Looked up by name from rootEntity — always available after makeSceneRoot().
 	private var iblEntity: Entity? { rootEntity?.findEntity(named: "ImageBasedLight") }
@@ -292,12 +292,10 @@ public struct RealityKitStageView: View {
 			.withRuntimeBlendShapes(store: store, provider: runtime)
 			.withVisibilityProjection(store: store, provider: runtime)
 			.background(resolvedBackgroundColor)
-			#if os(iOS)
 			.overlay {
 				ViewportImageCaptureProbe(bridge: imageCaptureBridge)
 					.allowsHitTesting(false)
 			}
-			#endif
 			.task(id: store.imageCaptureRequestID) {
 				let captureColor: Color = configuration.showEnvironmentBackground
 					? resolvedBackgroundColor
@@ -1615,34 +1613,40 @@ public struct RealityKitStageView: View {
 	private func captureComposedViewportImage(
 		resolvedBackgroundColor: Color
 	) async throws -> CGImage {
-		#if os(iOS)
-			imageCaptureBridge.backgroundColor = PlatformColor(resolvedBackgroundColor)
+		imageCaptureBridge.backgroundColor = PlatformColor(resolvedBackgroundColor)
+
+		#if os(macOS)
+			// Raw-buffer capture via the PostProcess hook — reads targetColorTexture at
+			// the latest programmable stage. Known limitation: compositor-level EDR / P3
+			// scaling isn't reproduced here, so the file may read slightly darker than
+			// the on-screen viewport.
+			if #available(macOS 26.0, *) {
+				let effect = activePostProcessEffect()
+				if outlineBox.effect == nil {
+					outlineBox.effect = effect
+					outlineGeneration += 1
+					// Give RealityView one update cycle to attach the effect before
+					// the next postProcess fires.
+					try? await Task.sleep(nanoseconds: 32_000_000)
+				}
+				let colorSpace = CGColorSpace(name: CGColorSpace.displayP3)
+					?? CGColorSpaceCreateDeviceRGB()
+				return try await withCheckedThrowingContinuation {
+					(continuation: CheckedContinuation<CGImage, any Error>) in
+					effect.requestFrameCapture(colorSpace: colorSpace) { result in
+						continuation.resume(with: result)
+					}
+				}
+			} else {
+				throw ViewportImageCaptureError.captureUnavailable
+			}
+		#else
 			let image = try await imageCaptureBridge.captureImage()
 			guard let cgImage = image.cgImage else {
 				throw ViewportImageCaptureError.encodingFailed
 			}
 			return cgImage
-		#else
-			if #available(macOS 26.0, tvOS 26.0, *) {
-				return try await capturePostProcessedViewportImage()
-			}
-			throw ViewportImageCaptureError.captureUnavailable
 		#endif
-	}
-
-	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
-	@MainActor
-	private func capturePostProcessedViewportImage() async throws -> CGImage {
-		let effect = activePostProcessEffect()
-		let colorSpace = currentCaptureColorSpace()
-
-		return try await withCheckedThrowingContinuation { continuation in
-			effect.requestFrameCapture(colorSpace: colorSpace) { result in
-				continuation.resume(with: result)
-			}
-			outlineBox.effect = effect
-			outlineGeneration += 1
-		}
 	}
 
 	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
@@ -1657,19 +1661,6 @@ public struct RealityKitStageView: View {
 		)
 	}
 
-	@MainActor
-	private func currentCaptureColorSpace() -> CGColorSpace {
-		#if os(macOS)
-			if let colorSpace = NSApp.keyWindow?.colorSpace?.cgColorSpace {
-				return colorSpace
-			}
-		#else
-			if let p3 = CGColorSpace(name: CGColorSpace.displayP3) {
-				return p3
-			}
-		#endif
-		return CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-	}
 }
 
 extension SIMD4 where Scalar == Float {
@@ -1698,13 +1689,17 @@ private enum ViewportImageCaptureError: LocalizedError {
 	}
 }
 
-#if os(iOS)
 @MainActor
 private final class ViewportImageCaptureBridge {
-	weak var probeView: UIView?
-	var backgroundColor: UIColor?
+	#if os(iOS)
+		weak var probeView: UIView?
+		var backgroundColor: UIColor?
+	#else
+		weak var probeView: NSView?
+		var backgroundColor: NSColor?
+	#endif
 
-	func captureImage() async throws -> UIImage {
+	func captureImage() async throws -> PlatformImage {
 		guard let captureView = resolvedCaptureView() else {
 			throw ViewportImageCaptureError.captureViewUnavailable
 		}
@@ -1714,46 +1709,74 @@ private final class ViewportImageCaptureBridge {
 
 		await Task.yield()
 
-		let fillColor = backgroundColor ?? resolvedBackgroundColor(in: captureView)
-		let opaque = fillColor.cgColor.alpha >= 1.0
+		#if os(iOS)
+			let fillColor = backgroundColor ?? resolvedBackgroundColor(in: captureView)
+			let opaque = fillColor.cgColor.alpha >= 1.0
 
-		let format = UIGraphicsImageRendererFormat(for: captureView.traitCollection)
-		format.opaque = opaque
-		format.scale = captureView.window?.screen.scale ?? UIScreen.main.scale
-		format.preferredRange = .extended
-		let renderer = UIGraphicsImageRenderer(bounds: captureView.bounds, format: format)
-		return renderer.image { _ in
-			if opaque {
-				fillColor.setFill()
-				UIBezierPath(rect: captureView.bounds).fill()
+			let format = UIGraphicsImageRendererFormat(for: captureView.traitCollection)
+			format.opaque = opaque
+			format.scale = captureView.window?.screen.scale ?? UIScreen.main.scale
+			format.preferredRange = .extended
+			let renderer = UIGraphicsImageRenderer(bounds: captureView.bounds, format: format)
+			return renderer.image { _ in
+				if opaque {
+					fillColor.setFill()
+					UIBezierPath(rect: captureView.bounds).fill()
+				}
+				captureView.drawHierarchy(in: captureView.bounds, afterScreenUpdates: true)
 			}
-			captureView.drawHierarchy(in: captureView.bounds, afterScreenUpdates: true)
-		}
+		#else
+			// macOS capture runs through the PostProcess raw-buffer path in
+			// captureComposedViewportImage; the bridge is iOS-only for rendering.
+			throw ViewportImageCaptureError.captureUnavailable
+		#endif
 	}
 
-	private func resolvedCaptureView() -> UIView? {
-		guard let probeView else { return nil }
-
-		for candidate in probeView.superviewChain() {
-			if let target = candidate.deepestRenderableDescendant() {
-				return target
+	#if os(iOS)
+		private func resolvedCaptureView() -> UIView? {
+			guard let probeView else { return nil }
+			for candidate in probeView.superviewChain() {
+				if let target = candidate.deepestRenderableDescendant() {
+					return target
+				}
 			}
+			return probeView.superview
 		}
 
-		return probeView.superview
-	}
-
-	private func resolvedBackgroundColor(in view: UIView) -> UIColor {
-		for candidate in view.superviewChain() {
-			let color = candidate.backgroundColor
-			if let color, color.cgColor.alpha > 0 {
-				return color
+		private func resolvedBackgroundColor(in view: UIView) -> UIColor {
+			for candidate in view.superviewChain() {
+				if let color = candidate.backgroundColor, color.cgColor.alpha > 0 {
+					return color
+				}
 			}
+			return .systemBackground
 		}
-		return .systemBackground
-	}
+	#else
+		private func resolvedCaptureView() -> NSView? {
+			guard let probeView else { return nil }
+			for candidate in probeView.superviewChain() {
+				if let target = candidate.deepestRenderableDescendant() {
+					return target
+				}
+			}
+			return probeView.superview
+		}
+
+		private func resolvedBackgroundColor(in view: NSView) -> NSColor {
+			for candidate in view.superviewChain() {
+				// NSView doesn't have a backgroundColor property by default,
+				// but the layer might have one.
+				if let color = candidate.layer?.backgroundColor.flatMap({ NSColor(cgColor: $0) }),
+				   color.alphaComponent > 0 {
+					return color
+				}
+			}
+			return NSColor.windowBackgroundColor
+		}
+	#endif
 }
 
+#if os(iOS)
 private struct ViewportImageCaptureProbe: UIViewRepresentable {
 	let bridge: ViewportImageCaptureBridge
 
@@ -1770,9 +1793,7 @@ private struct ViewportImageCaptureProbe: UIViewRepresentable {
 
 private final class ViewportImageCaptureProbeView: UIView {
 	weak var bridge: ViewportImageCaptureBridge? {
-		didSet {
-			bridge?.probeView = self
-		}
+		didSet { bridge?.probeView = self }
 	}
 
 	override init(frame: CGRect) {
@@ -1805,13 +1826,71 @@ private extension UIView {
 		if subviews.isEmpty {
 			return hasRenderableContent ? self : nil
 		}
-
 		for subview in subviews.reversed() {
 			if let match = subview.deepestRenderableDescendant() {
 				return match
 			}
 		}
+		return hasRenderableContent ? self : nil
+	}
 
+	var hasRenderableContent: Bool {
+		layer is CAMetalLayer || subviews.contains(where: { $0.hasRenderableContent })
+	}
+}
+#else
+private struct ViewportImageCaptureProbe: NSViewRepresentable {
+	let bridge: ViewportImageCaptureBridge
+
+	func makeNSView(context: Context) -> ViewportImageCaptureProbeView {
+		let view = ViewportImageCaptureProbeView()
+		view.bridge = bridge
+		return view
+	}
+
+	func updateNSView(_ nsView: ViewportImageCaptureProbeView, context: Context) {
+		nsView.bridge = bridge
+	}
+}
+
+private final class ViewportImageCaptureProbeView: NSView {
+	weak var bridge: ViewportImageCaptureBridge? {
+		didSet { bridge?.probeView = self }
+	}
+
+	override init(frame frameRect: NSRect) {
+		super.init(frame: frameRect)
+		wantsLayer = true
+		layer?.backgroundColor = CGColor.clear
+	}
+
+	required init?(coder: NSCoder) {
+		super.init(coder: coder)
+		wantsLayer = true
+		layer?.backgroundColor = CGColor.clear
+	}
+}
+
+private extension NSView {
+	func superviewChain() -> [NSView] {
+		var result: [NSView] = []
+		var current = superview
+		while let view = current {
+			result.append(view)
+			current = view.superview
+		}
+		return result
+	}
+
+	func deepestRenderableDescendant() -> NSView? {
+		if subviews.isEmpty {
+			return hasRenderableContent ? self : nil
+		}
+		for subview in subviews.reversed() {
+			if let match = subview.deepestRenderableDescendant() {
+				return match
+			}
+		}
 		return hasRenderableContent ? self : nil
 	}
 
