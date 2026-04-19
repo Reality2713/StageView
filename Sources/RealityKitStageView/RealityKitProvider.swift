@@ -811,6 +811,7 @@ extension RealityKitProvider {
         let mappedPaths = Array(primPathToEntityID.keys)
         var nextProjectedEntityIDs: Set<Entity.ID> = []
         var unresolvedPaths = 0
+        var unsupportedPaths = 0
 
         for hiddenPath in hiddenPrimPaths {
             let matchingPaths = mappedPaths.filter { mappedPath in
@@ -820,10 +821,18 @@ extension RealityKitProvider {
                 unresolvedPaths += 1
                 continue
             }
+            var pathProjectedEntityIDs: Set<Entity.ID> = []
             for path in matchingPaths {
-                guard let entityID = primPathToEntityID[path] else { continue }
-                nextProjectedEntityIDs.insert(entityID)
+                guard let entityID = primPathToEntityID[path],
+                      let entity = findEntity(byID: entityID, in: root)
+                else { continue }
+                collectRenderableProjectionEntityIDs(from: entity, into: &pathProjectedEntityIDs)
             }
+            if pathProjectedEntityIDs.isEmpty {
+                unsupportedPaths += 1
+                continue
+            }
+            nextProjectedEntityIDs.formUnion(pathProjectedEntityIDs)
         }
 
         for entityID in nextProjectedEntityIDs {
@@ -834,8 +843,22 @@ extension RealityKitProvider {
         projectedHiddenEntityIDs = nextProjectedEntityIDs
 
         providerLogger.notice(
-            "viewport_runtime phase=realitykit_visibility_projection hidden_paths=\(self.hiddenPrimPaths.count, privacy: .public) projected_entities=\(self.projectedHiddenEntityIDs.count, privacy: .public) unresolved_paths=\(unresolvedPaths, privacy: .public)"
+            "viewport_runtime phase=realitykit_visibility_projection hidden_paths=\(self.hiddenPrimPaths.count, privacy: .public) projected_entities=\(self.projectedHiddenEntityIDs.count, privacy: .public) unresolved_paths=\(unresolvedPaths, privacy: .public) unsupported_paths=\(unsupportedPaths, privacy: .public)"
         )
+    }
+
+    private func collectRenderableProjectionEntityIDs(
+        from entity: Entity,
+        into entityIDs: inout Set<Entity.ID>
+    ) {
+        if entity.components.has(ModelComponent.self) {
+            entityIDs.insert(entity.id)
+            return
+        }
+
+        for child in entity.children {
+            collectRenderableProjectionEntityIDs(from: child, into: &entityIDs)
+        }
     }
     
     /// Walk up an entity's ancestors to find the nearest mapped prim path.
