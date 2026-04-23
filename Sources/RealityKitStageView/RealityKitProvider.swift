@@ -282,7 +282,7 @@ public final class RealityKitProvider {
                 .map(normalizePrimPath(_:))
                 .filter { !$0.isEmpty }
         )
-        guard hiddenPrimPaths != normalized else { return }
+        guard hiddenPrimPaths != normalized || modelComponentPrimPaths.isEmpty else { return }
         hiddenPrimPaths = normalized
         applyVisibilityProjection()
     }
@@ -642,6 +642,12 @@ extension RealityKitProvider {
     }
 }
 
+private extension String {
+    var lastPrimPathComponent: String {
+        split(separator: "/").last.map(String.init) ?? self
+    }
+}
+
 // MARK: - Discrete State Internals
 
 extension RealityKitProvider {
@@ -808,13 +814,6 @@ extension RealityKitProvider {
         }
         projectedHiddenEntityIDs.removeAll()
 
-        guard hiddenPrimPaths.isEmpty == false else {
-            providerLogger.notice(
-                "viewport_runtime phase=realitykit_visibility_projection hidden_paths=0 projected_entities=0 unresolved_paths=0 unsupported_paths=0 renderable_entities=0"
-            )
-            return
-        }
-
         guard let scene = root.scene, let modelEntity else {
             providerLogger.notice(
                 "viewport_runtime phase=realitykit_visibility_projection hidden_paths=\(self.hiddenPrimPaths.count, privacy: .public) projected_entities=0 unresolved_paths=0 unsupported_paths=\(self.hiddenPrimPaths.count, privacy: .public) renderable_entities=0"
@@ -835,6 +834,13 @@ extension RealityKitProvider {
             modelComponentPrimPaths = newRenderablePrimPaths
         }
 
+        guard hiddenPrimPaths.isEmpty == false else {
+            providerLogger.notice(
+                "viewport_runtime phase=realitykit_visibility_projection hidden_paths=0 projected_entities=0 unresolved_paths=0 unsupported_paths=0 renderable_entities=\(mappedRenderableEntities.count, privacy: .public)"
+            )
+            return
+        }
+
         var nextProjectedEntityIDs: Set<Entity.ID> = []
         var unresolvedPaths = 0
         var unsupportedPaths = 0
@@ -842,7 +848,7 @@ extension RealityKitProvider {
         for hiddenPath in hiddenPrimPaths {
             let matchingRenderableEntityIDs = mappedRenderableEntities.compactMap { entry -> Entity.ID? in
                 let mappedPath = entry.primPath
-                guard mappedPath == hiddenPath || mappedPath.hasPrefix(hiddenPath + "/") else {
+                guard isRenderablePath(mappedPath, toggleableFrom: hiddenPath) else {
                     return nil
                 }
                 return entry.entityID
@@ -850,7 +856,7 @@ extension RealityKitProvider {
 
             if matchingRenderableEntityIDs.isEmpty {
                 if primPathToEntityID.keys.contains(where: { mappedPath in
-                    mappedPath == hiddenPath || mappedPath.hasPrefix(hiddenPath + "/")
+                    isRenderablePath(mappedPath, toggleableFrom: hiddenPath)
                 }) {
                     unsupportedPaths += 1
                 } else {
@@ -883,6 +889,12 @@ extension RealityKitProvider {
             current = unwrapped.parent
         }
         return false
+    }
+
+    private func isRenderablePath(_ renderablePath: String, toggleableFrom hiddenPath: String) -> Bool {
+        renderablePath == hiddenPath
+            || renderablePath.hasPrefix(hiddenPath + "/")
+            || renderablePath.lastPrimPathComponent == hiddenPath.lastPrimPathComponent
     }
 
     /// Walk up an entity's ancestors to find the nearest mapped prim path.
