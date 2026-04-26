@@ -645,7 +645,7 @@ public struct RealityKitStageView: View {
 			case .fullLoad:
 				try await runtime.load(command.url, viewportID: viewportInstanceID)
 			case .refresh:
-				try await runtime.load(command.url, viewportID: viewportInstanceID)
+				try await runtime.refresh(command.url, viewportID: viewportInstanceID)
 			}
 			guard runtime.isActiveViewport(viewportInstanceID) else { return }
 			_ = await MainActor.run { store.send(.loadCommandCompleted(command.id)) }

@@ -13,11 +13,6 @@ public struct USDPrimPathComponent: Component, Sendable {
     public init(primPath: String) { self.primPath = primPath }
 }
 
-/// Names injected by RealityKit during USD import that don't correspond to prims.
-private let realityKitInternalNames: Set<String> = [
-    "usdPrimitiveAxis",
-]
-
 private let providerLogger = Logger(subsystem: "RealityKitStageView", category: "Provider")
 private let renderableEntityQuery = EntityQuery(where: .has(ModelComponent.self))
 
@@ -170,6 +165,18 @@ public final class RealityKitProvider {
     }
 
     public func load(_ url: URL, viewportID: UUID) async throws {
+        try await load(url, viewportID: viewportID, clearsCurrentModelBeforeImport: true)
+    }
+
+    public func refresh(_ url: URL, viewportID: UUID) async throws {
+        try await load(url, viewportID: viewportID, clearsCurrentModelBeforeImport: false)
+    }
+
+    private func load(
+        _ url: URL,
+        viewportID: UUID,
+        clearsCurrentModelBeforeImport: Bool
+    ) async throws {
         guard activeViewportID == viewportID else { return }
         let loadStart = Date()
         providerLogger.notice(
@@ -180,9 +187,12 @@ public final class RealityKitProvider {
         let generation = currentLoadGeneration &+ 1
         currentLoadGeneration = generation
         
-        // Clear immediately to show empty viewport
-        teardownState()
-        emitDiscreteSnapshotIfNeeded()
+        if clearsCurrentModelBeforeImport {
+            teardownState()
+            emitDiscreteSnapshotIfNeeded()
+        } else {
+            loadError = nil
+        }
         let clearedAt = Date()
 
         currentFileURL = url
@@ -695,41 +705,9 @@ extension RealityKitProvider {
     /// RealityKit appends `_N` suffixes for sibling name collisions.
     internal func buildPrimPathMapping(root: Entity) {
         let start = Date()
-        primPathToEntityID.removeAll()
-        entityIDToPrimPath.removeAll()
-        
-        func walk(_ entity: Entity, parentPrimPath: String) {
-            // Skip RealityKit-injected internal entities (e.g. usdPrimitiveAxis).
-            guard !realityKitInternalNames.contains(entity.name) else { return }
-            
-            let primPath: String
-            if entity.name.isEmpty {
-                // Anonymous root wrapper — not a USD prim, just pass through.
-                primPath = parentPrimPath
-            } else {
-                // Entity name = prim name. RealityKit may suffix with _N for duplicates.
-                // Strip the _N suffix to recover the original prim name.
-                let primName = stripDuplicateSuffix(entity.name, amongSiblingsOf: entity)
-                primPath = parentPrimPath.isEmpty ? "/\(primName)" : "\(parentPrimPath)/\(primName)"
-            }
-            
-            if !entity.name.isEmpty {
-                primPathToEntityID[primPath] = entity.id
-                entityIDToPrimPath[entity.id] = primPath
-                entity.components.set(USDPrimPathComponent(primPath: primPath))
-            }
-            
-            for child in entity.children {
-                walk(child, parentPrimPath: primPath)
-            }
-        }
-        
-        // The loaded entity is a container/anchor (often named "LoadedModel" or empty).
-        // Its children correspond to the root prims of the USD stage.
-        // We start walking from the children with an empty parent path to match USD paths (e.g. "/RootNode").
-        for child in root.children {
-            walk(child, parentPrimPath: "")
-        }
+        let mapping = RealityKitStageView.buildPrimPathMapping(root: root)
+        primPathToEntityID = mapping.primPathToEntityID
+        entityIDToPrimPath = mapping.entityIDToPrimPath
 
         let mappedPaths = primPathToEntityID.keys.sorted()
         providerLogger.notice(
@@ -963,28 +941,6 @@ extension RealityKitProvider {
     }
     
     // MARK: - Private Helpers
-    
-    /// Strip RealityKit's `_N` duplicate suffix if it was added for sibling collisions.
-    ///
-    /// RealityKit appends `_1`, `_2`, etc. when multiple sibling prims share a name.
-    /// We detect this by checking if other siblings share the base name.
-    private func stripDuplicateSuffix(_ name: String, amongSiblingsOf entity: Entity) -> String {
-        // Quick check: does the name end with _N pattern?
-        guard let lastUnderscore = name.lastIndex(of: "_") else { return name }
-        let suffixStart = name.index(after: lastUnderscore)
-        guard suffixStart < name.endIndex,
-              name[suffixStart...].allSatisfy(\.isNumber) else { return name }
-        
-        let baseName = String(name[..<lastUnderscore])
-        
-        // Only strip if a sibling has the same base name (confirming it's a RealityKit suffix).
-        guard let parent = entity.parent else { return name }
-        let hasSiblingWithBaseName = parent.children.contains { sibling in
-            sibling.id != entity.id && (sibling.name == baseName || sibling.name.hasPrefix(baseName + "_"))
-        }
-        
-        return hasSiblingWithBaseName ? baseName : name
-    }
     
     private func findEntity(byID id: Entity.ID, in root: Entity) -> Entity? {
         if root.id == id { return root }
