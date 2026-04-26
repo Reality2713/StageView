@@ -44,6 +44,7 @@ public struct PrimPathMapping: Sendable {
 ///
 /// - Parameter root: The root entity returned by `Entity(contentsOf:)`.
 /// - Returns: A `PrimPathMapping` with O(1) lookup dictionaries.
+@MainActor
 public func buildPrimPathMapping(root: Entity) -> PrimPathMapping {
 	var primToID: [String: Entity.ID] = [:]
 	var idToPrim: [Entity.ID: String] = [:]
@@ -80,6 +81,7 @@ public func buildPrimPathMapping(root: Entity) -> PrimPathMapping {
 // MARK: - Internal Helpers
 
 /// Strip RealityKit's `_N` duplicate suffix when other siblings share the base name.
+@MainActor
 func _stripDuplicateSuffix(_ name: String, amongSiblingsOf entity: Entity) -> String {
 	guard let lastUnderscore = name.lastIndex(of: "_") else { return name }
 	let suffixStart = name.index(after: lastUnderscore)

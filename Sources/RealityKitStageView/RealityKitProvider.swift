@@ -212,7 +212,7 @@ public final class RealityKitProvider {
             self.modelEntity = entity
             self.isLoaded = true
             let mappingStart = Date()
-            buildPrimPathMapping(root: entity)
+            refreshPrimPathMapping(root: entity)
             let mappedAt = Date()
             applyVisibilityProjection()
             let visibilityAt = Date()
@@ -280,7 +280,7 @@ public final class RealityKitProvider {
         self.metersPerUnit = metersPerUnit
         self.isZUp = isZUp
         self.isLoaded = true
-        buildPrimPathMapping(root: entity)
+        refreshPrimPathMapping(root: entity)
         applyVisibilityProjection()
         updateSceneBoundsFromAttachedEntity(entity)
         emitDiscreteSnapshotIfNeeded()
@@ -703,9 +703,9 @@ extension RealityKitProvider {
     /// Entity(contentsOf:) produces a hierarchy that is a 1:1 structural mirror of
     /// the USD prim tree. The anonymous root wrapper (empty name) is not a prim.
     /// RealityKit appends `_N` suffixes for sibling name collisions.
-    internal func buildPrimPathMapping(root: Entity) {
+    internal func refreshPrimPathMapping(root: Entity) {
         let start = Date()
-        let mapping = RealityKitStageView.buildPrimPathMapping(root: root)
+        let mapping = buildPrimPathMapping(root: root)
         primPathToEntityID = mapping.primPathToEntityID
         entityIDToPrimPath = mapping.entityIDToPrimPath
 
