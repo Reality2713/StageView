@@ -216,7 +216,7 @@ public final class RealityKitProvider {
             let mappedAt = Date()
             applyVisibilityProjection()
             let visibilityAt = Date()
-            updateSceneBoundsFromAttachedEntity(entity)
+            restoreExternallySuppliedSceneBounds()
             let boundsAt = Date()
             emitDiscreteSnapshotIfNeeded()
             let snapshotAt = Date()
@@ -282,7 +282,7 @@ public final class RealityKitProvider {
         self.isLoaded = true
         refreshPrimPathMapping(root: entity)
         applyVisibilityProjection()
-        updateSceneBoundsFromAttachedEntity(entity)
+        restoreExternallySuppliedSceneBounds()
         emitDiscreteSnapshotIfNeeded()
     }
 
@@ -307,12 +307,16 @@ public final class RealityKitProvider {
         emitDiscreteSnapshotIfNeeded()
     }
 
-    /// Accept host-provided authored bounds before RealityKit has imported the model.
-    /// This allows camera/grid framing to avoid a zero-bounds startup state.
+    /// Accept host-provided authored USD bounds before RealityKit has imported the model.
+    ///
+    /// `sceneBounds` is consumed by RealityKit camera/grid code, so it is stored in
+    /// RealityKit's meter-space coordinates. Keep authored `metersPerUnit` metadata
+    /// separate for inspector/unit display.
     public func setExternalSceneBounds(_ bounds: SceneBounds) {
-        externallySuppliedSceneBounds = bounds.isFrameable ? bounds : nil
-        guard sceneBounds != bounds else { return }
-        sceneBounds = bounds
+        let convertedBounds = convertAuthoredBoundsToRealityKitMeters(bounds)
+        externallySuppliedSceneBounds = convertedBounds?.isFrameable == true ? convertedBounds : nil
+        guard sceneBounds != (convertedBounds ?? SceneBounds()) else { return }
+        sceneBounds = convertedBounds ?? SceneBounds()
         emitDiscreteSnapshotIfNeeded()
     }
     
@@ -440,7 +444,8 @@ public final class RealityKitProvider {
         let defaultDistance = sceneBounds.isFrameable
             ? ViewportTuning.defaultCameraDistance(
                 sceneBounds: sceneBounds,
-                metersPerUnit: metersPerUnit
+                // Provider `sceneBounds` are already RealityKit meters.
+                metersPerUnit: 1.0
             )
             : 5.0
         let focusDelta = simd_length(cameraFocus - defaultFocus)
@@ -462,52 +467,25 @@ public final class RealityKitProvider {
         self.cameraDistance = distance
     }
     
-    internal func updateSceneBoundsFromAttachedEntity(_ entity: Entity) {
-        let start = Date()
-        let worldBounds = entity.visualBounds(relativeTo: nil)
-        let localBounds = entity.visualBounds(relativeTo: entity)
-        logEntityBoundsDiagnostics(entity)
-
-        let nextBounds = SceneBounds(min: worldBounds.min, max: worldBounds.max)
-        if nextBounds.isFrameable {
-            self.sceneBounds = nextBounds
-        } else if sceneBounds.isFrameable {
-            providerLogger.error(
-                "Ignoring invalid scene bounds from attached entity; preserving last valid bounds. min=\(String(describing: worldBounds.min), privacy: .public) max=\(String(describing: worldBounds.max), privacy: .public) extent=\(String(describing: worldBounds.extents), privacy: .public)"
-            )
+    internal func restoreExternallySuppliedSceneBounds() {
+        if let authoredBounds = externallySuppliedSceneBounds, authoredBounds.isFrameable {
+            self.sceneBounds = authoredBounds
         } else {
             providerLogger.error(
-                "Ignoring invalid scene bounds from attached entity with no prior valid bounds. min=\(String(describing: worldBounds.min), privacy: .public) max=\(String(describing: worldBounds.max), privacy: .public) extent=\(String(describing: worldBounds.extents), privacy: .public)"
+                "No authored scene bounds supplied; clearing scene bounds instead of using RealityKit visual bounds."
             )
             self.sceneBounds = SceneBounds()
         }
         providerLogger.notice(
-            "viewport_runtime phase=realitykit_scene_bounds elapsed_ms=\(Int(Date().timeIntervalSince(start) * 1000), privacy: .public) frameable=\(self.sceneBounds.isFrameable, privacy: .public) world_min=\(String(describing: worldBounds.min), privacy: .public) world_max=\(String(describing: worldBounds.max), privacy: .public) local_min=\(String(describing: localBounds.min), privacy: .public) local_max=\(String(describing: localBounds.max), privacy: .public)"
+            "viewport_runtime phase=authored_scene_bounds_restored frameable=\(self.sceneBounds.isFrameable, privacy: .public)"
         )
         emitDiscreteSnapshotIfNeeded()
     }
 
-    private func logEntityBoundsDiagnostics(_ entity: Entity) {
-        let rootTransform = entity.transform
-        providerLogger.notice(
-            "viewport_entity_bounds root name=\(entity.name, privacy: .public) children=\(entity.children.count, privacy: .public) scale=\(String(describing: rootTransform.scale), privacy: .public) translation=\(String(describing: rootTransform.translation), privacy: .public)"
-        )
-        for child in entity.children.prefix(8) {
-            logEntityBoundsDiagnostics(child, depth: 1)
-        }
-    }
-
-    private func logEntityBoundsDiagnostics(_ entity: Entity, depth: Int) {
-        let localBounds = entity.visualBounds(relativeTo: entity)
-        let worldBounds = entity.visualBounds(relativeTo: nil)
-        let transform = entity.transform
-        providerLogger.notice(
-            "viewport_entity_bounds depth=\(depth, privacy: .public) name=\(entity.name, privacy: .public) children=\(entity.children.count, privacy: .public) scale=\(String(describing: transform.scale), privacy: .public) translation=\(String(describing: transform.translation), privacy: .public) local_min=\(String(describing: localBounds.min), privacy: .public) local_max=\(String(describing: localBounds.max), privacy: .public) world_min=\(String(describing: worldBounds.min), privacy: .public) world_max=\(String(describing: worldBounds.max), privacy: .public)"
-        )
-        guard depth < 2 else { return }
-        for child in entity.children.prefix(8) {
-            logEntityBoundsDiagnostics(child, depth: depth + 1)
-        }
+    private func convertAuthoredBoundsToRealityKitMeters(_ bounds: SceneBounds) -> SceneBounds? {
+        guard bounds.isFrameable else { return nil }
+        let scale = Float(metersPerUnit > 0 ? metersPerUnit : 1.0)
+        return SceneBounds(min: bounds.min * scale, max: bounds.max * scale)
     }
 
     

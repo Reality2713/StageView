@@ -47,6 +47,7 @@ public struct RealityKitStageView: View {
 	@State private var outlinedEntityIDs: Set<Entity.ID> = []
 	@State private var viewportInstanceID = UUID()
 	@State private var gridEntity: Entity?
+	@State private var skyboxRadius: Float = 0
 	@State private var gridLoadRequestID = UUID()
 	/// Stable box holding the post-process outline effect (macOS 26+).
 	@State private var outlineBox = OutlineEffectBox()
@@ -81,6 +82,10 @@ public struct RealityKitStageView: View {
 		let extent = Double(runtime.sceneBounds.maxExtent)
 		return Swift.max(1000.0, extent * 10.0)
 	}
+
+	/// Runtime `sceneBounds` are converted to RealityKit meters by the provider.
+	/// Viewport tuning therefore uses 1 meter per coordinate unit.
+	private var viewportBoundsMetersPerUnit: Double { 1.0 }
 
 	public init(
 		provider: RealityKitProvider,
@@ -140,6 +145,10 @@ public struct RealityKitStageView: View {
 		taskBoundViewport
 			.onAppear {
 				runtime.activateViewport(viewportInstanceID)
+				runtime.updateSceneMetadata(
+					metersPerUnit: configuration.metersPerUnit,
+					isZUp: configuration.isZUp
+				)
 				runtime.setExternalSceneBounds(store.sceneBounds)
 				runtime.setHiddenPrimPaths(Set(store.hiddenPrimPaths))
 				logger.debug(
@@ -248,6 +257,7 @@ public struct RealityKitStageView: View {
 					metersPerUnit: safeMetersPerUnit,
 					isZUp: configuration.isZUp
 				)
+				runtime.setExternalSceneBounds(store.sceneBounds)
 				refreshGrid()
 				updateCamera(state: cameraState)
 			}
@@ -323,7 +333,7 @@ public struct RealityKitStageView: View {
 						ArcballCameraControls(
 							state: $cameraState,
 							sceneBounds: runtime.sceneBounds,
-							metersPerUnit: configuration.metersPerUnit,
+							metersPerUnit: viewportBoundsMetersPerUnit,
 							maxDistance: Float(environmentRadius * 0.9),
 							navigationMapping: store.navigationMapping,
 							onPick: macOSPickHandler,
@@ -335,7 +345,7 @@ public struct RealityKitStageView: View {
 						ArcballCameraControls(
 							state: $cameraState,
 							sceneBounds: runtime.sceneBounds,
-							metersPerUnit: configuration.metersPerUnit,
+							metersPerUnit: viewportBoundsMetersPerUnit,
 							maxDistance: Float(environmentRadius * 0.9),
 							navigationMapping: store.navigationMapping,
 							onPick: nonMacPickHandler,
@@ -721,7 +731,7 @@ public struct RealityKitStageView: View {
 			let clip = ViewportTuning.clippingRange(
 				distance: cameraState.distance,
 				sceneBounds: runtime.sceneBounds,
-				metersPerUnit: configuration.metersPerUnit,
+				metersPerUnit: viewportBoundsMetersPerUnit,
 				environmentRadius: Float(environmentRadius)
 			)
 			component.near = clip.near
@@ -771,7 +781,7 @@ public struct RealityKitStageView: View {
 			runtime.startEmbeddedAnimationsIfAvailable(autoPlay: false)
 
 			prepareForPicking(entity)
-			runtime.updateSceneBoundsFromAttachedEntity(entity)
+			runtime.restoreExternallySuppliedSceneBounds()
 			refreshGrid()
 
 			if !preserveCamera, rootEntity?.findEntity(named: "MainCamera") != nil {
@@ -785,7 +795,7 @@ public struct RealityKitStageView: View {
 				}
 				let distance = ViewportTuning.defaultCameraDistance(
 					sceneBounds: bounds,
-					metersPerUnit: configuration.metersPerUnit
+					metersPerUnit: viewportBoundsMetersPerUnit
 				)
 
 				var newState = cameraState
@@ -828,7 +838,7 @@ public struct RealityKitStageView: View {
 			let clip = ViewportTuning.clippingRange(
 				distance: state.distance,
 				sceneBounds: runtime.sceneBounds,
-				metersPerUnit: configuration.metersPerUnit,
+				metersPerUnit: viewportBoundsMetersPerUnit,
 				environmentRadius: Float(environmentRadius)
 			)
 			if Swift.abs(component.near - clip.near) > 0.0001
@@ -857,7 +867,7 @@ public struct RealityKitStageView: View {
 		// If the grid entity already exists, just update its parameters.
 		if let existing = gridEntity {
 			let metrics = RealityKitGrid.metrics(
-				metersPerUnit: configuration.metersPerUnit,
+				metersPerUnit: viewportBoundsMetersPerUnit,
 				worldExtent: Double(bounds.maxExtent),
 				appearance: resolvedAppearance.viewportAppearance
 			)
@@ -866,7 +876,7 @@ public struct RealityKitStageView: View {
 			)
 			RealityKitGrid.updateProceduralGrid(
 				entity: existing,
-				metersPerUnit: configuration.metersPerUnit,
+				metersPerUnit: viewportBoundsMetersPerUnit,
 				worldExtent: Double(bounds.maxExtent),
 				isZUp: configuration.isZUp,
 				appearance: resolvedAppearance.viewportAppearance,
@@ -899,19 +909,13 @@ public struct RealityKitStageView: View {
 		guard var model = skybox.components[ModelComponent.self] else { return }
 
 		let targetRadius = Float(Swift.max(1000.0, Double(bounds.maxExtent) * 10.0))
-		let currentBounds = skybox.visualBounds(relativeTo: skybox)
-		let currentRadius = Swift.max(
-			currentBounds.extents.x,
-			Swift.max(currentBounds.extents.y, currentBounds.extents.z)
-		) * 0.5
-
-		guard currentRadius.isFinite else { return }
-		guard Swift.abs(currentRadius - targetRadius) > Swift.max(1.0, targetRadius * 0.01) else {
+		guard Swift.abs(skyboxRadius - targetRadius) > Swift.max(1.0, targetRadius * 0.01) else {
 			return
 		}
 
 		model.mesh = .generateSphere(radius: targetRadius)
 		skybox.components.set(model)
+		skyboxRadius = targetRadius
 	}
 
 	@MainActor
@@ -926,7 +930,7 @@ public struct RealityKitStageView: View {
 
 		guard
 			let grid = await RealityKitGrid.createProceduralGridEntity(
-				metersPerUnit: configuration.metersPerUnit,
+				metersPerUnit: viewportBoundsMetersPerUnit,
 				worldExtent: Double(runtime.sceneBounds.maxExtent),
 				isZUp: configuration.isZUp,
 				appearance: resolvedAppearance.viewportAppearance,
@@ -954,7 +958,7 @@ public struct RealityKitStageView: View {
 			Swift.max(
 				0.0005,
 				Swift.min(
-					Double(configuration.metersPerUnit) * 0.001,
+					viewportBoundsMetersPerUnit * 0.001,
 					Swift.max(Double(bounds.maxExtent) * 0.001, 0.01)
 				)
 			)
@@ -993,7 +997,7 @@ public struct RealityKitStageView: View {
 			bounds.isFrameable
 			? ViewportTuning.defaultCameraDistance(
 				sceneBounds: bounds,
-				metersPerUnit: configuration.metersPerUnit
+				metersPerUnit: viewportBoundsMetersPerUnit
 			)
 			: 5.0
 		applyCameraStateImmediately(
@@ -1105,105 +1109,8 @@ public struct RealityKitStageView: View {
 
 	@MainActor
 	private func applyBoundingBox(to target: Entity) {
-		guard let root = rootEntity else { return }
-
-		let bounds = target.visualBounds(relativeTo: root)
-		let extents = bounds.extents
-		guard extents.isFinite else { return }
-
-		let maxExtent = Swift.max(extents.x, Swift.max(extents.y, extents.z))
-		guard maxExtent > 0.0001 else { return }
-
-		let edgeThickness = Swift.max(0.0015, maxExtent * 0.0075)
-		let halfX = Swift.max(extents.x * 0.5, edgeThickness * 0.5)
-		let halfY = Swift.max(extents.y * 0.5, edgeThickness * 0.5)
-		let halfZ = Swift.max(extents.z * 0.5, edgeThickness * 0.5)
-
-		let xLength = Swift.max(extents.x, edgeThickness)
-		let yLength = Swift.max(extents.y, edgeThickness)
-		let zLength = Swift.max(extents.z, edgeThickness)
-
-		var material = UnlitMaterial()
-		material.color = .init(tint: selectionTintColor(alpha: 0.95))
-
-		let xEdgeMesh = MeshResource.generateBox(
-			width: xLength,
-			height: edgeThickness,
-			depth: edgeThickness
-		)
-		let yEdgeMesh = MeshResource.generateBox(
-			width: edgeThickness,
-			height: yLength,
-			depth: edgeThickness
-		)
-		let zEdgeMesh = MeshResource.generateBox(
-			width: edgeThickness,
-			height: edgeThickness,
-			depth: zLength
-		)
-
-		let cage = Entity()
-		cage.name = "__selectionBounds__"
-		cage.position = bounds.center
-
-		let signs: [Float] = [-1, 1]
-		for sy in signs {
-			for sz in signs {
-				addEdge(
-					to: cage,
-					mesh: xEdgeMesh,
-					material: material,
-					position: SIMD3<Float>(0, sy * halfY, sz * halfZ)
-				)
-			}
-		}
-		for sx in signs {
-			for sz in signs {
-				addEdge(
-					to: cage,
-					mesh: yEdgeMesh,
-					material: material,
-					position: SIMD3<Float>(sx * halfX, 0, sz * halfZ)
-				)
-			}
-		}
-		for sx in signs {
-			for sy in signs {
-				addEdge(
-					to: cage,
-					mesh: zEdgeMesh,
-					material: material,
-					position: SIMD3<Float>(sx * halfX, sy * halfY, 0)
-				)
-			}
-		}
-
-		root.addChild(cage)
-		selectionHighlightEntity = cage
-	}
-
-	@MainActor
-	private func addEdge(
-		to parent: Entity,
-		mesh: MeshResource,
-		material: UnlitMaterial,
-		position: SIMD3<Float>
-	) {
-		let edge = Entity()
-		edge.components.set(ModelComponent(mesh: mesh, materials: [material]))
-		edge.position = position
-		parent.addChild(edge)
-	}
-
-	private func selectionTintColor(alpha: CGFloat) -> PlatformColor {
-		let resolved = configuration.outlineConfiguration.color.resolve(
-			in: EnvironmentValues()
-		)
-		return PlatformColor(
-			red: CGFloat(resolved.red),
-			green: CGFloat(resolved.green),
-			blue: CGFloat(resolved.blue),
-			alpha: alpha
+		logger.warning(
+			"Skipping bounding-box selection highlight for \(target.name, privacy: .public) because RealityKit visual bounds are not used."
 		)
 	}
 
