@@ -792,7 +792,6 @@ public struct RealityKitStageView: View {
 
 			prepareForPicking(entity)
 			runtime.restoreExternallySuppliedSceneBounds()
-			alignModelAnchorForCurrentPlatform(modelAnchor)
 			refreshGrid()
 
 			if !preserveCamera, rootEntity?.findEntity(named: "MainCamera") != nil {
@@ -965,7 +964,6 @@ public struct RealityKitStageView: View {
 	@MainActor
 	private func alignGrid(_ grid: Entity) {
 		let bounds = runtime.sceneBounds
-		let modelOffset = modelAnchorOffset(for: bounds)
 		let verticalInset = Float(
 			Swift.max(
 				0.0005,
@@ -976,9 +974,9 @@ public struct RealityKitStageView: View {
 			)
 		)
 		grid.position = SIMD3<Float>(
-			bounds.center.x + modelOffset.x,
-			bounds.min.y + modelOffset.y - verticalInset,
-			bounds.center.z + modelOffset.z
+			bounds.center.x,
+			bounds.min.y - verticalInset,
+			bounds.center.z
 		)
 		logger.notice(
 			"viewport_grid_align position=(\(grid.position.x, format: .fixed(precision: 4)),\(grid.position.y, format: .fixed(precision: 4)),\(grid.position.z, format: .fixed(precision: 4))) vertical_inset=\(verticalInset, format: .fixed(precision: 6)) bounds_min_y=\(bounds.min.y, format: .fixed(precision: 4)) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4))"
@@ -1021,26 +1019,8 @@ public struct RealityKitStageView: View {
 		)
 	}
 
-	@MainActor
-	private func alignModelAnchorForCurrentPlatform(_ modelAnchor: Entity) {
-		modelAnchor.position = modelAnchorOffset(for: runtime.sceneBounds)
-	}
-
 	private func viewportFocus(for bounds: SceneBounds) -> SIMD3<Float> {
-		bounds.center + modelAnchorOffset(for: bounds)
-	}
-
-	private func modelAnchorOffset(for bounds: SceneBounds) -> SIMD3<Float> {
-		#if os(visionOS)
-			guard bounds.isFrameable else { return .zero }
-			return SIMD3<Float>(
-				-bounds.center.x,
-				-bounds.min.y,
-				-bounds.center.z
-			)
-		#else
-			return .zero
-		#endif
+		bounds.center
 	}
 
 	@MainActor
