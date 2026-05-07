@@ -301,7 +301,7 @@ public struct RealityKitStageView: View {
 			.withLiveTransform(store: store, provider: runtime)
 			.withRuntimeBlendShapes(store: store, provider: runtime)
 			.withVisibilityProjection(store: store, provider: runtime)
-			.background(resolvedBackgroundColor)
+			.background(viewportBackgroundColor)
 			.overlay {
 				ViewportImageCaptureProbe(bridge: imageCaptureBridge)
 					.allowsHitTesting(false)
@@ -322,6 +322,14 @@ public struct RealityKitStageView: View {
 			blue: Double(background.z),
 			opacity: Double(background.w)
 		)
+	}
+
+	private var viewportBackgroundColor: Color {
+		#if os(visionOS)
+			.clear
+		#else
+			resolvedBackgroundColor
+		#endif
 	}
 
 	@ViewBuilder
@@ -394,17 +402,19 @@ public struct RealityKitStageView: View {
 			// triggered by onChange handlers for all relevant state (showGrid,
 			// metersPerUnit, isZUp, sceneBounds, colorScheme, store.appearance).
 			// No per-frame work is needed here.
-			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-				if let effect = outlineBox.effect as? PostProcessOutlineEffect {
-					if let camera = rootEntity?.findEntity(named: "MainCamera") {
-						let noRef: Entity? = nil
-						effect.setViewMatrix(camera.transformMatrix(relativeTo: noRef).inverse)
+			#if !os(visionOS)
+				if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
+					if let effect = outlineBox.effect as? PostProcessOutlineEffect {
+						if let camera = rootEntity?.findEntity(named: "MainCamera") {
+							let noRef: Entity? = nil
+							effect.setViewMatrix(camera.transformMatrix(relativeTo: noRef).inverse)
+						}
+						content.renderingEffects.customPostProcessing = .effect(effect)
+					} else {
+						content.renderingEffects.customPostProcessing = .none
 					}
-					content.renderingEffects.customPostProcessing = .effect(effect)
-				} else {
-					content.renderingEffects.customPostProcessing = .none
 				}
-			}
+			#endif
 			_ = outlineGeneration  // establish dependency so RealityView re-runs on selection change
 		}
 		.overlay {
@@ -782,6 +792,7 @@ public struct RealityKitStageView: View {
 
 			prepareForPicking(entity)
 			runtime.restoreExternallySuppliedSceneBounds()
+			alignModelAnchorForCurrentPlatform(modelAnchor)
 			refreshGrid()
 
 			if !preserveCamera, rootEntity?.findEntity(named: "MainCamera") != nil {
@@ -799,7 +810,7 @@ public struct RealityKitStageView: View {
 				)
 
 				var newState = cameraState
-				newState.focus = bounds.center
+				newState.focus = viewportFocus(for: bounds)
 				newState.distance = distance
 				newState.rotation = SIMD3<Float>(-20 * .pi / 180, 0, 0)
 				applyCameraStateImmediately(newState)
@@ -954,6 +965,7 @@ public struct RealityKitStageView: View {
 	@MainActor
 	private func alignGrid(_ grid: Entity) {
 		let bounds = runtime.sceneBounds
+		let modelOffset = modelAnchorOffset(for: bounds)
 		let verticalInset = Float(
 			Swift.max(
 				0.0005,
@@ -964,9 +976,9 @@ public struct RealityKitStageView: View {
 			)
 		)
 		grid.position = SIMD3<Float>(
-			bounds.center.x,
-			bounds.min.y - verticalInset,
-			bounds.center.z
+			bounds.center.x + modelOffset.x,
+			bounds.min.y + modelOffset.y - verticalInset,
+			bounds.center.z + modelOffset.z
 		)
 		logger.notice(
 			"viewport_grid_align position=(\(grid.position.x, format: .fixed(precision: 4)),\(grid.position.y, format: .fixed(precision: 4)),\(grid.position.z, format: .fixed(precision: 4))) vertical_inset=\(verticalInset, format: .fixed(precision: 6)) bounds_min_y=\(bounds.min.y, format: .fixed(precision: 4)) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4))"
@@ -992,7 +1004,7 @@ public struct RealityKitStageView: View {
 	@MainActor
 	private func resetCameraInternal() {
 		let bounds = runtime.sceneBounds
-		let focus = bounds.isFrameable ? bounds.center : .zero
+		let focus = bounds.isFrameable ? viewportFocus(for: bounds) : .zero
 		let distance =
 			bounds.isFrameable
 			? ViewportTuning.defaultCameraDistance(
@@ -1007,6 +1019,28 @@ public struct RealityKitStageView: View {
 				distance: distance
 			)
 		)
+	}
+
+	@MainActor
+	private func alignModelAnchorForCurrentPlatform(_ modelAnchor: Entity) {
+		modelAnchor.position = modelAnchorOffset(for: runtime.sceneBounds)
+	}
+
+	private func viewportFocus(for bounds: SceneBounds) -> SIMD3<Float> {
+		bounds.center + modelAnchorOffset(for: bounds)
+	}
+
+	private func modelAnchorOffset(for bounds: SceneBounds) -> SIMD3<Float> {
+		#if os(visionOS)
+			guard bounds.isFrameable else { return .zero }
+			return SIMD3<Float>(
+				-bounds.center.x,
+				-bounds.min.y,
+				-bounds.center.z
+			)
+		#else
+			return .zero
+		#endif
 	}
 
 	@MainActor
@@ -1026,9 +1060,11 @@ public struct RealityKitStageView: View {
 		selectionHighlightEntity?.removeFromParent()
 		selectionHighlightEntity = nil
 
-		if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-			clearPostProcessOutline()
-		}
+		#if !os(visionOS)
+			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
+				clearPostProcessOutline()
+			}
+		#endif
 
 		guard let path = path, !path.isEmpty else { return }
 
@@ -1044,15 +1080,18 @@ public struct RealityKitStageView: View {
 			applyOutline(to: target)
 		case .boundingBox:
 			applyBoundingBox(to: target)
+		#if !os(visionOS)
 		case .postProcessOutline:
 			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
 				applyPostProcessOutline(to: target)
 			} else {
 				applyOutline(to: target)
 			}
+		#endif
 		}
 	}
 
+	#if !os(visionOS)
 	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
 	@MainActor
 	private func applyPostProcessOutline(to entity: Entity) {
@@ -1079,6 +1118,7 @@ public struct RealityKitStageView: View {
 			outlineGeneration += 1
 		}
 	}
+	#endif
 
 	@MainActor
 	private func countModelEntities(in entity: Entity) -> Int {
@@ -1556,7 +1596,8 @@ public struct RealityKitStageView: View {
 		#endif
 	}
 
-	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
+	#if os(macOS)
+	@available(macOS 26.0, *)
 	@MainActor
 	private func activePostProcessEffect() -> PostProcessOutlineEffect {
 		if let existing = outlineBox.effect as? PostProcessOutlineEffect {
@@ -1567,6 +1608,7 @@ public struct RealityKitStageView: View {
 			radius: 2
 		)
 	}
+	#endif
 
 }
 
@@ -1598,10 +1640,10 @@ private enum ViewportImageCaptureError: LocalizedError {
 
 @MainActor
 private final class ViewportImageCaptureBridge {
-	#if os(iOS)
+	#if os(iOS) || os(visionOS)
 		weak var probeView: UIView?
 		var backgroundColor: UIColor?
-	#else
+	#elseif os(macOS)
 		weak var probeView: NSView?
 		var backgroundColor: NSColor?
 	#endif
@@ -1616,13 +1658,13 @@ private final class ViewportImageCaptureBridge {
 
 		await Task.yield()
 
-		#if os(iOS)
+		#if os(iOS) || os(visionOS)
 			let fillColor = backgroundColor ?? resolvedBackgroundColor(in: captureView)
 			let opaque = fillColor.cgColor.alpha >= 1.0
 
 			let format = UIGraphicsImageRendererFormat(for: captureView.traitCollection)
 			format.opaque = opaque
-			format.scale = captureView.window?.screen.scale ?? UIScreen.main.scale
+			format.scale = rendererScale(for: captureView)
 			format.preferredRange = .extended
 			let renderer = UIGraphicsImageRenderer(bounds: captureView.bounds, format: format)
 			return renderer.image { _ in
@@ -1639,7 +1681,7 @@ private final class ViewportImageCaptureBridge {
 		#endif
 	}
 
-	#if os(iOS)
+	#if os(iOS) || os(visionOS)
 		private func resolvedCaptureView() -> UIView? {
 			guard let probeView else { return nil }
 			for candidate in probeView.superviewChain() {
@@ -1658,7 +1700,15 @@ private final class ViewportImageCaptureBridge {
 			}
 			return .systemBackground
 		}
-	#else
+
+		private func rendererScale(for view: UIView) -> CGFloat {
+			#if os(iOS)
+				return view.window?.screen.scale ?? UIScreen.main.scale
+			#else
+				return 1
+			#endif
+		}
+	#elseif os(macOS)
 		private func resolvedCaptureView() -> NSView? {
 			guard let probeView else { return nil }
 			for candidate in probeView.superviewChain() {
@@ -1683,7 +1733,7 @@ private final class ViewportImageCaptureBridge {
 	#endif
 }
 
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 private struct ViewportImageCaptureProbe: UIViewRepresentable {
 	let bridge: ViewportImageCaptureBridge
 
@@ -1745,7 +1795,7 @@ private extension UIView {
 		layer is CAMetalLayer || subviews.contains(where: { $0.hasRenderableContent })
 	}
 }
-#else
+#elseif os(macOS)
 private struct ViewportImageCaptureProbe: NSViewRepresentable {
 	let bridge: ViewportImageCaptureBridge
 

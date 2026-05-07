@@ -746,12 +746,18 @@ final class ArcballTouchController: ObservableObject {
 
         if edge != lastClampedEdge {
             if edge != nil {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                playClampFeedback()
             }
             lastClampedEdge = edge
         }
 
         return clamped
+    }
+
+    private func playClampFeedback() {
+        #if os(iOS)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        #endif
     }
 
     private func applyOrbit(deltaX: Float, deltaY: Float) {
