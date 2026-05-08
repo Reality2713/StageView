@@ -485,7 +485,43 @@ public final class RealityKitProvider {
     private func convertAuthoredBoundsToRealityKitMeters(_ bounds: SceneBounds) -> SceneBounds? {
         guard bounds.isFrameable else { return nil }
         let scale = Float(metersPerUnit > 0 ? metersPerUnit : 1.0)
-        return SceneBounds(min: bounds.min * scale, max: bounds.max * scale)
+        let scaledMin = bounds.min * scale
+        let scaledMax = bounds.max * scale
+        guard isZUp else {
+            return SceneBounds(min: scaledMin, max: scaledMax)
+        }
+
+        let corners = [
+            SIMD3<Float>(scaledMin.x, scaledMin.y, scaledMin.z),
+            SIMD3<Float>(scaledMin.x, scaledMin.y, scaledMax.z),
+            SIMD3<Float>(scaledMin.x, scaledMax.y, scaledMin.z),
+            SIMD3<Float>(scaledMin.x, scaledMax.y, scaledMax.z),
+            SIMD3<Float>(scaledMax.x, scaledMin.y, scaledMin.z),
+            SIMD3<Float>(scaledMax.x, scaledMin.y, scaledMax.z),
+            SIMD3<Float>(scaledMax.x, scaledMax.y, scaledMin.z),
+            SIMD3<Float>(scaledMax.x, scaledMax.y, scaledMax.z),
+        ].map(realityKitPointFromAuthoredZUpPoint(_:))
+
+        guard var convertedMin = corners.first, var convertedMax = corners.first else {
+            return nil
+        }
+        for corner in corners.dropFirst() {
+            convertedMin = SIMD3<Float>(
+                Swift.min(convertedMin.x, corner.x),
+                Swift.min(convertedMin.y, corner.y),
+                Swift.min(convertedMin.z, corner.z)
+            )
+            convertedMax = SIMD3<Float>(
+                Swift.max(convertedMax.x, corner.x),
+                Swift.max(convertedMax.y, corner.y),
+                Swift.max(convertedMax.z, corner.z)
+            )
+        }
+        return SceneBounds(min: convertedMin, max: convertedMax)
+    }
+
+    private func realityKitPointFromAuthoredZUpPoint(_ point: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3<Float>(point.x, point.z, -point.y)
     }
 
     
