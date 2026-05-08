@@ -467,6 +467,24 @@ public final class RealityKitProvider {
         self.cameraDistance = distance
     }
     
+    internal func updateSceneBoundsFromAttachedEntity(_ entity: Entity) {
+        let worldBounds = entity.visualBounds(relativeTo: nil)
+        let nextBounds = SceneBounds(min: worldBounds.min, max: worldBounds.max)
+        if nextBounds.isFrameable {
+            self.sceneBounds = nextBounds
+            providerLogger.notice(
+                "viewport_runtime phase=realitykit_scene_bounds_restored frameable=true center=(\(nextBounds.center.x, format: .fixed(precision: 4)),\(nextBounds.center.y, format: .fixed(precision: 4)),\(nextBounds.center.z, format: .fixed(precision: 4))) max_extent=\(nextBounds.maxExtent, format: .fixed(precision: 4))"
+            )
+            emitDiscreteSnapshotIfNeeded()
+            return
+        }
+
+        providerLogger.error(
+            "Ignoring invalid RealityKit visual bounds; falling back to authored bounds. min=\(String(describing: worldBounds.min), privacy: .public) max=\(String(describing: worldBounds.max), privacy: .public) extent=\(String(describing: worldBounds.extents), privacy: .public)"
+        )
+        restoreExternallySuppliedSceneBounds()
+    }
+
     internal func restoreExternallySuppliedSceneBounds() {
         if let authoredBounds = externallySuppliedSceneBounds, authoredBounds.isFrameable {
             self.sceneBounds = authoredBounds

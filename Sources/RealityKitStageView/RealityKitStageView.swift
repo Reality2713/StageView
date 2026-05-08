@@ -791,7 +791,7 @@ public struct RealityKitStageView: View {
 			runtime.startEmbeddedAnimationsIfAvailable(autoPlay: false)
 
 			prepareForPicking(entity)
-			runtime.restoreExternallySuppliedSceneBounds()
+			runtime.updateSceneBoundsFromAttachedEntity(entity)
 			refreshGrid()
 
 			if !preserveCamera, rootEntity?.findEntity(named: "MainCamera") != nil {
