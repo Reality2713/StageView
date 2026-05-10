@@ -266,6 +266,7 @@ public struct RealityKitStageView: View {
 					metersPerUnit: configuration.metersPerUnit,
 					isZUp: newValue
 				)
+				runtime.setExternalSceneBounds(store.sceneBounds)
 				refreshGrid()
 			}
 			.onChange(of: runtime.sceneBounds) { _, newBounds in
