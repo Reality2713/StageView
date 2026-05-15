@@ -108,6 +108,7 @@ public final class RealityKitProvider {
     private var activeViewportID: UUID?
     private var animationController: AnimationPlaybackController?
     public private(set) var hasEmbeddedAnimation: Bool = false
+    private var externallySuppliedAuthoredSceneBounds: SceneBounds?
     private var externallySuppliedSceneBounds: SceneBounds?
     private var discreteStateObservers = DiscreteStateObservers()
     
@@ -304,6 +305,9 @@ public final class RealityKitProvider {
         guard self.metersPerUnit != safeMetersPerUnit || self.isZUp != isZUp else { return }
         self.metersPerUnit = safeMetersPerUnit
         self.isZUp = isZUp
+        if let authoredBounds = externallySuppliedAuthoredSceneBounds {
+            applyExternalSceneBounds(authoredBounds)
+        }
         emitDiscreteSnapshotIfNeeded()
     }
 
@@ -313,6 +317,11 @@ public final class RealityKitProvider {
     /// RealityKit's meter-space coordinates. Keep authored `metersPerUnit` metadata
     /// separate for inspector/unit display.
     public func setExternalSceneBounds(_ bounds: SceneBounds) {
+        externallySuppliedAuthoredSceneBounds = bounds.isFrameable ? bounds : nil
+        applyExternalSceneBounds(bounds)
+    }
+
+    private func applyExternalSceneBounds(_ bounds: SceneBounds) {
         let convertedBounds = convertAuthoredBoundsToRealityKitMeters(bounds)
         externallySuppliedSceneBounds = convertedBounds?.isFrameable == true ? convertedBounds : nil
         guard sceneBounds != (convertedBounds ?? SceneBounds()) else { return }
