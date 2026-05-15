@@ -444,7 +444,9 @@ public final class RealityKitProvider {
             + Swift.abs(forward.y) * halfExtents.y
             + Swift.abs(forward.z) * halfExtents.z
         let frontDepth = centerDepth - projectedHalfDepth
-        let clamped = Swift.max(frontDepth, 0.000_001)
+        let minimumUsableDepth = Swift.max(sceneBounds.maxExtent * 0.02, 0.001)
+        let depth = frontDepth >= minimumUsableDepth ? frontDepth : centerDepth
+        let clamped = Swift.max(depth, minimumUsableDepth)
         return clamped.isFinite ? Double(clamped) : fallback
     }
 
