@@ -236,10 +236,10 @@ public struct ViewportMaterialGraph: Sendable, Equatable {
                 .init(id: "fogMaximum", value: .float(spec.fogMaximum)),
                 .init(id: "lineOpacityScale", value: .float(spec.lineOpacityScale)),
                 .init(id: "floorHalfExtent", value: .float(spec.floorHalfExtent)),
-                .init(id: "minorColor", value: spec.minorColor),
-                .init(id: "majorColor", value: spec.majorColor),
-                .init(id: "xAxisColor", value: spec.xAxisColor),
-                .init(id: "zAxisColor", value: spec.zAxisColor),
+                .init(id: "minorColor", value: .init(spec.minorColor)),
+                .init(id: "majorColor", value: .init(spec.majorColor)),
+                .init(id: "xAxisColor", value: .init(spec.xAxisColor)),
+                .init(id: "zAxisColor", value: .init(spec.zAxisColor)),
             ],
             surfaceNodeID: "UnlitSurface"
         )
@@ -343,7 +343,7 @@ def Material "ViewportGridMaterial"
 
         blocks.append(shader(
             "UnlitSurface",
-            id: ShaderTarget.realitykitUnlit.nodeId,
+            id: "ND_realitykit_unlit_surfaceshader",
             [
                 "color3f inputs:color.connect = </Root/Looks/ViewportGridMaterial/LineColor.outputs:out>",
                 "float inputs:opacity.connect = </Root/Looks/ViewportGridMaterial/Opacity.outputs:out>",
