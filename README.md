@@ -2,7 +2,7 @@
 
 ![StageView Preview](resources/Screenshot%202026-01-07%20at%2019.41.29.jpg)
 
-A Swift package providing shared viewport abstractions for 3D rendering with **RealityKit**.
+A Swift package for Apple-native 3D viewport UI built on **RealityKit**.
 
 ## Overview
 
@@ -16,12 +16,14 @@ RealityKit is Apple's high-performance 3D rendering framework designed for AR an
 
 **About This Package**
 
-StageView provides a unified protocol and shared viewport components that RealityKit-based renderers can use for consistent 3D scene presentation. It abstracts common viewport features like grids, IBL lighting, and scale indicators into reusable components.
+StageView provides the RealityKit implementation and shared overlay layer used by RealityKit-based stage viewers. It owns viewport-specific affordances such as procedural grids, overlays, IBL controls, scale indicators, and RealityKit pick remapping.
+
+OpenUSD inspection, editing, validation, and material semantics belong in OpenUSDKit and SwiftUsdShell. StageView stays focused on the viewport experience and can be used without linking the OpenUSDKit product surface.
 
 ## Features
 
-- **Unified Protocol**: `StageViewport` protocol for consistent viewport interface
 - **Dynamic Grid**: Scale-aware grid that extends based on scene size (1 meter = 1 meter always)
+- **Viewport Material Assets**: Shader graph recipes for RealityKit viewport affordances such as the generated grid material
 - **IBL Support**: Environment lighting with EV-style exposure control
 - **Scale Indicator**: Auto-switching scale reference (cm/m/km) based on scene size
 - **Colored Axes**: Visual axis indicators (X=red, Y=green, Z=blue)
@@ -29,23 +31,24 @@ StageView provides a unified protocol and shared viewport components that Realit
 
 ## Modules
 
-### StageViewCore
+### StageViewOverlay
 
-Core types and protocols with no heavy dependencies:
+Shared SwiftUI overlay primitives with no RealityKit dependency:
 
-- `StageViewProtocol` - Common viewport interface
-- `GridConfiguration` - Grid settings with scale unit support
-- `IBLConfiguration` - Environment lighting with EV-style exposure
-- `SceneBounds` - Scene bounds representation
-- `ScaleIndicatorView` - SwiftUI view for scale reference
+- `ViewportOverlayCollection` - Anchored overlay items for viewport chrome
+- `ScaleIndicatorView` - SwiftUI scale reference
+- `OrientationGizmoView` - Camera-aware orientation indicator
+- `StageViewOverlayContext` - Shared overlay context passed to built-in and custom overlay views
 
 ### RealityKitStageView
 
 RealityKit implementation:
 
+- `RealityKitStageView` - Full RealityKit viewport view
+- `RealityKitProvider` - Observable runtime owner for loaded entities, camera state, and selection
 - `RealityKitGrid` - Dynamic grid with metersPerUnit support
 - `RealityKitIBL` - IBL handling with proper exposure conversion
-- `RealityKitStageView` - Full viewport view
+- `ViewportGridMaterialSpec` / `ViewportGridMaterialAssetRecipe` - Generated USDA shader graph assets for the RealityKit viewport grid
 
 ## Why RealityKit?
 
@@ -65,7 +68,7 @@ RealityKit implementation:
 
 For **OpenUSD rendering with Hydra**, see the companion package: [**StageViewHydra**](https://github.com/reality2713/StageViewHydra)
 
-Hydra is Pixar's rendering architecture from OpenUSD that provides production-quality viewport rendering. StageViewHydra implements the same viewport protocols using Hydra instead of RealityKit, enabling pixel-accurate USD preview but with a heavier dependency stack (SwiftUsd + OpenUSD).
+Hydra is Pixar's rendering architecture from OpenUSD that provides production-quality viewport rendering. StageViewHydra owns the Hydra viewport, including viewport reload preparation for Hydra-compatible USD stages. It has a heavier dependency stack (SwiftUsd, SwiftUsdShell, and OpenUSD), while StageView stays lightweight for RealityKit use cases.
 
 ## Installation
 
@@ -75,7 +78,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/reality2713/StageView.git", branch: "main"),
+    .package(url: "https://github.com/Reality2713/StageView.git", from: "0.3.23"),
 ]
 ```
 
@@ -85,7 +88,7 @@ Then add the products to your target:
 .target(
     name: "YourTarget",
     dependencies: [
-        .product(name: "StageViewCore", package: "StageView"),
+        .product(name: "StageViewOverlay", package: "StageView"),
         .product(name: "RealityKitStageView", package: "StageView"),
     ]
 ),
@@ -98,35 +101,47 @@ Then add the products to your target:
 ```swift
 import RealityKitStageView
 
-let grid = RealityKitGrid.createGridEntity(
+let grid = await RealityKitGrid.createProceduralGridEntity(
     metersPerUnit: 0.01,  // Scene in centimeters
     worldExtent: 10.0,    // Scene size
-    isZUp: false          // Y-up coordinate system
+    isZUp: false,         // Y-up coordinate system
+    appearance: .dark
 )
 ```
+
+### Generating the Grid Material Asset
+
+```swift
+import RealityKitStageView
+
+let spec = ViewportGridMaterialSpec(theme: .dark)
+let asset = try ViewportGridMaterialAssetRecipe().makeAsset(from: spec)
+
+try asset.contents.write(to: outputURL, atomically: true, encoding: .utf8)
+```
+
+The generated asset is a viewport concern. It intentionally lives in StageView rather than OpenUSDKit because it describes RealityKit viewport chrome, not reusable USD material authoring semantics.
 
 ### Using the Scale Indicator
 
 ```swift
-import StageViewCore
+import StageViewOverlay
 
 ScaleIndicatorView(
-    sceneBounds: myBounds,
-    metersPerUnit: 0.01
+    referenceDepthMeters: 2.0,
+    viewportWidthPoints: 900
 )
 ```
 
 ### IBL Configuration
 
 ```swift
-import StageViewCore
+import RealityKitStageView
 
-var config = IBLConfiguration()
-config.exposure = 0.0  // EV-style: 0 = neutral, +1 = 2x brighter, -1 = 2x darker
-config.showBackground = true
-
-// For RealityKit, convert to intensityExponent
-let exponent = config.realityKitIntensityExponent
+var configuration = RealityKitConfiguration()
+configuration.environmentMapURL = URL(fileURLWithPath: "/path/to/studio.hdr")
+configuration.environmentExposure = 0.0 // EV-style: 0 = neutral
+configuration.showEnvironmentBackground = true
 ```
 
 ### Upgrading Picked Paths
@@ -176,6 +191,8 @@ see:
 ## Related Projects
 
 - [**StageViewHydra**](https://github.com/reality2713/StageViewHydra) - Hydra/OpenUSD viewport implementation
+- [**OpenUSDKit**](https://github.com/Reality2713/OpenUSDKit) - USD capability layer for inspection, editing, validation, variants, materials, and asset workflows
+- [**SwiftUsdShell**](https://github.com/Reality2713/SwiftUsdShell) - Typed shell over SwiftUsd/OpenUSD primitives
 - [**RealityKit**](https://developer.apple.com/documentation/realitykit) - Apple's 3D rendering framework
 - [**Reality Composer Pro**](https://developer.apple.com/augmented-reality/tools/) - Apple's USD authoring tool
 
