@@ -1,5 +1,6 @@
 import Foundation
 import RealityKit
+import simd
 import SwiftUI
 
 /// Selection visualization mode.
@@ -52,6 +53,34 @@ public struct RealityKitConfiguration: Sendable {
     /// Whether the built-in scale indicator (top-center ruler bar) is rendered.
     /// Set to `false` for the same reason as `showOrientationGizmo`.
     public var showScaleIndicator: Bool = true
+    /// Volume presentation policy for spatial hosts.
+    public enum VolumePresentationMode: Sendable, Equatable {
+        /// Preserve the model's authored placement.
+        case authored
+        /// Fit the model into the current volume bounds and rest it on the
+        /// volume's lower Y plane.
+        case fitToVolumeFloor
+    }
+
+    /// Presentation scale applied to the loaded model anchor after RealityKit import.
+    ///
+    /// This is an embedding concern for spatial hosts that need authored assets
+    /// normalized into a fixed presentation volume. When
+    /// `modelDisplaysOnBase` is enabled this value multiplies the scale derived
+    /// once for the initially loaded model. Subsequent authored metadata changes
+    /// retain that presentation scale so physical unit edits remain visible.
+    /// Camera, grid, and inspector metadata continue to use authored scene bounds.
+    public var modelDisplayScale: Float = 1.0
+    /// Offset applied to the loaded model anchor after RealityKit import.
+    public var modelDisplayOffset: SIMD3<Float> = .zero
+    /// Whether the initially loaded model should uniformly fit within the
+    /// spatial viewport and rest on its lower Y bound when a 3D geometry proxy
+    /// is available.
+    public var modelDisplaysOnBase: Bool = false
+    /// Current spatial presentation policy for a volume.
+    public var volumePresentationMode: VolumePresentationMode = .authored
+    /// Enables the system RealityKit manipulation affordance for spatial hosts.
+    public var enablesModelManipulation: Bool = false
 
     public init(
         showGrid: Bool = true,
@@ -66,7 +95,12 @@ public struct RealityKitConfiguration: Sendable {
         outlineConfiguration: OutlineConfiguration = .init(),
         selectionHighlightStyle: SelectionHighlightStyle = .boundingBox,
         showOrientationGizmo: Bool = true,
-        showScaleIndicator: Bool = true
+        showScaleIndicator: Bool = true,
+        modelDisplayScale: Float = 1.0,
+        modelDisplayOffset: SIMD3<Float> = .zero,
+        modelDisplaysOnBase: Bool = false,
+        volumePresentationMode: VolumePresentationMode = .authored,
+        enablesModelManipulation: Bool = false
     ) {
         self.showGrid = showGrid
         self.showAxes = showAxes
@@ -81,6 +115,11 @@ public struct RealityKitConfiguration: Sendable {
         self.selectionHighlightStyle = selectionHighlightStyle
         self.showOrientationGizmo = showOrientationGizmo
         self.showScaleIndicator = showScaleIndicator
+        self.modelDisplayScale = modelDisplayScale
+        self.modelDisplayOffset = modelDisplayOffset
+        self.modelDisplaysOnBase = modelDisplaysOnBase
+        self.volumePresentationMode = volumePresentationMode
+        self.enablesModelManipulation = enablesModelManipulation
     }
 
     /// Treat StageView exposure as a direct stop offset over the authored HDR

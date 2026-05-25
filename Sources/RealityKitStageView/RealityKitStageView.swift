@@ -34,8 +34,62 @@ private final class OutlineEffectBox: @unchecked Sendable {
 	var effect: Any? = nil  // PostProcessOutlineEffect when available
 }
 
+#if os(visionOS)
+private struct VolumeModelPresentationComponent: Component, Sendable {
+	var fitScale: Float?
+	var yawRadians: Float
+	var scaleMultiplier: Float
+	var turntableStartYaw: Float?
+	var transientTiltRadians: Float
+	var transientTiltStartRadians: Float?
+	var scaleStartMultiplier: Float?
+	var viewMax: SIMD3<Float>
+	var viewMin: SIMD3<Float>
+
+	init(
+		fitScale: Float? = nil,
+		yawRadians: Float = 0,
+		scaleMultiplier: Float = 1,
+		turntableStartYaw: Float? = nil,
+		transientTiltRadians: Float = 0,
+		transientTiltStartRadians: Float? = nil,
+		scaleStartMultiplier: Float? = nil,
+		viewMax: SIMD3<Float>,
+		viewMin: SIMD3<Float>
+	) {
+		self.fitScale = fitScale
+		self.yawRadians = yawRadians
+		self.scaleMultiplier = scaleMultiplier
+		self.turntableStartYaw = turntableStartYaw
+		self.transientTiltRadians = transientTiltRadians
+		self.transientTiltStartRadians = transientTiltStartRadians
+		self.scaleStartMultiplier = scaleStartMultiplier
+		self.viewMax = viewMax
+		self.viewMin = viewMin
+	}
+}
+
+@MainActor
+private final class RealityViewContentBoundsConverter {
+	private var convertToContentSpace: ((Rect3D) -> BoundingBox)?
+
+	func install(_ content: RealityViewContent) {
+		convertToContentSpace = { rect in
+			content.convert(rect, from: .local, to: content)
+		}
+	}
+
+	func convert(_ rect: Rect3D) -> BoundingBox? {
+		convertToContentSpace?(rect)
+	}
+}
+#endif
+
 public struct RealityKitStageView: View {
 	@Environment(\.colorScheme) private var colorScheme
+	#if os(visionOS)
+		@Environment(\.physicalMetrics) private var physicalMetrics
+	#endif
 	let runtime: RealityKitProvider
 	var configuration: RealityKitConfiguration
 
@@ -49,6 +103,11 @@ public struct RealityKitStageView: View {
 	@State private var gridEntity: Entity?
 	@State private var skyboxRadius: Float = 0
 	@State private var gridLoadRequestID = UUID()
+	#if os(visionOS)
+		@State private var contentBoundsConverter = RealityViewContentBoundsConverter()
+		@State private var latestVolumeBounds: Rect3D?
+		@State private var volumePresentationScalePercent: Double?
+	#endif
 	/// Stable box holding the post-process outline effect (macOS 26+).
 	@State private var outlineBox = OutlineEffectBox()
 	/// Incremented to force a RealityView update cycle when outline state changes.
@@ -132,7 +191,9 @@ public struct RealityKitStageView: View {
 					}
 				}
 			}
-			.task { await observeLoadRequests() }
+			.task(id: store.loadRequestID) {
+				await handleLoadRequestIfNeeded(requestID: store.loadRequestID)
+			}
 	}
 
 	@ViewBuilder
@@ -170,7 +231,11 @@ public struct RealityKitStageView: View {
 			.onChange(of: store.cameraResetRequestID) { _, requestID in
 				guard requestID != nil else { return }
 				Task { @MainActor in
-					runtime.resetCamera()
+					#if os(visionOS)
+						resetCameraInternal()
+					#else
+						runtime.resetCamera()
+					#endif
 				}
 			}
 			.onChange(of: store.sceneBounds) { _, newBounds in
@@ -210,11 +275,6 @@ public struct RealityKitStageView: View {
 		return Int((normalized * bucketCount).rounded(.toNearestOrAwayFromZero))
 	}
 
-	/// Combined task ID: fires only after a load request exists and the viewport
-	/// has both mounted its scene root and become active.
-	/// NOTE: Retained for environment task pattern; load observation now uses
-	/// withObservationTracking in observeLoadRequests().
-
 	@ViewBuilder
 	private var observedViewportEnvironment: some View {
 		observedViewportLifecycle
@@ -242,6 +302,21 @@ public struct RealityKitStageView: View {
 		}
 		.onChange(of: configuration.selectionHighlightStyle) { _, _ in
 			updateSelectionHighlight(for: runtime.selectedPrimPath)
+		}
+		.onChange(of: configuration.modelDisplayScale) { _, _ in
+			applyConfiguredModelTransform()
+		}
+		.onChange(of: configuration.modelDisplayOffset) { _, _ in
+			applyConfiguredModelTransform()
+		}
+		.onChange(of: configuration.modelDisplaysOnBase) { _, _ in
+			applyConfiguredModelTransform()
+		}
+		.onChange(of: configuration.volumePresentationMode) { _, _ in
+			applyConfiguredModelTransform()
+		}
+		.onChange(of: configuration.enablesModelManipulation) { _, _ in
+			applyConfiguredModelTransform()
 		}
 	}
 
@@ -284,6 +359,7 @@ public struct RealityKitStageView: View {
 					lastGridBoundsExtent = newExtent
 					refreshGrid()
 				}
+				applyConfiguredModelTransform()
 			}
 			.onChange(of: colorScheme) { _, _ in
 				refreshGrid()
@@ -335,7 +411,7 @@ public struct RealityKitStageView: View {
 
 	@ViewBuilder
 	private var viewportStack: some View {
-		ZStack {
+		let stack = ZStack {
 			realityViewLayer
 				#if os(macOS)
 					.modifier(
@@ -349,6 +425,8 @@ public struct RealityKitStageView: View {
 							applyEntityTransform: { [runtime] state in runtime.applyCameraTransform(state) }
 						)
 					)
+				#elseif os(visionOS)
+					.allowsHitTesting(true)
 				#else
 					.modifier(
 						ArcballCameraControls(
@@ -363,7 +441,44 @@ public struct RealityKitStageView: View {
 					)
 				#endif
 		}
+		.viewportOverlay(
+			items: ViewportOverlayCollection()
+				.orientationGizmo(anchor: .bottomLeading)
+				.scaleIndicator(anchor: .top),
+			builtInVisibility: .init(
+				showsOrientationGizmo: configuration.showOrientationGizmo,
+				showsScaleIndicator: configuration.showScaleIndicator
+			),
+			snapshot: overlaySnapshot
+		)
+		#if os(visionOS)
+			if #available(visionOS 26.0, *) {
+				stack
+					.ornament(
+						visibility: volumeScaleOrnamentVisibility,
+						attachmentAnchor: .scene(.top)
+					) {
+						if let volumePresentationScalePercent {
+							PresentationScaleBadgeView(percent: volumePresentationScalePercent)
+						}
+					}
+			} else {
+				stack
+			}
+		#else
+			stack
+		#endif
 	}
+
+	#if os(visionOS)
+	@available(visionOS 26.0, *)
+	private var volumeScaleOrnamentVisibility: Visibility {
+		guard configuration.showScaleIndicator,
+			  volumePresentationScalePercent?.isFinite == true
+		else { return .hidden }
+		return .visible
+	}
+	#endif
 
     private var overlaySnapshot: StageViewOverlaySnapshot {
         return StageViewOverlaySnapshot(
@@ -374,36 +489,85 @@ public struct RealityKitStageView: View {
             cameraRotation: cameraState.quaternion,
             horizontalFOVDegrees: 60,
             isZUp: runtime.isZUp,
-            referenceDepthMeters: runtime.overlayReferenceDepthMeters
+            referenceDepthMeters: runtime.overlayReferenceDepthMeters,
+            presentationScalePercent: volumePresentationScalePercent
         )
     }
 
 	@ViewBuilder
 	private var realityViewLayer: some View {
-		RealityView { content in
-			logger.debug(
-				"RealityView content mounted for viewport \(self.viewportInstanceID.uuidString, privacy: .public)"
-			)
-			let root = makeSceneRoot()
-			content.add(root)
-			self.rootEntity = root
-			runtime.updateRootEntity(root, viewportID: viewportInstanceID)
-			if let camera = root.findEntity(named: "MainCamera") {
-				runtime.setCameraEntity(camera)
+		#if os(visionOS)
+			if #available(visionOS 26.0, *) {
+				realityView()
+					.onGeometryChange3D(for: Rect3D.self) { proxy in
+						proxy.frame(in: .local)
+					} action: { newBounds in
+						latestVolumeBounds = newBounds
+						updateVolumePresentationBounds(newBounds)
+					}
+					.simultaneousGesture(volumeTurntableGesture)
+					.simultaneousGesture(volumeScaleGesture)
+			} else {
+				realityView()
 			}
-			refreshGrid()
+		#else
+			realityView()
+		#endif
+	}
 
-			if runtime.isActiveViewport(viewportInstanceID), let entity = runtime.modelEntity {
-				loadModel(entity)
+	@ViewBuilder
+	private func realityView() -> some View {
+		#if os(visionOS)
+			RealityView { content in
+				logger.notice(
+					"realityview_make_invoked viewport=\(self.viewportInstanceID.uuidString, privacy: .public) main=\(Thread.isMainThread, privacy: .public)"
+				)
+				contentBoundsConverter.install(content)
+				let root = makeSceneRoot()
+				content.add(root)
+				self.rootEntity = root
+				runtime.updateRootEntity(root, viewportID: viewportInstanceID)
+				if let latestVolumeBounds {
+					updateVolumePresentationBounds(latestVolumeBounds)
+				}
+				if let camera = root.findEntity(named: "MainCamera") {
+					runtime.setCameraEntity(camera)
+				}
+				refreshGrid()
+
+				if runtime.isActiveViewport(viewportInstanceID), let entity = runtime.modelEntity {
+					loadModel(entity)
+				}
 			}
-		} update: { content in
-			syncIBLState()
-			processRuntimeViewRequests()
-			// Grid parameters and position are kept in sync via refreshGrid(), which is
-			// triggered by onChange handlers for all relevant state (showGrid,
-			// metersPerUnit, isZUp, sceneBounds, colorScheme, store.appearance).
-			// No per-frame work is needed here.
-			#if !os(visionOS)
+			.overlay {
+				if let error = runtime.loadError {
+					errorOverlay(error)
+				}
+			}
+		#else
+			RealityView { content in
+				logger.debug(
+					"RealityView content mounted for viewport \(self.viewportInstanceID.uuidString, privacy: .public)"
+				)
+				let root = makeSceneRoot()
+				content.add(root)
+				self.rootEntity = root
+				runtime.updateRootEntity(root, viewportID: viewportInstanceID)
+				if let camera = root.findEntity(named: "MainCamera") {
+					runtime.setCameraEntity(camera)
+				}
+				refreshGrid()
+
+				if runtime.isActiveViewport(viewportInstanceID), let entity = runtime.modelEntity {
+					loadModel(entity)
+				}
+			} update: { content in
+				syncIBLState()
+				processRuntimeViewRequests()
+				// Grid parameters and position are kept in sync via refreshGrid(), which is
+				// triggered by onChange handlers for all relevant state (showGrid,
+				// metersPerUnit, isZUp, sceneBounds, colorScheme, store.appearance).
+				// No per-frame work is needed here.
 				if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
 					if let effect = outlineBox.effect as? PostProcessOutlineEffect {
 						if let camera = rootEntity?.findEntity(named: "MainCamera") {
@@ -415,14 +579,14 @@ public struct RealityKitStageView: View {
 						content.renderingEffects.customPostProcessing = .none
 					}
 				}
-			#endif
-			_ = outlineGeneration  // establish dependency so RealityView re-runs on selection change
-		}
-		.overlay {
-			if let error = runtime.loadError {
-				errorOverlay(error)
+				_ = outlineGeneration  // establish dependency so RealityView re-runs on selection change
 			}
-		}
+			.overlay {
+				if let error = runtime.loadError {
+					errorOverlay(error)
+				}
+			}
+		#endif
 	}
 
 	// MARK: - macOS Picking
@@ -567,48 +731,6 @@ public struct RealityKitStageView: View {
 		guard runtime.isLoaded else { return false }
 		guard runtime.modelEntity != nil else { return false }
 		return true
-	}
-
-	/// Observes store load request changes using `withObservationTracking` inside
-	/// a long-lived `.task`. This runs independently of SwiftUI's body evaluation,
-	/// so it fires reliably even when the view is behind `AnyView` or
-	/// `NSHostingController` boundaries that break `.onChange` delivery.
-	private func observeLoadRequests() async {
-		var lastHandledRequestID: UUID?
-		var activeLoadTask: Task<Void, Never>?
-
-		func scheduleCurrentRequest() {
-			let currentRequestID = store.loadRequestID
-			guard currentRequestID != lastHandledRequestID else { return }
-			lastHandledRequestID = currentRequestID
-			activeLoadTask?.cancel()
-			activeLoadTask = Task {
-				await handleLoadRequestIfNeeded(requestID: currentRequestID)
-			}
-		}
-
-		// Process the initial state on mount
-		scheduleCurrentRequest()
-
-		// Then observe changes via withObservationTracking
-		while !Task.isCancelled {
-			let requestID = await withCheckedContinuation { continuation in
-				withObservationTracking {
-					_ = store.loadRequestID
-				} onChange: {
-					Task { @MainActor in
-						continuation.resume(returning: store.loadRequestID)
-					}
-				}
-			}
-			guard !Task.isCancelled else { break }
-			logger.debug(
-				"observeLoadRequests: detected requestID change to \(requestID.uuidString, privacy: .public) viewport=\(self.viewportInstanceID.uuidString, privacy: .public)"
-			)
-			scheduleCurrentRequest()
-		}
-
-		activeLoadTask?.cancel()
 	}
 
 	private func handleLoadRequestIfNeeded(requestID currentRequestID: UUID) async {
@@ -788,6 +910,12 @@ public struct RealityKitStageView: View {
 
 		if let modelAnchor = anchor {
 			modelAnchor.addChild(entity)
+			#if os(visionOS)
+				if let latestVolumeBounds {
+					updateVolumePresentationBounds(latestVolumeBounds)
+				}
+			#endif
+			applyConfiguredModelTransform()
 			runtime.setHiddenPrimPaths(Set(store.hiddenPrimPaths))
 			runtime.startEmbeddedAnimationsIfAvailable(autoPlay: false)
 
@@ -819,6 +947,420 @@ public struct RealityKitStageView: View {
 			applyIBLReceiver(to: entity)
 		}
 	}
+
+	@MainActor
+	private func applyConfiguredModelTransform() {
+		guard let anchor = rootEntity?.findEntity(named: "ModelAnchor"),
+			  let entity = anchor.children.first(where: { $0.name == "LoadedModel" })
+		else { return }
+		#if os(visionOS)
+			if shouldFitModelToVolumeFloor,
+			   let presentation = anchor.components[VolumeModelPresentationComponent.self] {
+				applyConfiguredModelTransform(
+					anchor: anchor,
+					model: entity,
+					presentation: presentation
+				)
+				return
+			}
+		#endif
+		applyConfiguredModelTransform(anchor: anchor)
+	}
+
+	#if os(visionOS)
+	@MainActor
+	private func updateVolumePresentationBounds(_ bounds: Rect3D) {
+		let fallbackBounds = centeredPhysicalBounds(for: bounds)
+		let contentBounds = contentBoundsConverter.convert(bounds)
+		let resolvedBounds = contentBounds ?? fallbackBounds
+		let extents = resolvedBounds.extents
+		logger.notice(
+			"volume_bounds_updated source=\(contentBounds == nil ? "physical_metrics_fallback" : "reality_content_convert", privacy: .public) raw_min=(\(bounds.min.x, privacy: .public),\(bounds.min.y, privacy: .public),\(bounds.min.z, privacy: .public)) raw_max=(\(bounds.max.x, privacy: .public),\(bounds.max.y, privacy: .public),\(bounds.max.z, privacy: .public)) resolved_min=(\(resolvedBounds.min.x, privacy: .public),\(resolvedBounds.min.y, privacy: .public),\(resolvedBounds.min.z, privacy: .public)) resolved_max=(\(resolvedBounds.max.x, privacy: .public),\(resolvedBounds.max.y, privacy: .public),\(resolvedBounds.max.z, privacy: .public)) fallback_min=(\(fallbackBounds.min.x, privacy: .public),\(fallbackBounds.min.y, privacy: .public),\(fallbackBounds.min.z, privacy: .public)) fallback_max=(\(fallbackBounds.max.x, privacy: .public),\(fallbackBounds.max.y, privacy: .public),\(fallbackBounds.max.z, privacy: .public)) main=\(Thread.isMainThread, privacy: .public)"
+		)
+		guard extents.x.isFinite, extents.y.isFinite, extents.z.isFinite,
+			  extents.x > 0, extents.y > 0, extents.z > 0
+		else { return }
+		guard let anchor = rootEntity?.findEntity(named: "ModelAnchor") else { return }
+		let existing = anchor.components[VolumeModelPresentationComponent.self]
+		anchor.components.set(
+			VolumeModelPresentationComponent(
+				fitScale: existing?.fitScale,
+				yawRadians: existing?.yawRadians ?? 0,
+				scaleMultiplier: existing?.scaleMultiplier ?? 1,
+				turntableStartYaw: existing?.turntableStartYaw,
+				transientTiltRadians: existing?.transientTiltRadians ?? 0,
+				transientTiltStartRadians: existing?.transientTiltStartRadians,
+				scaleStartMultiplier: existing?.scaleStartMultiplier,
+				viewMax: resolvedBounds.max,
+				viewMin: resolvedBounds.min
+			)
+		)
+		applyConfiguredModelTransform()
+	}
+
+	@MainActor
+	private func centeredPhysicalBounds(for bounds: Rect3D) -> BoundingBox {
+		let boundsInMeters = physicalMetrics.convert(bounds, to: .meters)
+		let extents = SIMD3<Float>(
+			Float(boundsInMeters.max.x - boundsInMeters.min.x),
+			Float(boundsInMeters.max.y - boundsInMeters.min.y),
+			Float(boundsInMeters.max.z - boundsInMeters.min.z)
+		)
+		let halfExtents = extents * 0.5
+		return BoundingBox(min: -halfExtents, max: halfExtents)
+	}
+	#endif
+
+	@MainActor
+	private func applyConfiguredModelTransform(anchor: Entity) {
+		let displayScale = configuration.modelDisplayScale.isFinite
+			&& configuration.modelDisplayScale > 0
+			? configuration.modelDisplayScale
+			: 1.0
+		anchor.scale = SIMD3<Float>(repeating: displayScale)
+		anchor.position = configuration.modelDisplayOffset
+		#if os(visionOS)
+			updateModelManipulation(for: anchor)
+		#endif
+	}
+
+	#if os(visionOS)
+	private var shouldFitModelToVolumeFloor: Bool {
+		configuration.modelDisplaysOnBase
+			|| configuration.volumePresentationMode == .fitToVolumeFloor
+	}
+
+	@MainActor
+	private func applyConfiguredModelTransform(
+		anchor: Entity,
+		model: Entity,
+		presentation: VolumeModelPresentationComponent
+	) {
+		let displayScale = configuration.modelDisplayScale.isFinite
+			&& configuration.modelDisplayScale > 0
+			? configuration.modelDisplayScale
+			: 1.0
+		let modelBounds = model.visualBounds(relativeTo: anchor)
+		let modelExtents = modelBounds.extents
+		let viewExtents = presentation.viewMax - presentation.viewMin
+		guard modelExtents.x.isFinite, modelExtents.y.isFinite, modelExtents.z.isFinite,
+			  modelExtents.x > 0, modelExtents.y > 0, modelExtents.z > 0,
+			  viewExtents.x.isFinite, viewExtents.y.isFinite, viewExtents.z.isFinite,
+			  viewExtents.x > 0, viewExtents.y > 0, viewExtents.z > 0
+		else { return }
+
+		let fitScale = min(
+			viewExtents.x / modelExtents.x,
+			min(viewExtents.y / modelExtents.y, viewExtents.z / modelExtents.z)
+		) * 0.92
+		guard fitScale.isFinite, fitScale > 0 else { return }
+
+		var updatedPresentation = presentation
+		updatedPresentation.fitScale = fitScale
+		updatedPresentation.scaleMultiplier = Self.clampedVolumeScaleMultiplier(
+			presentation.scaleMultiplier,
+			fitScale: fitScale
+		)
+		anchor.components.set(updatedPresentation)
+		applyVolumePresentationTransform(
+			anchor: anchor,
+			modelBounds: modelBounds,
+			presentation: updatedPresentation,
+			displayScale: displayScale
+		)
+		updateModelManipulation(for: anchor)
+		logger.notice(
+			"volume_presentation_fit fit_scale=\(fitScale, privacy: .public) final_scale=\(anchor.scale.x, privacy: .public) multiplier=\(updatedPresentation.scaleMultiplier, privacy: .public) yaw=\(updatedPresentation.yawRadians, privacy: .public) model_min=(\(modelBounds.min.x, privacy: .public),\(modelBounds.min.y, privacy: .public),\(modelBounds.min.z, privacy: .public)) model_max=(\(modelBounds.max.x, privacy: .public),\(modelBounds.max.y, privacy: .public),\(modelBounds.max.z, privacy: .public)) model_extents=(\(modelExtents.x, privacy: .public),\(modelExtents.y, privacy: .public),\(modelExtents.z, privacy: .public)) view_extents=(\(viewExtents.x, privacy: .public),\(viewExtents.y, privacy: .public),\(viewExtents.z, privacy: .public)) anchor_position=(\(anchor.position.x, privacy: .public),\(anchor.position.y, privacy: .public),\(anchor.position.z, privacy: .public))"
+		)
+	}
+
+	@MainActor
+	private func applyVolumePresentationTransform(
+		anchor: Entity,
+		modelBounds: BoundingBox,
+		presentation: VolumeModelPresentationComponent,
+		displayScale: Float,
+		animationDuration: TimeInterval = 0
+	) {
+		guard let fitScale = presentation.fitScale,
+			  fitScale.isFinite,
+			  fitScale > 0
+		else { return }
+		let scale = fitScale
+			* displayScale
+			* Self.clampedVolumeScaleMultiplier(
+				presentation.scaleMultiplier,
+				fitScale: fitScale
+			)
+		let viewCenter = (presentation.viewMin + presentation.viewMax) * 0.5
+		let rotation = volumePresentationOrientation(for: presentation)
+		let transformedBounds = rotatedScaledBounds(
+			for: modelBounds,
+			rotation: rotation,
+			scale: scale
+		)
+		let transformedCenter = (transformedBounds.min + transformedBounds.max) * 0.5
+		let transform = Transform(
+			scale: SIMD3<Float>(repeating: scale),
+			rotation: rotation,
+			translation: configuration.modelDisplayOffset + SIMD3<Float>(
+				viewCenter.x - transformedCenter.x,
+				presentation.viewMin.y - transformedBounds.min.y,
+				viewCenter.z - transformedCenter.z
+			)
+		)
+		if animationDuration > 0 {
+			anchor.move(
+				to: transform,
+				relativeTo: anchor.parent,
+				duration: animationDuration,
+				timingFunction: .easeOut
+			)
+		} else {
+			anchor.transform = transform
+		}
+		volumePresentationScalePercent = Double(
+			scale / Swift.max(displayScale, Float.leastNonzeroMagnitude) * 100
+		)
+		logger.debug(
+			"volume_presentation_apply fit_scale=\(fitScale, privacy: .public) display_scale=\(displayScale, privacy: .public) multiplier=\(presentation.scaleMultiplier, privacy: .public) final_scale=\(scale, privacy: .public) yaw=\(presentation.yawRadians, privacy: .public) transient_tilt=\(presentation.transientTiltRadians, privacy: .public) animation=\(animationDuration, privacy: .public) view_center=(\(viewCenter.x, privacy: .public),\(viewCenter.y, privacy: .public),\(viewCenter.z, privacy: .public)) transformed_min=(\(transformedBounds.min.x, privacy: .public),\(transformedBounds.min.y, privacy: .public),\(transformedBounds.min.z, privacy: .public)) transformed_max=(\(transformedBounds.max.x, privacy: .public),\(transformedBounds.max.y, privacy: .public),\(transformedBounds.max.z, privacy: .public)) transformed_center=(\(transformedCenter.x, privacy: .public),\(transformedCenter.y, privacy: .public),\(transformedCenter.z, privacy: .public)) position=(\(transform.translation.x, privacy: .public),\(transform.translation.y, privacy: .public),\(transform.translation.z, privacy: .public))"
+		)
+	}
+
+	private func rotatedScaledBounds(
+		for bounds: BoundingBox,
+		rotation: simd_quatf,
+		scale: Float
+	) -> BoundingBox {
+		let corners = [
+			SIMD3<Float>(bounds.min.x, bounds.min.y, bounds.min.z),
+			SIMD3<Float>(bounds.min.x, bounds.min.y, bounds.max.z),
+			SIMD3<Float>(bounds.min.x, bounds.max.y, bounds.min.z),
+			SIMD3<Float>(bounds.min.x, bounds.max.y, bounds.max.z),
+			SIMD3<Float>(bounds.max.x, bounds.min.y, bounds.min.z),
+			SIMD3<Float>(bounds.max.x, bounds.min.y, bounds.max.z),
+			SIMD3<Float>(bounds.max.x, bounds.max.y, bounds.min.z),
+			SIMD3<Float>(bounds.max.x, bounds.max.y, bounds.max.z),
+		]
+		var minPoint = SIMD3<Float>(
+			Float.greatestFiniteMagnitude,
+			Float.greatestFiniteMagnitude,
+			Float.greatestFiniteMagnitude
+		)
+		var maxPoint = SIMD3<Float>(
+			-Float.greatestFiniteMagnitude,
+			-Float.greatestFiniteMagnitude,
+			-Float.greatestFiniteMagnitude
+		)
+		for corner in corners {
+			let transformed = rotation.act(corner * scale)
+			minPoint = simd_min(minPoint, transformed)
+			maxPoint = simd_max(maxPoint, transformed)
+		}
+		return BoundingBox(min: minPoint, max: maxPoint)
+	}
+
+	private func volumePresentationOrientation(
+		for presentation: VolumeModelPresentationComponent
+	) -> simd_quatf {
+		let upAxis = volumeUpAxis
+		let tiltAxis = volumeTiltAxis
+		let yaw = simd_quatf(angle: presentation.yawRadians, axis: upAxis)
+		let tilt = simd_quatf(angle: presentation.transientTiltRadians, axis: tiltAxis)
+		return yaw * tilt
+	}
+
+	private var volumeUpAxis: SIMD3<Float> {
+		runtime.isZUp || configuration.isZUp ? SIMD3<Float>(0, 0, 1) : SIMD3<Float>(0, 1, 0)
+	}
+
+	private var volumeTiltAxis: SIMD3<Float> {
+		SIMD3<Float>(1, 0, 0)
+	}
+
+	private static func clampedVolumeScaleMultiplier(
+		_ value: Float,
+		fitScale: Float?
+	) -> Float {
+		guard value.isFinite else { return 1 }
+		let realSizeMultiplier: Float
+		if let fitScale, fitScale.isFinite, fitScale > 1 {
+			realSizeMultiplier = 1 / fitScale
+		} else {
+			realSizeMultiplier = 0.35
+		}
+		let lowerBound = max(0.01, min(0.35, realSizeMultiplier))
+		return min(1.0, max(lowerBound, value))
+	}
+
+	private static func clampedTransientTilt(_ value: Float) -> Float {
+		guard value.isFinite else { return 0 }
+		return min(0.7, max(-0.7, value))
+	}
+
+	private static func clampedYawInertia(_ value: Float) -> Float {
+		guard value.isFinite else { return 0 }
+		return min(0.75, max(-0.75, value))
+	}
+
+	@available(visionOS 26.0, *)
+	private var volumeTurntableGesture: some Gesture {
+		DragGesture(minimumDistance: 8)
+			.onChanged { value in
+				applyVolumeTurntableDragChanged(value)
+			}
+			.onEnded { value in
+				applyVolumeTurntableDragEnded(value)
+				if let anchor = rootEntity?.findEntity(named: "ModelAnchor"),
+				   var presentation = anchor.components[VolumeModelPresentationComponent.self] {
+					presentation.turntableStartYaw = nil
+					presentation.transientTiltStartRadians = nil
+					anchor.components.set(presentation)
+					logger.notice(
+						"volume_turntable_ended yaw=\(presentation.yawRadians, privacy: .public) transient_tilt=\(presentation.transientTiltRadians, privacy: .public)"
+					)
+				}
+			}
+	}
+
+	@available(visionOS 26.0, *)
+	private var volumeScaleGesture: some Gesture {
+		MagnifyGesture(minimumScaleDelta: 0.01)
+			.onChanged { value in
+				applyVolumeScaleChanged(value)
+			}
+			.onEnded { value in
+				applyVolumeScaleChanged(value)
+				if let anchor = rootEntity?.findEntity(named: "ModelAnchor"),
+				   var presentation = anchor.components[VolumeModelPresentationComponent.self] {
+					presentation.scaleStartMultiplier = nil
+					anchor.components.set(presentation)
+					logger.notice(
+						"volume_scale_ended multiplier=\(presentation.scaleMultiplier, privacy: .public)"
+					)
+				}
+			}
+	}
+
+	@available(visionOS 26.0, *)
+	@MainActor
+	private func applyVolumeTurntableDragChanged(_ value: DragGesture.Value) {
+		guard configuration.enablesModelManipulation,
+			  shouldFitModelToVolumeFloor,
+			  let anchor = rootEntity?.findEntity(named: "ModelAnchor"),
+			  let model = anchor.children.first(where: { $0.name == "LoadedModel" }),
+			  var presentation = anchor.components[VolumeModelPresentationComponent.self],
+			  presentation.fitScale != nil
+		else { return }
+
+		let startYaw = presentation.turntableStartYaw ?? presentation.yawRadians
+		if presentation.turntableStartYaw == nil {
+			presentation.turntableStartYaw = startYaw
+		}
+		let startTilt = presentation.transientTiltStartRadians ?? presentation.transientTiltRadians
+		if presentation.transientTiltStartRadians == nil {
+			presentation.transientTiltStartRadians = startTilt
+		}
+		let radiansPerPoint = Float.pi / 360
+		presentation.yawRadians = startYaw + Float(value.translation.width) * radiansPerPoint
+		presentation.transientTiltRadians = Self.clampedTransientTilt(
+			startTilt + Float(value.translation.height) * radiansPerPoint
+		)
+		anchor.components.set(presentation)
+		let displayScale = configuration.modelDisplayScale.isFinite
+			&& configuration.modelDisplayScale > 0
+			? configuration.modelDisplayScale
+			: 1.0
+		applyVolumePresentationTransform(
+			anchor: anchor,
+			modelBounds: model.visualBounds(relativeTo: anchor),
+			presentation: presentation,
+			displayScale: displayScale
+		)
+	}
+
+	@available(visionOS 26.0, *)
+	@MainActor
+	private func applyVolumeTurntableDragEnded(_ value: DragGesture.Value) {
+		guard configuration.enablesModelManipulation,
+			  shouldFitModelToVolumeFloor,
+			  let anchor = rootEntity?.findEntity(named: "ModelAnchor"),
+			  let model = anchor.children.first(where: { $0.name == "LoadedModel" }),
+			  var presentation = anchor.components[VolumeModelPresentationComponent.self],
+			  presentation.fitScale != nil
+		else { return }
+
+		let startYaw = presentation.turntableStartYaw ?? presentation.yawRadians
+		let radiansPerPoint = Float.pi / 360
+		let predictedExtraWidth = Float(
+			value.predictedEndTranslation.width - value.translation.width
+		)
+		let inertiaYaw = Self.clampedYawInertia(predictedExtraWidth * radiansPerPoint)
+		presentation.yawRadians = startYaw + Float(value.translation.width) * radiansPerPoint + inertiaYaw
+		presentation.transientTiltRadians = 0
+		presentation.turntableStartYaw = nil
+		presentation.transientTiltStartRadians = nil
+		anchor.components.set(presentation)
+		let displayScale = configuration.modelDisplayScale.isFinite
+			&& configuration.modelDisplayScale > 0
+			? configuration.modelDisplayScale
+			: 1.0
+		applyVolumePresentationTransform(
+			anchor: anchor,
+			modelBounds: model.visualBounds(relativeTo: anchor),
+			presentation: presentation,
+			displayScale: displayScale,
+			animationDuration: 0.28
+		)
+	}
+
+	@available(visionOS 26.0, *)
+	@MainActor
+	private func applyVolumeScaleChanged(_ value: MagnifyGesture.Value) {
+		guard configuration.enablesModelManipulation,
+			  shouldFitModelToVolumeFloor,
+			  let anchor = rootEntity?.findEntity(named: "ModelAnchor"),
+			  let model = anchor.children.first(where: { $0.name == "LoadedModel" }),
+			  var presentation = anchor.components[VolumeModelPresentationComponent.self],
+			  presentation.fitScale != nil
+		else { return }
+
+		let startScale = presentation.scaleStartMultiplier ?? presentation.scaleMultiplier
+		if presentation.scaleStartMultiplier == nil {
+			presentation.scaleStartMultiplier = startScale
+		}
+		presentation.scaleMultiplier = Self.clampedVolumeScaleMultiplier(
+			startScale * Float(value.magnification),
+			fitScale: presentation.fitScale
+		)
+		anchor.components.set(presentation)
+		let displayScale = configuration.modelDisplayScale.isFinite
+			&& configuration.modelDisplayScale > 0
+			? configuration.modelDisplayScale
+			: 1.0
+		applyVolumePresentationTransform(
+			anchor: anchor,
+			modelBounds: model.visualBounds(relativeTo: anchor),
+			presentation: presentation,
+			displayScale: displayScale
+		)
+	}
+
+	@MainActor
+	private func updateModelManipulation(for anchor: Entity) {
+		guard #available(visionOS 26.0, *) else { return }
+		if configuration.enablesModelManipulation {
+			anchor.components.remove(ManipulationComponent.self)
+			anchor.components.remove(ManipulationComponent.HitTarget.self)
+			logger.debug(
+				"volume_manipulation_enabled system_manipulation=disabled gestures=swiftui_direct"
+			)
+		} else {
+			anchor.components.remove(ManipulationComponent.self)
+			anchor.components.remove(ManipulationComponent.HitTarget.self)
+		}
+	}
+	#endif
 
 	@MainActor
 	private func applyCameraStateImmediately(_ newState: ArcballCameraState) {
@@ -867,6 +1409,8 @@ public struct RealityKitStageView: View {
 	private func refreshGrid() {
 		guard let root = rootEntity else { return }
 		let bounds = runtime.sceneBounds
+		let gridWorldExtent = gridReferenceExtent(for: bounds)
+		let gridRadiusOverrideMeters = gridRadiusOverrideMeters(for: bounds)
 
 		if !configuration.showGrid {
 			gridLoadRequestID = UUID()
@@ -879,18 +1423,20 @@ public struct RealityKitStageView: View {
 		if let existing = gridEntity {
 			let metrics = RealityKitGrid.metrics(
 				metersPerUnit: viewportBoundsMetersPerUnit,
-				worldExtent: Double(bounds.maxExtent),
+				worldExtent: Double(gridWorldExtent),
+				radiusMetersOverride: gridRadiusOverrideMeters,
 				appearance: resolvedAppearance.viewportAppearance
 			)
 			logger.notice(
-				"viewport_grid_refresh existing=true bounds_min=(\(bounds.min.x, format: .fixed(precision: 4)),\(bounds.min.y, format: .fixed(precision: 4)),\(bounds.min.z, format: .fixed(precision: 4))) bounds_max=(\(bounds.max.x, format: .fixed(precision: 4)),\(bounds.max.y, format: .fixed(precision: 4)),\(bounds.max.z, format: .fixed(precision: 4))) center=(\(bounds.center.x, format: .fixed(precision: 4)),\(bounds.center.y, format: .fixed(precision: 4)),\(bounds.center.z, format: .fixed(precision: 4))) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4)) radius_m=\(metrics.radiusMeters, format: .fixed(precision: 4)) minor_m=\(metrics.minorStepMeters, format: .fixed(precision: 4)) major_m=\(metrics.majorStepMeters, format: .fixed(precision: 4))"
+				"viewport_grid_refresh existing=true bounds_min=(\(bounds.min.x, format: .fixed(precision: 4)),\(bounds.min.y, format: .fixed(precision: 4)),\(bounds.min.z, format: .fixed(precision: 4))) bounds_max=(\(bounds.max.x, format: .fixed(precision: 4)),\(bounds.max.y, format: .fixed(precision: 4)),\(bounds.max.z, format: .fixed(precision: 4))) center=(\(bounds.center.x, format: .fixed(precision: 4)),\(bounds.center.y, format: .fixed(precision: 4)),\(bounds.center.z, format: .fixed(precision: 4))) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4)) grid_extent=\(gridWorldExtent, format: .fixed(precision: 4)) radius_override_m=\(gridRadiusOverrideMeters ?? -1, format: .fixed(precision: 4)) radius_m=\(metrics.radiusMeters, format: .fixed(precision: 4)) minor_m=\(metrics.minorStepMeters, format: .fixed(precision: 4)) major_m=\(metrics.majorStepMeters, format: .fixed(precision: 4))"
 			)
 			RealityKitGrid.updateProceduralGrid(
 				entity: existing,
 				metersPerUnit: viewportBoundsMetersPerUnit,
-				worldExtent: Double(bounds.maxExtent),
+				worldExtent: Double(gridWorldExtent),
 				isZUp: configuration.isZUp,
 				appearance: resolvedAppearance.viewportAppearance,
+				radiusMetersOverride: gridRadiusOverrideMeters,
 				minorColorOverride: resolvedAppearance.gridMinorColor,
 				majorColorOverride: resolvedAppearance.gridMajorColor
 			)
@@ -907,7 +1453,7 @@ public struct RealityKitStageView: View {
 		let requestID = UUID()
 		gridLoadRequestID = requestID
 		logger.notice(
-			"viewport_grid_refresh existing=false bounds_min=(\(bounds.min.x, format: .fixed(precision: 4)),\(bounds.min.y, format: .fixed(precision: 4)),\(bounds.min.z, format: .fixed(precision: 4))) bounds_max=(\(bounds.max.x, format: .fixed(precision: 4)),\(bounds.max.y, format: .fixed(precision: 4)),\(bounds.max.z, format: .fixed(precision: 4))) center=(\(bounds.center.x, format: .fixed(precision: 4)),\(bounds.center.y, format: .fixed(precision: 4)),\(bounds.center.z, format: .fixed(precision: 4))) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4))"
+			"viewport_grid_refresh existing=false bounds_min=(\(bounds.min.x, format: .fixed(precision: 4)),\(bounds.min.y, format: .fixed(precision: 4)),\(bounds.min.z, format: .fixed(precision: 4))) bounds_max=(\(bounds.max.x, format: .fixed(precision: 4)),\(bounds.max.y, format: .fixed(precision: 4)),\(bounds.max.z, format: .fixed(precision: 4))) center=(\(bounds.center.x, format: .fixed(precision: 4)),\(bounds.center.y, format: .fixed(precision: 4)),\(bounds.center.z, format: .fixed(precision: 4))) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4)) grid_extent=\(gridWorldExtent, format: .fixed(precision: 4)) radius_override_m=\(gridRadiusOverrideMeters ?? -1, format: .fixed(precision: 4))"
 		)
 		Task {
 			await loadProceduralGrid(into: root, requestID: requestID)
@@ -942,9 +1488,10 @@ public struct RealityKitStageView: View {
 		guard
 			let grid = await RealityKitGrid.createProceduralGridEntity(
 				metersPerUnit: viewportBoundsMetersPerUnit,
-				worldExtent: Double(runtime.sceneBounds.maxExtent),
+				worldExtent: Double(gridReferenceExtent(for: runtime.sceneBounds)),
 				isZUp: configuration.isZUp,
 				appearance: resolvedAppearance.viewportAppearance,
+				radiusMetersOverride: gridRadiusOverrideMeters(for: runtime.sceneBounds),
 				minorColorOverride: resolvedAppearance.gridMinorColor,
 				majorColorOverride: resolvedAppearance.gridMajorColor
 			)
@@ -957,14 +1504,15 @@ public struct RealityKitStageView: View {
 		// Remove any stale grid attached to the current root before adopting the new one.
 		root.findEntity(named: "ReferenceGrid")?.removeFromParent()
 		gridEntity?.removeFromParent()
-		alignGrid(grid)
 		self.gridEntity = grid
 		root.addChild(grid)
+		alignGrid(grid)
 	}
 
 	@MainActor
 	private func alignGrid(_ grid: Entity) {
 		let bounds = runtime.sceneBounds
+		let placement = gridPlacement(for: bounds)
 		let verticalInset = Float(
 			Swift.max(
 				0.0005,
@@ -975,13 +1523,73 @@ public struct RealityKitStageView: View {
 			)
 		)
 		grid.position = SIMD3<Float>(
-			bounds.center.x,
-			bounds.min.y - verticalInset,
-			bounds.center.z
+			placement.center.x,
+			placement.floorY - verticalInset,
+			placement.center.z
 		)
+		let visualBounds = grid.visualBounds(relativeTo: rootEntity)
+		let visualCenter = (visualBounds.min + visualBounds.max) * 0.5
+		let correction = SIMD3<Float>(
+			placement.center.x - visualCenter.x,
+			placement.floorY - verticalInset - visualBounds.min.y,
+			placement.center.z - visualCenter.z
+		)
+		if correction.x.isFinite, correction.y.isFinite, correction.z.isFinite {
+			grid.position += correction
+		}
 		logger.notice(
-			"viewport_grid_align position=(\(grid.position.x, format: .fixed(precision: 4)),\(grid.position.y, format: .fixed(precision: 4)),\(grid.position.z, format: .fixed(precision: 4))) vertical_inset=\(verticalInset, format: .fixed(precision: 6)) bounds_min_y=\(bounds.min.y, format: .fixed(precision: 4)) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4))"
+			"viewport_grid_align position=(\(grid.position.x, format: .fixed(precision: 4)),\(grid.position.y, format: .fixed(precision: 4)),\(grid.position.z, format: .fixed(precision: 4))) visual_min=(\(visualBounds.min.x, format: .fixed(precision: 4)),\(visualBounds.min.y, format: .fixed(precision: 4)),\(visualBounds.min.z, format: .fixed(precision: 4))) visual_max=(\(visualBounds.max.x, format: .fixed(precision: 4)),\(visualBounds.max.y, format: .fixed(precision: 4)),\(visualBounds.max.z, format: .fixed(precision: 4))) correction=(\(correction.x, format: .fixed(precision: 4)),\(correction.y, format: .fixed(precision: 4)),\(correction.z, format: .fixed(precision: 4))) vertical_inset=\(verticalInset, format: .fixed(precision: 6)) floor_y=\(placement.floorY, format: .fixed(precision: 4)) bounds_min_y=\(bounds.min.y, format: .fixed(precision: 4)) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4))"
 		)
+	}
+
+	@MainActor
+	private func gridReferenceExtent(for bounds: SceneBounds) -> Float {
+		#if os(visionOS)
+			if shouldFitModelToVolumeFloor,
+			   let presentation = rootEntity?
+				.findEntity(named: "ModelAnchor")?
+				.components[VolumeModelPresentationComponent.self] {
+				let viewExtents = presentation.viewMax - presentation.viewMin
+				let extent = Swift.max(viewExtents.x, Swift.max(viewExtents.y, viewExtents.z))
+				if extent.isFinite, extent > 0 {
+					return extent
+				}
+			}
+		#endif
+		return bounds.maxExtent
+	}
+
+	@MainActor
+	private func gridRadiusOverrideMeters(for bounds: SceneBounds) -> Double? {
+		#if os(visionOS)
+			if shouldFitModelToVolumeFloor,
+			   let presentation = rootEntity?
+				.findEntity(named: "ModelAnchor")?
+				.components[VolumeModelPresentationComponent.self] {
+				let viewExtents = presentation.viewMax - presentation.viewMin
+				let floorDiagonal = Double(hypot(viewExtents.x, viewExtents.z))
+				let radiusMeters = floorDiagonal * Double(viewportBoundsMetersPerUnit) * 0.5
+				if radiusMeters.isFinite, radiusMeters > 0 {
+					return radiusMeters
+				}
+			}
+		#endif
+		_ = bounds
+		return nil
+	}
+
+	@MainActor
+	private func gridPlacement(for bounds: SceneBounds) -> (center: SIMD3<Float>, floorY: Float) {
+		#if os(visionOS)
+			if shouldFitModelToVolumeFloor,
+			   let presentation = rootEntity?
+				.findEntity(named: "ModelAnchor")?
+				.components[VolumeModelPresentationComponent.self] {
+				let center = (presentation.viewMin + presentation.viewMax) * 0.5
+				return (center, presentation.viewMin.y)
+			}
+		#endif
+		return (bounds.center, bounds.min.y)
 	}
 
 	private func processRuntimeViewRequests() {
@@ -1297,9 +1905,8 @@ public struct RealityKitStageView: View {
 			logger.debug("Skybox updated: enabled=\(self.configuration.showEnvironmentBackground, privacy: .public)")
 		}
 
-		// Apply all current visual state immediately — don't wait for the next
-		// syncIBLState() call from the update: closure, which would cause a
-		// brief flash at default exposure after every environment reload.
+		// Apply all current visual state with the environment replacement so
+		// there is no flash at default exposure after an environment reload.
 		updateIBLExposure(configuration.environmentExposure)
 		iblSyncCache.exposure = configuration.environmentExposure
 		updateIBLRotation(configuration.environmentRotation)

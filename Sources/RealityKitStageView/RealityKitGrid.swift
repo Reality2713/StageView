@@ -39,6 +39,7 @@ public struct RealityKitGrid {
         worldExtent: Double,
         isZUp: Bool,
         appearance: ViewportAppearance,
+        radiusMetersOverride: Double? = nil,
         minorColorOverride: SIMD3<Float>? = nil,
         majorColorOverride: SIMD3<Float>? = nil
     ) async -> Entity? {
@@ -60,6 +61,7 @@ public struct RealityKitGrid {
                 worldExtent: worldExtent,
                 isZUp: isZUp,
                 appearance: appearance,
+                radiusMetersOverride: radiusMetersOverride,
                 minorColorOverride: minorColorOverride,
                 majorColorOverride: majorColorOverride
             )
@@ -79,6 +81,7 @@ public struct RealityKitGrid {
         worldExtent: Double,
         isZUp: Bool,
         appearance: ViewportAppearance,
+        radiusMetersOverride: Double? = nil,
         minorColorOverride: SIMD3<Float>? = nil,
         majorColorOverride: SIMD3<Float>? = nil
     ) {
@@ -86,6 +89,7 @@ public struct RealityKitGrid {
         let metrics = metrics(
             metersPerUnit: metersPerUnit,
             worldExtent: worldExtent,
+            radiusMetersOverride: radiusMetersOverride,
             appearance: appearance
         )
         let minorStep = metrics.minorStepMeters
@@ -267,11 +271,14 @@ public struct RealityKitGrid {
     public static func metrics(
         metersPerUnit: Double,
         worldExtent: Double,
+        radiusMetersOverride: Double? = nil,
         appearance: ViewportAppearance
     ) -> Metrics {
         let safeMetersPerUnit = Swift.max(metersPerUnit, 0.000_001)
         let worldExtentMeters = worldExtent * safeMetersPerUnit
-        let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
+        let radiusMeters = radiusMetersOverride.flatMap { override in
+            override.isFinite && override > 0 ? override : nil
+        } ?? ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
         let minorStep = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
         let majorStep = ViewportTuning.majorGridStepMeters(forMinorStep: minorStep)
         let palette = ProceduralGridPalette(appearance: appearance)

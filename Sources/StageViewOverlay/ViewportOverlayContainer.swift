@@ -124,10 +124,15 @@ private struct AnchorItemContent<AccessoryContent: View>: View {
 
 		case .scaleIndicator:
 			if builtInVisibility.showsScaleIndicator,
-				let referenceDepthMeters = snapshot.referenceDepthMeters,
-				referenceDepthMeters.isFinite,
-				referenceDepthMeters > 0
-			{
+			   let presentationScalePercent = snapshot.presentationScalePercent,
+			   presentationScalePercent.isFinite,
+			   presentationScalePercent > 0 {
+				PresentationScaleBadgeView(percent: presentationScalePercent)
+					.allowsHitTesting(false)
+			} else if builtInVisibility.showsScaleIndicator,
+					  let referenceDepthMeters = snapshot.referenceDepthMeters,
+					  referenceDepthMeters.isFinite,
+					  referenceDepthMeters > 0 {
 				ScaleIndicatorView(
 					referenceDepthMeters: referenceDepthMeters,
 					viewportWidthPoints: Double(max(1, viewportWidth)),
