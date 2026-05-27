@@ -499,6 +499,14 @@ public struct RealityKitStageView: View {
 		return .visible
 	}
 	#endif
+	private var overlayPresentationScalePercent: Double? {
+		#if os(visionOS)
+			return volumePresentationScalePercent
+		#else
+			return nil
+		#endif
+	}
+
 
     private var overlaySnapshot: StageViewOverlaySnapshot {
         return StageViewOverlaySnapshot(
@@ -510,7 +518,7 @@ public struct RealityKitStageView: View {
             horizontalFOVDegrees: 60,
             isZUp: runtime.isZUp,
             referenceDepthMeters: runtime.overlayReferenceDepthMeters,
-            presentationScalePercent: volumePresentationScalePercent
+            presentationScalePercent: overlayPresentationScalePercent
         )
     }
 
