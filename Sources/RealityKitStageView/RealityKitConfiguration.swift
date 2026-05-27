@@ -18,6 +18,18 @@ public enum SelectionHighlightStyle: Sendable, Equatable {
     case none
 }
 
+/// Chooses how authored environment lighting participates in a spatial scene.
+///
+/// The setting affects visionOS rendering. Other platforms continue to use
+/// receiver-based image-based lighting.
+public enum SpatialEnvironmentLightingMode: Sendable, Equatable {
+    /// Applies authored environment lighting directly to participating model entities.
+    case imageBasedLightReceiver
+
+    /// Publishes authored environment lighting through a virtual environment probe.
+    case virtualEnvironmentProbe
+}
+
 /// Configuration for the RealityKit viewport.
 ///
 /// `RealityKitConfiguration` is reserved for static embedding concerns and
@@ -36,8 +48,15 @@ public struct RealityKitConfiguration: Sendable {
     /// Normalized blur amount for generated soft-reflection HDRs.
     /// `0` preserves the sharp authored map, `1` applies the default soft blur.
     public var environmentBlurAmount: Float = 1.0
+    /// Normalized contribution from a custom image-based light.
+    public var imageBasedLightingWeight: Float = 1.0
     public var environmentExposure: Float = 0.0
     public var environmentRotation: Float = 0.0
+    /// Contribution from physical or system-provided environment lighting when
+    /// the hosted scene also receives custom image-based lighting.
+    public var environmentLightingWeight: Float = 1.0
+    /// Mechanism used for authored environment lighting in a spatial scene.
+    public var spatialEnvironmentLightingMode: SpatialEnvironmentLightingMode = .imageBasedLightReceiver
     public var showEnvironmentBackground: Bool = true
 
     /// Appearance for selection outlines.
@@ -89,8 +108,11 @@ public struct RealityKitConfiguration: Sendable {
         isZUp: Bool = false,
         environmentMapURL: URL? = nil,
         environmentBlurAmount: Float = 1.0,
+        imageBasedLightingWeight: Float = 1.0,
         environmentExposure: Float = 0.0,
         environmentRotation: Float = 0.0,
+        environmentLightingWeight: Float = 1.0,
+        spatialEnvironmentLightingMode: SpatialEnvironmentLightingMode = .imageBasedLightReceiver,
         showEnvironmentBackground: Bool = true,
         outlineConfiguration: OutlineConfiguration = .init(),
         selectionHighlightStyle: SelectionHighlightStyle = .boundingBox,
@@ -108,8 +130,11 @@ public struct RealityKitConfiguration: Sendable {
         self.isZUp = isZUp
         self.environmentMapURL = environmentMapURL
         self.environmentBlurAmount = environmentBlurAmount
+        self.imageBasedLightingWeight = imageBasedLightingWeight
         self.environmentExposure = environmentExposure
         self.environmentRotation = environmentRotation
+        self.environmentLightingWeight = environmentLightingWeight
+        self.spatialEnvironmentLightingMode = spatialEnvironmentLightingMode
         self.showEnvironmentBackground = showEnvironmentBackground
         self.outlineConfiguration = outlineConfiguration
         self.selectionHighlightStyle = selectionHighlightStyle
@@ -144,7 +169,10 @@ public struct RealityKitConfiguration: Sendable {
     }
 
     public var realityKitIntensityExponent: Float {
-        Self.realityKitIntensityExponent(forHydraEV: environmentExposure)
+        let clampedWeight = min(max(imageBasedLightingWeight, 0), 1)
+        guard clampedWeight > 0 else { return -20 }
+        return Self.realityKitIntensityExponent(forHydraEV: environmentExposure)
+            + log2f(clampedWeight)
     }
 
     /// Returns true if any built-in overlays should be rendered.

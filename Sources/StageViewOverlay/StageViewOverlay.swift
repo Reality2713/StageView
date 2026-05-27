@@ -284,16 +284,10 @@ public struct PresentationScaleBadgeView: View {
 	}
 
 	private static func format(_ percent: Double) -> String {
-		guard percent.isFinite, percent > 0 else { return "Scale --" }
-		let value: String
-		if percent >= 100 {
-			value = String(format: "%.0f", percent)
-		} else if percent >= 10 {
-			value = String(format: "%.1f", percent)
-		} else {
-			value = String(format: "%.2f", percent)
-		}
-		return "Scale \(value)%"
+		guard percent.isFinite, percent > 0 else { return "--" }
+		return (percent / 100).formatted(
+			.percent.precision(.fractionLength(0))
+		)
 	}
 }
 

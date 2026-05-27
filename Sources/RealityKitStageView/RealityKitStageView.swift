@@ -123,6 +123,9 @@ public struct RealityKitStageView: View {
 	@State private var pendingExposure: Float?
 	@State private var pendingRotation: Float?
 	@State private var iblSyncCache = IBLSyncCache()
+	#if os(visionOS)
+		@State private var authoredEnvironmentResource: EnvironmentResource?
+	#endif
 	private static let environmentSliderDebounceMs: UInt64 = 50 // 50ms debounce
 	private static let environmentBlurDebounceMs: UInt64 = 120 // heavier than exposure/rotation
 	@State private var imageCaptureBridge = ViewportImageCaptureBridge()
@@ -290,11 +293,28 @@ public struct RealityKitStageView: View {
 				updateIBLExposure(configuration.environmentExposure)
 			}
 		}
+		.task(id: configuration.imageBasedLightingWeight) {
+			try? await Task.sleep(for: .milliseconds(Self.environmentSliderDebounceMs))
+			await MainActor.run {
+				updateIBLExposure(configuration.environmentExposure)
+			}
+		}
 		.task(id: configuration.environmentRotation) {
 			// Debounce rotation updates to avoid sluggish UI during slider dragging
 			try? await Task.sleep(for: .milliseconds(Self.environmentSliderDebounceMs))
 			await MainActor.run {
 				updateIBLRotation(configuration.environmentRotation)
+			}
+		}
+		.task(id: configuration.environmentLightingWeight) {
+			try? await Task.sleep(for: .milliseconds(Self.environmentSliderDebounceMs))
+			await MainActor.run {
+				#if os(visionOS)
+				if #available(visionOS 26.0, *), let model = runtime.modelEntity {
+					applyEnvironmentLightingConfiguration(to: model)
+					logSpatialLightingState()
+				}
+				#endif
 			}
 		}
 		.onChange(of: configuration.showEnvironmentBackground) { _, _ in
@@ -845,6 +865,7 @@ public struct RealityKitStageView: View {
 		modelAnchor.name = "ModelAnchor"
 		root.addChild(modelAnchor)
 
+		#if !os(visionOS)
 		let light = DirectionalLight()
 		light.name = "KeyLight"
 		light.light.intensity = 2000
@@ -857,6 +878,7 @@ public struct RealityKitStageView: View {
 		fillLight.light.intensity = 1000
 		fillLight.look(at: .zero, from: [-2, 2, -3], relativeTo: nil)
 		root.addChild(fillLight)
+		#endif
 
 		let camera = PerspectiveCamera()
 		camera.name = "MainCamera"
@@ -922,6 +944,11 @@ public struct RealityKitStageView: View {
 			prepareForPicking(entity)
 			runtime.restoreExternallySuppliedSceneBounds()
 			refreshGrid()
+			#if os(visionOS)
+				if #available(visionOS 26.0, *) {
+					applyEnvironmentLightingConfiguration(to: entity)
+				}
+			#endif
 
 			if !preserveCamera, rootEntity?.findEntity(named: "MainCamera") != nil {
 				let bounds = runtime.sceneBounds
@@ -929,7 +956,7 @@ public struct RealityKitStageView: View {
 					logger.error(
 						"Skipping auto-frame because scene bounds are invalid. min=\(String(describing: bounds.min), privacy: .public) max=\(String(describing: bounds.max), privacy: .public) maxExtent=\(bounds.maxExtent)"
 					)
-					applyIBLReceiver(to: entity)
+					syncIBLReceiver(on: entity)
 					return
 				}
 				let distance = ViewportTuning.defaultCameraDistance(
@@ -944,7 +971,7 @@ public struct RealityKitStageView: View {
 				applyCameraStateImmediately(newState)
 			}
 
-			applyIBLReceiver(to: entity)
+			syncIBLReceiver(on: entity)
 		}
 	}
 
@@ -1771,6 +1798,13 @@ public struct RealityKitStageView: View {
 		guard let url = url else {
 			// No environment — hide skybox, clear its texture.
 			ibl.components.remove(ImageBasedLightComponent.self)
+			#if os(visionOS)
+				authoredEnvironmentResource = nil
+				ibl.components.remove(VirtualEnvironmentProbeComponent.self)
+			#endif
+			if let model = runtime.modelEntity {
+				removeIBLReceiver(from: model)
+			}
 			updateIBLLightIntensity()
 			skyboxEntity?.isEnabled = false
 			logger.debug("Environment cleared: customIBL=false showBackground=false")
@@ -1890,12 +1924,31 @@ public struct RealityKitStageView: View {
 		// Only swap lighting/background once replacements are ready. This avoids
 		// flicker during blur scrubs when in-flight loads are canceled.
 		if let nextEnvironmentResource {
-			var nextIBLComponent = ImageBasedLightComponent(source: .single(nextEnvironmentResource))
-			nextIBLComponent.intensityExponent = configuration.realityKitIntensityExponent
-			nextIBLComponent.inheritsRotation = true
-			ibl.components.set(nextIBLComponent)
+			#if os(visionOS)
+				authoredEnvironmentResource = nextEnvironmentResource
+				if configuration.spatialEnvironmentLightingMode == .virtualEnvironmentProbe {
+					ibl.components.remove(ImageBasedLightComponent.self)
+					updateVirtualEnvironmentProbe(on: ibl, resource: nextEnvironmentResource)
+				} else {
+					ibl.components.remove(VirtualEnvironmentProbeComponent.self)
+					var nextIBLComponent = ImageBasedLightComponent(source: .single(nextEnvironmentResource))
+					nextIBLComponent.intensityExponent = configuration.realityKitIntensityExponent
+					nextIBLComponent.inheritsRotation = true
+					ibl.components.set(nextIBLComponent)
+				}
+			#else
+				var nextIBLComponent = ImageBasedLightComponent(source: .single(nextEnvironmentResource))
+				nextIBLComponent.intensityExponent = configuration.realityKitIntensityExponent
+				nextIBLComponent.inheritsRotation = true
+				ibl.components.set(nextIBLComponent)
+			#endif
 			if let model = runtime.modelEntity {
-				applyIBLReceiver(to: model)
+				syncIBLReceiver(on: model)
+				#if os(visionOS)
+					if #available(visionOS 26.0, *) {
+						applyEnvironmentLightingConfiguration(to: model)
+					}
+				#endif
 			}
 		}
 
@@ -1913,24 +1966,46 @@ public struct RealityKitStageView: View {
 		iblSyncCache.rotation = configuration.environmentRotation
 		updateIBLLightIntensity()
 		iblSyncCache.intensityExponent = configuration.realityKitIntensityExponent
-		logger.debug(
-			"Environment updated: customIBL=\(ibl.components[ImageBasedLightComponent.self] != nil, privacy: .public) exposure=\(configuration.environmentExposure, privacy: .public) showBackground=\(self.configuration.showEnvironmentBackground, privacy: .public)"
-		)
+		#if !os(visionOS)
+			logger.debug(
+				"Environment updated: customIBL=\(ibl.components[ImageBasedLightComponent.self] != nil, privacy: .public) exposure=\(configuration.environmentExposure, privacy: .public) showBackground=\(self.configuration.showEnvironmentBackground, privacy: .public)"
+			)
+		#endif
 	}
 
 
 	@MainActor
 	private func updateIBLExposure(_ exposure: Float) {
-		if let ibl = iblEntity,
-			var iblComp = ibl.components[ImageBasedLightComponent.self]
-		{
-			iblComp.intensityExponent =
-				RealityKitConfiguration.realityKitIntensityExponent(
-					forHydraEV: exposure
-				)
-			iblComp.inheritsRotation = true
-			ibl.components.set(iblComp)
+		#if os(visionOS)
+			if configuration.spatialEnvironmentLightingMode == .virtualEnvironmentProbe,
+			   let ibl = iblEntity,
+			   let resource = authoredEnvironmentResource
+			{
+				updateVirtualEnvironmentProbe(on: ibl, resource: resource)
+			} else if let ibl = iblEntity,
+				var iblComp = ibl.components[ImageBasedLightComponent.self]
+			{
+				iblComp.intensityExponent = configuration.realityKitIntensityExponent
+				iblComp.inheritsRotation = true
+				ibl.components.set(iblComp)
+			}
+		#else
+			if let ibl = iblEntity,
+				var iblComp = ibl.components[ImageBasedLightComponent.self]
+			{
+				iblComp.intensityExponent = configuration.realityKitIntensityExponent
+				iblComp.inheritsRotation = true
+				ibl.components.set(iblComp)
+			}
+		#endif
+
+		if let model = runtime.modelEntity {
+			syncIBLReceiver(on: model)
 		}
+		updateIBLLightIntensity()
+		#if os(visionOS)
+			logSpatialLightingState()
+		#endif
 
 		if let skybox = skyboxEntity,
 			let model = skybox.components[ModelComponent.self]
@@ -1995,21 +2070,105 @@ public struct RealityKitStageView: View {
 		}
 	}
 
+	private func syncIBLReceiver(on entity: Entity) {
+		#if os(visionOS)
+			if configuration.spatialEnvironmentLightingMode == .virtualEnvironmentProbe {
+				removeIBLReceiver(from: entity)
+				return
+			}
+		#endif
+		if iblEntity?.components[ImageBasedLightComponent.self] != nil,
+		   configuration.imageBasedLightingWeight > 0
+		{
+			applyIBLReceiver(to: entity)
+		} else {
+			removeIBLReceiver(from: entity)
+		}
+	}
+
+	private func removeIBLReceiver(from entity: Entity) {
+		entity.components.remove(ImageBasedLightReceiverComponent.self)
+		for child in entity.children {
+			removeIBLReceiver(from: child)
+		}
+	}
+
+	#if os(visionOS)
+	@MainActor
+	private func updateVirtualEnvironmentProbe(on entity: Entity, resource: EnvironmentResource) {
+		guard configuration.imageBasedLightingWeight > 0 else {
+			entity.components.set(VirtualEnvironmentProbeComponent(source: .none))
+			return
+		}
+
+		let probe = VirtualEnvironmentProbeComponent.Probe(
+			environment: resource,
+			intensityExponent: configuration.realityKitIntensityExponent
+		)
+		entity.components.set(
+			VirtualEnvironmentProbeComponent(source: .single(probe))
+		)
+	}
+
+	@available(visionOS 26.0, *)
+	private func applyEnvironmentLightingConfiguration(to entity: Entity) {
+		entity.components.set(
+			EnvironmentLightingConfigurationComponent(
+				environmentLightingWeight: min(max(configuration.environmentLightingWeight, 0), 1)
+			)
+		)
+	}
+
+	@MainActor
+	private func logSpatialLightingState() {
+		let mode =
+			configuration.spatialEnvironmentLightingMode == .virtualEnvironmentProbe
+			? "virtualEnvironmentProbe" : "imageBasedLightReceiver"
+		let probeActive =
+			iblEntity?.components[VirtualEnvironmentProbeComponent.self] != nil
+			&& configuration.imageBasedLightingWeight > 0
+		let receiverActive =
+			runtime.modelEntity?.components[ImageBasedLightReceiverComponent.self] != nil
+		logger.notice(
+			"Spatial lighting: mode=\(mode, privacy: .public) iblWeight=\(configuration.imageBasedLightingWeight, privacy: .public) environmentWeight=\(configuration.environmentLightingWeight, privacy: .public) exposureEV=\(configuration.environmentExposure, privacy: .public) authoredExponent=\(configuration.realityKitIntensityExponent, privacy: .public) probeActive=\(probeActive, privacy: .public) receiverActive=\(receiverActive, privacy: .public)"
+		)
+	}
+	#endif
+
 	@MainActor
 	private func updateIBLLightIntensity() {
 		guard let root = rootEntity else { return }
-		let useIBL = iblEntity?.components[ImageBasedLightComponent.self] != nil
+		#if os(visionOS)
+		let useIBL =
+			configuration.spatialEnvironmentLightingMode == .virtualEnvironmentProbe
+				? iblEntity?.components[VirtualEnvironmentProbeComponent.self] != nil
+					&& configuration.imageBasedLightingWeight > 0
+				: iblEntity?.components[ImageBasedLightComponent.self] != nil
+					&& configuration.imageBasedLightingWeight > 0
+		// RealityKit supplies environment lighting on visionOS when no explicit
+		// IBL receiver is installed; do not stack desktop preview lights on it.
+		let fallbackKeyIntensity: Float = 0
+		let fallbackFillIntensity: Float = 0
+		#else
+		let useIBL =
+			iblEntity?.components[ImageBasedLightComponent.self] != nil
+			&& configuration.imageBasedLightingWeight > 0
+		let fallbackKeyIntensity: Float = 2000
+		let fallbackFillIntensity: Float = 1000
+		#endif
 		if let key = root.findEntity(named: "KeyLight") as? DirectionalLight {
-			key.light.intensity = useIBL ? 0 : 2000
+			key.light.intensity = useIBL ? 0 : fallbackKeyIntensity
 		}
 		if let fill = root.findEntity(named: "FillLight") as? DirectionalLight {
-			fill.light.intensity = useIBL ? 0 : 1000
+			fill.light.intensity = useIBL ? 0 : fallbackFillIntensity
 		}
-		let keyIntensity = (root.findEntity(named: "KeyLight") as? DirectionalLight)?.light.intensity ?? -1
-		let fillIntensity = (root.findEntity(named: "FillLight") as? DirectionalLight)?.light.intensity ?? -1
-		logger.debug(
-			"Lighting mode: customIBL=\(useIBL, privacy: .public) keyLight=\(keyIntensity, privacy: .public) fillLight=\(fillIntensity, privacy: .public)"
-		)
+		#if !os(visionOS)
+			let keyIntensity = (root.findEntity(named: "KeyLight") as? DirectionalLight)?.light.intensity ?? -1
+			let fillIntensity = (root.findEntity(named: "FillLight") as? DirectionalLight)?.light.intensity ?? -1
+			logger.debug(
+				"Lighting mode: customIBL=\(useIBL, privacy: .public) keyLight=\(keyIntensity, privacy: .public) fillLight=\(fillIntensity, privacy: .public)"
+			)
+		#endif
 	}
 
 	@MainActor
