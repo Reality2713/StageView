@@ -1023,6 +1023,7 @@ public struct RealityKitStageView: View {
 			)
 		)
 		applyConfiguredModelTransform()
+		refreshGrid()
 	}
 
 	@MainActor
@@ -1190,19 +1191,10 @@ public struct RealityKitStageView: View {
 	private func volumePresentationOrientation(
 		for presentation: VolumeModelPresentationComponent
 	) -> simd_quatf {
-		let upAxis = volumeUpAxis
-		let tiltAxis = volumeTiltAxis
-		let yaw = simd_quatf(angle: presentation.yawRadians, axis: upAxis)
-		let tilt = simd_quatf(angle: presentation.transientTiltRadians, axis: tiltAxis)
+		// The spatial volume floor is Y-up regardless of the authored USD stage axis.
+		let yaw = simd_quatf(angle: presentation.yawRadians, axis: SIMD3<Float>(0, 1, 0))
+		let tilt = simd_quatf(angle: presentation.transientTiltRadians, axis: SIMD3<Float>(1, 0, 0))
 		return yaw * tilt
-	}
-
-	private var volumeUpAxis: SIMD3<Float> {
-		runtime.isZUp || configuration.isZUp ? SIMD3<Float>(0, 0, 1) : SIMD3<Float>(0, 1, 0)
-	}
-
-	private var volumeTiltAxis: SIMD3<Float> {
-		SIMD3<Float>(1, 0, 0)
 	}
 
 	private static func clampedVolumeScaleMultiplier(
@@ -1564,8 +1556,13 @@ public struct RealityKitStageView: View {
 		if correction.x.isFinite, correction.y.isFinite, correction.z.isFinite {
 			grid.position += correction
 		}
+		let worldPosition = grid.position(relativeTo: nil)
+		RealityKitGrid.updateProceduralGridOrigin(
+			entity: grid,
+			origin: SIMD2<Float>(worldPosition.x, worldPosition.z)
+		)
 		logger.notice(
-			"viewport_grid_align position=(\(grid.position.x, format: .fixed(precision: 4)),\(grid.position.y, format: .fixed(precision: 4)),\(grid.position.z, format: .fixed(precision: 4))) visual_min=(\(visualBounds.min.x, format: .fixed(precision: 4)),\(visualBounds.min.y, format: .fixed(precision: 4)),\(visualBounds.min.z, format: .fixed(precision: 4))) visual_max=(\(visualBounds.max.x, format: .fixed(precision: 4)),\(visualBounds.max.y, format: .fixed(precision: 4)),\(visualBounds.max.z, format: .fixed(precision: 4))) correction=(\(correction.x, format: .fixed(precision: 4)),\(correction.y, format: .fixed(precision: 4)),\(correction.z, format: .fixed(precision: 4))) vertical_inset=\(verticalInset, format: .fixed(precision: 6)) floor_y=\(placement.floorY, format: .fixed(precision: 4)) bounds_min_y=\(bounds.min.y, format: .fixed(precision: 4)) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4))"
+			"viewport_grid_align position=(\(grid.position.x, format: .fixed(precision: 4)),\(grid.position.y, format: .fixed(precision: 4)),\(grid.position.z, format: .fixed(precision: 4))) world_origin=(\(worldPosition.x, format: .fixed(precision: 4)),\(worldPosition.z, format: .fixed(precision: 4))) visual_min=(\(visualBounds.min.x, format: .fixed(precision: 4)),\(visualBounds.min.y, format: .fixed(precision: 4)),\(visualBounds.min.z, format: .fixed(precision: 4))) visual_max=(\(visualBounds.max.x, format: .fixed(precision: 4)),\(visualBounds.max.y, format: .fixed(precision: 4)),\(visualBounds.max.z, format: .fixed(precision: 4))) correction=(\(correction.x, format: .fixed(precision: 4)),\(correction.y, format: .fixed(precision: 4)),\(correction.z, format: .fixed(precision: 4))) vertical_inset=\(verticalInset, format: .fixed(precision: 6)) floor_y=\(placement.floorY, format: .fixed(precision: 4)) bounds_min_y=\(bounds.min.y, format: .fixed(precision: 4)) max_extent=\(bounds.maxExtent, format: .fixed(precision: 4))"
 		)
 	}
 
@@ -1577,7 +1574,7 @@ public struct RealityKitStageView: View {
 				.findEntity(named: "ModelAnchor")?
 				.components[VolumeModelPresentationComponent.self] {
 				let viewExtents = presentation.viewMax - presentation.viewMin
-				let extent = Swift.max(viewExtents.x, Swift.max(viewExtents.y, viewExtents.z))
+				let extent = Swift.max(viewExtents.x, viewExtents.z)
 				if extent.isFinite, extent > 0 {
 					return extent
 				}

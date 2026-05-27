@@ -57,6 +57,12 @@ def Xform "Root"
             float inputs:majorScale = 1 (
                 doc = "1.0 / majorSpacingMeters. Default 1 = 1.0m grid."
             )
+            float inputs:gridOriginX = 0 (
+                doc = "World-space X origin for the centered procedural floor."
+            )
+            float inputs:gridOriginZ = 0 (
+                doc = "World-space Z origin for the centered procedural floor."
+            )
             float inputs:minorBaseThickness = 0.0032
             float inputs:majorBaseThickness = 0.0082
             float inputs:minorDepthFactor = 0.002
@@ -121,12 +127,28 @@ def Xform "Root"
                 float outputs:outz
             }
 
+            def Shader "GridPositionX"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:gridOriginX>
+                float outputs:out
+            }
+
+            def Shader "GridPositionZ"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:gridOriginZ>
+                float outputs:out
+            }
+
             # ── Minor grid: scale → frac → inverse ──
 
             def Shader "MinorXScaled"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/GridPositionX.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:minorScale>
                 float outputs:out
             }
@@ -134,7 +156,7 @@ def Xform "Root"
             def Shader "MinorZScaled"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/GridPositionZ.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:minorScale>
                 float outputs:out
             }
@@ -174,7 +196,7 @@ def Xform "Root"
             def Shader "MajorXScaled"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/GridPositionX.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:majorScale>
                 float outputs:out
             }
@@ -182,7 +204,7 @@ def Xform "Root"
             def Shader "MajorZScaled"
             {
                 uniform token info:id = "ND_multiply_float"
-                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/GridPositionZ.outputs:out>
                 float inputs:in2.connect = </Root/Looks/ViewportGridMaterial.inputs:majorScale>
                 float outputs:out
             }
@@ -492,14 +514,14 @@ def Xform "Root"
             def Shader "AxisXAbs"
             {
                 uniform token info:id = "ND_absval_float"
-                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/GridPositionX.outputs:out>
                 float outputs:out
             }
 
             def Shader "AxisXAlongAbs"
             {
                 uniform token info:id = "ND_absval_float"
-                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/GridPositionZ.outputs:out>
                 float outputs:out
             }
 
@@ -546,14 +568,14 @@ def Xform "Root"
             def Shader "AxisZAbs"
             {
                 uniform token info:id = "ND_absval_float"
-                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/GridPositionZ.outputs:out>
                 float outputs:out
             }
 
             def Shader "AxisZAlongAbs"
             {
                 uniform token info:id = "ND_absval_float"
-                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/GridPositionX.outputs:out>
                 float outputs:out
             }
 
@@ -672,14 +694,14 @@ def Xform "Root"
             def Shader "EdgeXAbs"
             {
                 uniform token info:id = "ND_absval_float"
-                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outx>
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/GridPositionX.outputs:out>
                 float outputs:out
             }
 
             def Shader "EdgeZAbs"
             {
                 uniform token info:id = "ND_absval_float"
-                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:outz>
+                float inputs:in.connect = </Root/Looks/ViewportGridMaterial/GridPositionZ.outputs:out>
                 float outputs:out
             }
 
