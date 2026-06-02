@@ -181,6 +181,9 @@ public final class RealityKitProvider {
     private var activeViewportID: UUID?
     private var animationController: AnimationPlaybackController?
     public private(set) var hasEmbeddedAnimation: Bool = false
+    /// Whether the embedded animation is currently advancing. Drives the
+    /// play/pause toggle in viewport playback controls.
+    public private(set) var isEmbeddedAnimationPlaying: Bool = false
     private var externallySuppliedAuthoredSceneBounds: SceneBounds?
     private var externallySuppliedSceneBounds: SceneBounds?
     private var discreteStateObservers = DiscreteStateObservers()
@@ -761,6 +764,7 @@ public final class RealityKitProvider {
             transitionDuration: 0,
             startsPaused: !autoPlay
         )
+        isEmbeddedAnimationPlaying = autoPlay
 
         if autoPlay {
             providerLogger.info("Started embedded animation playback on \(target.name, privacy: .public)")
@@ -774,6 +778,7 @@ public final class RealityKitProvider {
         animationController?.stop()
         animationController = nil
         hasEmbeddedAnimation = false
+        isEmbeddedAnimationPlaying = false
         emitDiscreteSnapshotIfNeeded()
     }
 
@@ -784,12 +789,31 @@ public final class RealityKitProvider {
         } else {
             animationController.pause()
         }
+        isEmbeddedAnimationPlaying = isPlaying
+    }
+
+    /// Toggle the embedded animation between playing and paused, returning the
+    /// resulting playback state.
+    @discardableResult
+    public func toggleEmbeddedAnimationPlayback() -> Bool {
+        let shouldPlay = !isEmbeddedAnimationPlaying
+        setEmbeddedAnimationPlayback(isPlaying: shouldPlay)
+        return shouldPlay
+    }
+
+    /// Stop playback and return the animation to its first frame.
+    public func resetEmbeddedAnimation() {
+        guard let animationController else { return }
+        animationController.pause()
+        animationController.time = 0
+        isEmbeddedAnimationPlaying = false
     }
 
     public func scrubEmbeddedAnimation(to seconds: TimeInterval) {
         guard let animationController else { return }
         animationController.pause()
         animationController.time = max(0, seconds)
+        isEmbeddedAnimationPlaying = false
     }
 
     private func firstAnimatedEntity(in entity: Entity) -> Entity? {
