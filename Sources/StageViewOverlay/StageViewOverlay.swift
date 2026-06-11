@@ -189,19 +189,22 @@ public struct StageViewOverlaySnapshot {
 	public var horizontalFOVDegrees: Double
 	public var isZUp: Bool
 	public var referenceDepthMeters: Double?
+	public var presentationScalePercent: Double?
 
 	public init(
 		builtInVisibility: StageViewBuiltInOverlayVisibility = .init(),
 		cameraRotation: simd_quatf? = nil,
 		horizontalFOVDegrees: Double = 60,
 		isZUp: Bool = false,
-		referenceDepthMeters: Double? = nil
+		referenceDepthMeters: Double? = nil,
+		presentationScalePercent: Double? = nil
 	) {
 		self.builtInVisibility = builtInVisibility
 		self.cameraRotation = cameraRotation
 		self.horizontalFOVDegrees = horizontalFOVDegrees
 		self.isZUp = isZUp
 		self.referenceDepthMeters = referenceDepthMeters
+		self.presentationScalePercent = presentationScalePercent
 	}
 
 	public var showsBuiltInContent: Bool {
@@ -261,6 +264,30 @@ public struct ScaleIndicatorView: View {
 			.padding(.bottom, 6)
 			.stageViewOverlayMaterial(in: RoundedRectangle(cornerRadius: 8))
 		}
+	}
+}
+
+public struct PresentationScaleBadgeView: View {
+	let percent: Double
+
+	public init(percent: Double) {
+		self.percent = percent
+	}
+
+	public var body: some View {
+		Text(Self.format(percent))
+			.font(.caption)
+			.monospacedDigit()
+			.padding(.horizontal, 10)
+			.padding(.vertical, 6)
+			.stageViewOverlayMaterial(in: Capsule())
+	}
+
+	private static func format(_ percent: Double) -> String {
+		guard percent.isFinite, percent > 0 else { return "--" }
+		return (percent / 100).formatted(
+			.percent.precision(.fractionLength(0))
+		)
 	}
 }
 

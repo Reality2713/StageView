@@ -39,6 +39,7 @@ public struct RealityKitGrid {
         worldExtent: Double,
         isZUp: Bool,
         appearance: ViewportAppearance,
+        radiusMetersOverride: Double? = nil,
         minorColorOverride: SIMD3<Float>? = nil,
         majorColorOverride: SIMD3<Float>? = nil
     ) async -> Entity? {
@@ -60,6 +61,7 @@ public struct RealityKitGrid {
                 worldExtent: worldExtent,
                 isZUp: isZUp,
                 appearance: appearance,
+                radiusMetersOverride: radiusMetersOverride,
                 minorColorOverride: minorColorOverride,
                 majorColorOverride: majorColorOverride
             )
@@ -79,6 +81,7 @@ public struct RealityKitGrid {
         worldExtent: Double,
         isZUp: Bool,
         appearance: ViewportAppearance,
+        radiusMetersOverride: Double? = nil,
         minorColorOverride: SIMD3<Float>? = nil,
         majorColorOverride: SIMD3<Float>? = nil
     ) {
@@ -86,6 +89,7 @@ public struct RealityKitGrid {
         let metrics = metrics(
             metersPerUnit: metersPerUnit,
             worldExtent: worldExtent,
+            radiusMetersOverride: radiusMetersOverride,
             appearance: appearance
         )
         let minorStep = metrics.minorStepMeters
@@ -173,6 +177,43 @@ public struct RealityKitGrid {
     }
 
     // MARK: - Material parameter wiring
+
+    /// Updates the world-space center used by the procedural grid pattern.
+    ///
+    /// Translating the backing plane does not translate a shader driven by
+    /// world position, as happens inside a spatial volume.
+    @MainActor
+    public static func updateProceduralGridOrigin(
+        entity: Entity,
+        origin: SIMD2<Float>
+    ) {
+        setMaterialOrigin(on: entity, origin: origin)
+    }
+
+    @MainActor
+    private static func setMaterialOrigin(on entity: Entity, origin: SIMD2<Float>) {
+        if var model = entity.components[ModelComponent.self] {
+            var materials = model.materials
+            for index in materials.indices {
+                guard var material = materials[index] as? ShaderGraphMaterial else { continue }
+                do {
+                    try material.setParameter(name: "gridOriginX", value: .float(origin.x))
+                    try material.setParameter(name: "gridOriginZ", value: .float(origin.y))
+                } catch {
+                    gridLogger.warning(
+                        "Failed to set grid origin: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+                materials[index] = material
+            }
+            model.materials = materials
+            entity.components.set(model)
+        }
+
+        for child in entity.children {
+            setMaterialOrigin(on: child, origin: origin)
+        }
+    }
 
     @MainActor
     private static func setMaterialParameters(
@@ -267,11 +308,14 @@ public struct RealityKitGrid {
     public static func metrics(
         metersPerUnit: Double,
         worldExtent: Double,
+        radiusMetersOverride: Double? = nil,
         appearance: ViewportAppearance
     ) -> Metrics {
         let safeMetersPerUnit = Swift.max(metersPerUnit, 0.000_001)
         let worldExtentMeters = worldExtent * safeMetersPerUnit
-        let radiusMeters = ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
+        let radiusMeters = radiusMetersOverride.flatMap { override in
+            override.isFinite && override > 0 ? override : nil
+        } ?? ViewportTuning.gridRadiusMeters(worldExtentMeters: worldExtentMeters)
         let minorStep = ViewportTuning.minorGridStepMeters(forGridRadius: radiusMeters)
         let majorStep = ViewportTuning.majorGridStepMeters(forMinorStep: minorStep)
         let palette = ProceduralGridPalette(appearance: appearance)
