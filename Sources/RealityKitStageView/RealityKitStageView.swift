@@ -164,7 +164,23 @@ public struct RealityKitStageView: View {
 	}
 
 	private var resolvedAppearance: ResolvedStageViewAppearance {
-		store.appearance.resolvedAppearance(for: colorScheme)
+		// A configuration-level appearance knob overrides both the store intent
+		// and the SwiftUI environment color scheme. `.dark`/`.light` resolve
+		// deterministically regardless of `colorScheme`.
+		(configuration.appearance ?? store.appearance).resolvedAppearance(for: colorScheme)
+	}
+
+	/// Whether the environment background sphere should be drawn.
+	///
+	/// When a `configuration.appearance` is supplied, the skybox is suppressed by
+	/// default so the themed solid background is visible — this is what makes
+	/// "pass the system appearance and the viewport themes itself" a one-liner
+	/// without the caller touching `showEnvironmentBackground` or the skybox.
+	private var effectiveShowEnvironmentBackground: Bool {
+		if configuration.appearance != nil {
+			return false
+		}
+		return configuration.showEnvironmentBackground
 	}
 
 	@ViewBuilder
@@ -317,8 +333,8 @@ public struct RealityKitStageView: View {
 				#endif
 			}
 		}
-		.onChange(of: configuration.showEnvironmentBackground) { _, _ in
-			skyboxEntity?.isEnabled = configuration.showEnvironmentBackground
+		.onChange(of: effectiveShowEnvironmentBackground) { _, _ in
+			skyboxEntity?.isEnabled = effectiveShowEnvironmentBackground
 		}
 		.onChange(of: configuration.selectionHighlightStyle) { _, _ in
 			updateSelectionHighlight(for: runtime.selectedPrimPath)
@@ -404,7 +420,7 @@ public struct RealityKitStageView: View {
 					.allowsHitTesting(false)
 			}
 			.task(id: store.imageCaptureRequestID) {
-				let captureColor: Color = configuration.showEnvironmentBackground
+				let captureColor: Color = effectiveShowEnvironmentBackground
 					? resolvedBackgroundColor
 					: .clear
 				await captureViewportImageIfRequested(resolvedBackgroundColor: captureColor)
@@ -442,7 +458,8 @@ public struct RealityKitStageView: View {
 							maxDistance: Float(environmentRadius * 0.9),
 							navigationMapping: store.navigationMapping,
 							onPick: macOSPickHandler,
-							applyEntityTransform: { [runtime] state in runtime.applyCameraTransform(state) }
+							applyEntityTransform: { [runtime] state in runtime.applyCameraTransform(state) },
+							entityDrag: entityDragHooks
 						)
 					)
 				#elseif os(visionOS)
@@ -629,6 +646,85 @@ public struct RealityKitStageView: View {
 		}
 	}
 
+	// MARK: - macOS Entity Drag (scene-space, host-routed)
+
+	/// Hooks wiring the macOS camera controls' entity-drag interception to the
+	/// provider's scene-space drag API. Active only when interaction mode is
+	/// `.entityDrag`.
+	private var entityDragHooks: ViewportEntityDragHooks {
+		let r = runtime
+		let s = store
+		let enabled = configuration.interactionMode == .entityDrag
+		return ViewportEntityDragHooks(
+			isEnabled: enabled,
+			hitTest: { location, size in
+				Self.entityDragHitTest(at: location, in: size, runtime: r, store: s)
+			},
+			onBegan: {
+				r.beginEntityDrag()
+			},
+			onChanged: { screenDelta, location, size in
+				// `location` is AppKit view space (y-up). The provider's exact
+				// scene-point recovery uses a y-down NDC convention, so flip y
+				// here to match. The incremental delta is already y-down (the
+				// controller flips it at the AppKit boundary).
+				let yDownLocation = SIMD2<Double>(
+					Double(location.x),
+					Double(size.height) - Double(location.y)
+				)
+				r.updateEntityDrag(
+					screenDelta: SIMD2<Double>(Double(screenDelta.width), Double(screenDelta.height)),
+					viewLocation: yDownLocation,
+					viewSize: SIMD2<Double>(Double(size.width), Double(size.height))
+				)
+			},
+			onEnded: {
+				r.endEntityDrag()
+			}
+		)
+	}
+
+	/// Returns `true` if a click at `location` (AppKit y-down) hits the currently
+	/// selected entity, so a drag from there should move the entity rather than
+	/// the camera.
+	@MainActor
+	private static func entityDragHitTest(
+		at location: CGPoint,
+		in size: CGSize,
+		runtime: RealityKitProvider,
+		store: StoreOf<StageViewFeature>
+	) -> Bool {
+		guard shouldAcceptViewportPick(runtime: runtime, store: store) else { return false }
+		guard let selectedPath = runtime.selectedPrimPath else { return false }
+		guard size.width > 0, size.height > 0 else { return false }
+		guard let scene = runtime.rootEntity?.scene else { return false }
+
+		let camera = runtime.rootEntity?.findEntity(named: "MainCamera")
+		let fovDegrees = Float(camera?.components[PerspectiveCameraComponent.self]?.fieldOfViewInDegrees ?? 60)
+		let aspect = Float(size.width / size.height)
+		// macOS click location is AppKit-space (y up from bottom-left); the
+		// picking path builds NDC directly without a y flip.
+		let ndcX = Float(location.x / size.width) * 2 - 1
+		let ndcY = Float(location.y / size.height) * 2 - 1
+		let ray = SceneSpaceDragMath.cameraRay(
+			ndc: SIMD2<Float>(ndcX, ndcY),
+			cameraWorldTransform: runtime.cameraWorldTransform,
+			fovDegrees: fovDegrees,
+			aspect: aspect
+		)
+
+		let hits = scene.raycast(
+			origin: ray.origin, direction: ray.direction, length: 100_000,
+			query: .all, mask: .all, relativeTo: nil
+		)
+		guard let path = runtime.preferredPickPrimPath(from: hits.map(\.entity)) else { return false }
+		// Treat the pick as the selected entity when its resolved path matches,
+		// or is a descendant/ancestor of, the selection.
+		return path == selectedPath
+			|| path.hasPrefix(selectedPath + "/")
+			|| selectedPath.hasPrefix(path + "/")
+	}
+
 	@MainActor
 	private static func macOSPick(
 		at location: CGPoint,
@@ -755,7 +851,12 @@ public struct RealityKitStageView: View {
 		store: StoreOf<StageViewFeature>
 	) -> Bool {
 		guard store.activeLoadCommand == nil else { return false }
-		guard store.modelURL != nil else { return false }
+		// Injected-entity sources are gated on the runtime being loaded alone,
+		// so a host feeding the viewport via `setModel` does not have to fake a
+		// `modelURL` to unlock picking.
+		if !runtime.isExternallyDriven {
+			guard store.modelURL != nil else { return false }
+		}
 		guard runtime.isLoaded else { return false }
 		guard runtime.modelEntity != nil else { return false }
 		return true
@@ -766,7 +867,9 @@ public struct RealityKitStageView: View {
 			logger.debug(
 				"handleLoadRequestIfNeeded: no active command for requestID=\(currentRequestID.uuidString, privacy: .public) modelURL=\(store.modelURL?.lastPathComponent ?? "nil", privacy: .public)"
 			)
-			if store.modelURL == nil {
+			// Injected-entity sources own their model via `setModel` and have no
+			// `modelURL`; do not tear them down here.
+			if store.modelURL == nil, configuration.source != .injectedEntity {
 				logger.debug(
 					"Tearing down viewport \(self.viewportInstanceID.uuidString, privacy: .public) because modelURL is nil"
 				)
@@ -1959,8 +2062,8 @@ public struct RealityKitStageView: View {
 
 		if let nextSkyboxModel, let skybox = skyboxEntity {
 			skybox.components.set(nextSkyboxModel)
-			skybox.isEnabled = configuration.showEnvironmentBackground
-			logger.debug("Skybox updated: enabled=\(self.configuration.showEnvironmentBackground, privacy: .public)")
+			skybox.isEnabled = effectiveShowEnvironmentBackground
+			logger.debug("Skybox updated: enabled=\(self.effectiveShowEnvironmentBackground, privacy: .public)")
 		}
 
 		// Apply all current visual state with the environment replacement so
@@ -2030,7 +2133,7 @@ public struct RealityKitStageView: View {
 			var newModel = model
 			newModel.materials = [material]
 			skybox.components.set(newModel)
-			skybox.isEnabled = configuration.showEnvironmentBackground
+			skybox.isEnabled = effectiveShowEnvironmentBackground
 		}
 	}
 

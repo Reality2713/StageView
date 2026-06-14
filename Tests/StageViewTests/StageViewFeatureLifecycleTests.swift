@@ -23,7 +23,7 @@ struct StageViewFeatureLifecycleTests {
         }
 
         await store.send(.entityPicked(nil))
-        await store.receive(.delegate(.userPickedPrim(nil)))
+        await store.receive(\.delegate, .userPickedPrim(nil))
     }
 
     @Test

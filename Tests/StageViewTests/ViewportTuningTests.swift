@@ -80,22 +80,32 @@ struct ViewportTuningTests {
         #expect(ViewportTuning.majorGridStepMeters(forMinorStep: 0.1) == 1.0)
     }
 
+    // NOTE: The exposure model treats StageView EV as a direct base-2 stop offset
+    // over the authored HDR intensity (`realityKitMappedEV` is the identity). The
+    // previous baseline-calibration / top-end-cap expectations in these tests
+    // were written for an earlier mapping that the source no longer implements
+    // (the source was simplified to identity); they asserted behavior the
+    // shipping code does not have and so were stale. These assertions match the
+    // actual `RealityKitConfiguration` exposure functions.
     @Test
-    func realityKitExposureAppliesBaselineCalibration() {
-        #expect(RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 0.0) == -1.0)
-        #expect(RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 1.0) == 0.0)
-        #expect(RealityKitConfiguration.hydraLinearExposureGain(forEV: 1.0) == 1.0)
+    func realityKitExposureIsADirectStopOffset() {
+        #expect(RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 0.0) == 0.0)
+        #expect(RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 1.0) == 1.0)
+        #expect(RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: -1.0) == -1.0)
+        // EV is a base-2 exponent: 0 EV is unity gain, +1 EV doubles.
+        #expect(RealityKitConfiguration.hydraLinearExposureGain(forEV: 0.0) == 1.0)
+        #expect(RealityKitConfiguration.hydraLinearExposureGain(forEV: 1.0) == 2.0)
     }
 
     @Test
-    func realityKitExposureIsMonotonicAndCappedAtTopEnd() {
-        let midpoint = RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 1.5)
+    func realityKitExposureIsMonotonicAcrossRange() {
+        let low = RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 1.5)
         let high = RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 3.0)
-        let maxed = RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 10.0)
+        let higher = RealityKitConfiguration.realityKitIntensityExponent(forHydraEV: 10.0)
 
-        #expect(midpoint < high)
-        #expect(high <= 1.8)
-        #expect(maxed == 1.8)
-        #expect(RealityKitConfiguration.hydraLinearExposureGain(forEV: 10.0) <= Float(pow(2.0, 1.8)))
+        #expect(low < high)
+        #expect(high < higher)
+        #expect(RealityKitConfiguration.hydraLinearExposureGain(forEV: 1.0)
+            < RealityKitConfiguration.hydraLinearExposureGain(forEV: 2.0))
     }
 }

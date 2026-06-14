@@ -78,7 +78,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Reality2713/StageView.git", from: "0.3.23"),
+    .package(url: "https://github.com/Reality2713/StageView.git", from: "0.3.27"),
 ]
 ```
 
@@ -166,6 +166,73 @@ provider.setPickPathResolver { directPath, entity, provider in
 
 `StageView` applies consumer overrides first, then its built-in generic merged
 node fallback, then the direct imported mapping.
+
+### Adopting StageView as an entity-source viewport
+
+`RealityKitStageView` can render an externally-built entity hierarchy without
+loading from a URL. This is the path for hosts that reconstruct their own
+RealityKit entities and want a production viewport (orbit camera, grid, IBL,
+selection outline, correct macOS picking) without re-implementing it.
+
+```swift
+import RealityKitStageView
+
+let provider = RealityKitProvider()
+
+// Inject a hierarchy you built yourself. Mark the source as injected so the
+// viewport treats it as loaded — no URL or sentinel load command needed.
+provider.setModel(rootNode: myWorldEntity, metersPerUnit: 1, isZUp: false)
+
+var configuration = RealityKitConfiguration()
+configuration.source = .injectedEntity   // picking gated on isLoaded alone
+configuration.appearance = .dark          // themes background + grid; one-liner
+```
+
+- **Injected source.** With `source = .injectedEntity`, viewport picking is
+  gated on `runtime.isLoaded && runtime.modelEntity != nil` — there is no need
+  to supply a `modelURL` to unlock clicks. The URL load path is unchanged.
+
+- **Anonymous-wrapper contract.** `setModel(_:metersPerUnit:isZUp:)` treats its
+  argument as an *anonymous root wrapper*: the argument itself is not mapped as a
+  prim and only its children are walked (matching the shape `Entity(contentsOf:)`
+  produces). Use `setModel(rootNode:metersPerUnit:isZUp:)` when you want the
+  passed entity itself mapped as the first, selectable node.
+
+- **Host-free bounds.** When no bounds are supplied via
+  `setExternalSceneBounds(_:)`, the provider derives frameable bounds from the
+  injected entity's visual bounds, so the camera frames and the grid renders
+  without the host computing bounds. Authored bounds still override.
+
+- **Appearance.** Set `configuration.appearance` to a `StageViewAppearance`
+  (e.g. `.dark`, `.light`, or `.custom(...)`) to theme both the solid background
+  and the grid to match the host, without touching the skybox or
+  `showEnvironmentBackground`. When set, the environment background sphere is
+  suppressed so the themed background is visible.
+
+### Scene-space entity drag
+
+For hosts that route entity moves through their own runtime (rather than letting
+the viewport mutate the entity), `.entityDrag` interaction mode reports a drag on
+the selected entity in **scene space**. The viewport never moves the entity
+itself.
+
+```swift
+configuration.interactionMode = .entityDrag
+
+provider.setEntityDragHandler { sample in
+    switch sample.phase {
+    case .began:   /* sample.scenePoint is the entity's start position */ break
+    case .changed: hostRuntime.apply(delta: sample.delta) // incremental move
+    case .ended:   break
+    }
+}
+```
+
+Each `SceneSpaceDragSample` carries an incremental `delta`, a running
+`totalDelta`, and an exact `scenePoint` recovered by intersecting the cursor ray
+with a camera-facing plane through the entity. Drags that begin on empty space
+still orbit the camera, so the user can reframe between moves. The screen→scene
+math is exposed as the pure, testable `SceneSpaceDragMath`.
 
 ### Prim-to-Entity Mapping
 

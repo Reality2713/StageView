@@ -79,6 +79,23 @@ final class ArcballEventController {
     /// Called with (location in view coords y-down, view size) when a click is detected.
     var onPick: ((CGPoint, CGSize) -> Void)?
 
+    // MARK: - Entity drag (scene-space, host-routed)
+
+    /// When `true`, a plain left-drag that begins on the selected entity is
+    /// routed to the entity-drag callbacks instead of moving the camera.
+    var entityDragEnabled: Bool = false
+    /// Returns `true` if a mouse-down at the given (location y-down, size) should
+    /// begin an entity drag (i.e. it hit the selected entity).
+    var entityDragHitTest: ((CGPoint, CGSize) -> Bool)?
+    /// Called once when an entity drag begins.
+    var onEntityDragBegan: (() -> Void)?
+    /// Called per drag step with (incremental screen delta y-down, current
+    /// location y-down, view size).
+    var onEntityDragChanged: ((CGSize, CGPoint, CGSize) -> Void)?
+    /// Called once when an entity drag ends.
+    var onEntityDragEnded: (() -> Void)?
+    private var activeEntityDrag: Bool = false
+
     private(set) var scrollMonitor: LocalScrollEventMonitor?
     private(set) var mouseMonitor: LocalMouseEventMonitor?
 
@@ -174,6 +191,43 @@ final class ArcballEventController {
     // MARK: - Mouse
 
     private func handleMouseEvent(_ event: NSEvent) -> NSEvent? {
+        // Entity-drag interception: runs before click detection and camera
+        // interaction. A left-drag that begins on the selected entity is routed
+        // to the host in scene space instead of moving the camera.
+        if entityDragEnabled, let view = eventRegionView {
+            let localPoint = view.convert(event.locationInWindow, from: nil)
+            let size = view.bounds.size
+            switch event.type {
+            case .leftMouseDown where isEventInsideViewport(event):
+                if entityDragHitTest?(localPoint, size) == true {
+                    activeEntityDrag = true
+                    lastMousePoint = localPoint
+                    onEntityDragBegan?()
+                    return nil
+                }
+            case .leftMouseDragged where activeEntityDrag:
+                let previous = lastMousePoint ?? localPoint
+                // AppKit view coordinates are y-up (origin bottom-left). The
+                // entity-drag hooks document a y-down screen delta (matching the
+                // SwiftUI/UIKit convention `SceneSpaceDragMath` expects), so flip
+                // the vertical delta here at the AppKit boundary.
+                let screenDelta = CGSize(
+                    width: localPoint.x - previous.x,
+                    height: -(localPoint.y - previous.y)
+                )
+                lastMousePoint = localPoint
+                onEntityDragChanged?(screenDelta, localPoint, size)
+                return nil
+            case .leftMouseUp where activeEntityDrag:
+                activeEntityDrag = false
+                lastMousePoint = nil
+                onEntityDragEnded?()
+                return nil
+            default:
+                break
+            }
+        }
+
         // Click detection: runs for ALL navigation presets; always passes the event through.
         if let view = eventRegionView {
             let localPoint = view.convert(event.locationInWindow, from: nil)
@@ -353,6 +407,38 @@ final class ArcballEventController {
     }
 }
 
+// MARK: - Entity drag hooks
+
+/// Host-supplied callbacks for the viewport's `.entityDrag` interaction mode.
+///
+/// When `isEnabled` is `true`, a plain left-drag that begins on the selected
+/// entity (per `hitTest`) is routed to these callbacks instead of moving the
+/// camera. Drags that start on empty space still orbit the camera.
+public struct ViewportEntityDragHooks {
+    public var isEnabled: Bool
+    /// `(location y-down, view size) -> Bool`: whether a mouse-down should begin
+    /// an entity drag.
+    public var hitTest: ((CGPoint, CGSize) -> Bool)?
+    public var onBegan: (() -> Void)?
+    /// `(incremental screen delta y-down, current location y-down, view size)`.
+    public var onChanged: ((CGSize, CGPoint, CGSize) -> Void)?
+    public var onEnded: (() -> Void)?
+
+    public init(
+        isEnabled: Bool = false,
+        hitTest: ((CGPoint, CGSize) -> Bool)? = nil,
+        onBegan: (() -> Void)? = nil,
+        onChanged: ((CGSize, CGPoint, CGSize) -> Void)? = nil,
+        onEnded: (() -> Void)? = nil
+    ) {
+        self.isEnabled = isEnabled
+        self.hitTest = hitTest
+        self.onBegan = onBegan
+        self.onChanged = onChanged
+        self.onEnded = onEnded
+    }
+}
+
 // MARK: - ViewModifier (thin shell)
 
 public struct ArcballCameraControls: ViewModifier {
@@ -363,6 +449,7 @@ public struct ArcballCameraControls: ViewModifier {
     let navigationMapping: RealityKitNavigationMapping
     var onPick: ((CGPoint, CGSize) -> Void)?
     var applyEntityTransform: ((ArcballCameraState) -> Void)?
+    var entityDrag: ViewportEntityDragHooks
 
     @State private var controller = ArcballEventController()
 
@@ -373,7 +460,8 @@ public struct ArcballCameraControls: ViewModifier {
         maxDistance: Float? = nil,
         navigationMapping: RealityKitNavigationMapping = .apple,
         onPick: ((CGPoint, CGSize) -> Void)? = nil,
-        applyEntityTransform: ((ArcballCameraState) -> Void)? = nil
+        applyEntityTransform: ((ArcballCameraState) -> Void)? = nil,
+        entityDrag: ViewportEntityDragHooks = ViewportEntityDragHooks()
     ) {
         self._state = state
         self.sceneBounds = sceneBounds
@@ -382,6 +470,7 @@ public struct ArcballCameraControls: ViewModifier {
         self.navigationMapping = navigationMapping
         self.onPick = onPick
         self.applyEntityTransform = applyEntityTransform
+        self.entityDrag = entityDrag
     }
 
     public func body(content: Content) -> some View {
@@ -452,6 +541,7 @@ public struct ArcballCameraControls: ViewModifier {
         .onChange(of: navigationMapping) { _, _ in syncController() }
         .onChange(of: sceneBounds) { _, _ in syncController() }
         .onChange(of: metersPerUnit) { _, _ in syncController() }
+        .onChange(of: entityDrag.isEnabled) { _, _ in syncController() }
         .onChange(of: state) { _, newState in
             guard !controller.isInteracting else { return }
             guard controller.cameraState != newState else { return }
@@ -471,6 +561,11 @@ public struct ArcballCameraControls: ViewModifier {
         controller.cameraState = state
         controller.onPick = onPick
         controller.applyCameraEntityTransform = applyEntityTransform
+        controller.entityDragEnabled = entityDrag.isEnabled
+        controller.entityDragHitTest = entityDrag.hitTest
+        controller.onEntityDragBegan = entityDrag.onBegan
+        controller.onEntityDragChanged = entityDrag.onChanged
+        controller.onEntityDragEnded = entityDrag.onEnded
     }
 
     @ViewBuilder
@@ -880,6 +975,9 @@ public struct ArcballCameraControls: ViewModifier {
     let navigationMapping: RealityKitNavigationMapping
     var onPick: ((CGPoint, CGSize) -> Void)?
     var applyEntityTransform: ((ArcballCameraState) -> Void)?
+    /// Accepted for API parity with the macOS controls. Scene-space entity drag
+    /// is currently a macOS interaction; touch hosts ignore these hooks.
+    var entityDrag: ViewportEntityDragHooks
 
     @State private var controller = ArcballTouchController()
 
@@ -890,7 +988,8 @@ public struct ArcballCameraControls: ViewModifier {
         maxDistance: Float? = nil,
         navigationMapping: RealityKitNavigationMapping = .touchpad,
         onPick: ((CGPoint, CGSize) -> Void)? = nil,
-        applyEntityTransform: ((ArcballCameraState) -> Void)? = nil
+        applyEntityTransform: ((ArcballCameraState) -> Void)? = nil,
+        entityDrag: ViewportEntityDragHooks = ViewportEntityDragHooks()
     ) {
         self._state = state
         self.sceneBounds = sceneBounds
@@ -899,6 +998,7 @@ public struct ArcballCameraControls: ViewModifier {
         self.navigationMapping = navigationMapping
         self.onPick = onPick
         self.applyEntityTransform = applyEntityTransform
+        self.entityDrag = entityDrag
     }
 
     public func body(content: Content) -> some View {

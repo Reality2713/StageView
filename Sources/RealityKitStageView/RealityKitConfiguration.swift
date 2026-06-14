@@ -30,6 +30,33 @@ public enum SpatialEnvironmentLightingMode: Sendable, Equatable {
     case virtualEnvironmentProbe
 }
 
+/// How the viewport interprets a plain (unmodified) left-button drag.
+public enum ViewportInteractionMode: Sendable, Equatable {
+    /// Drags orbit/pan/zoom the camera (the default editing behavior).
+    case camera
+    /// A drag that begins on the selected entity is reported to the host as a
+    /// scene-space move instead of moving the camera. The viewport does **not**
+    /// move the entity itself — the host receives the scene-space result (via
+    /// ``RealityKitProvider/setEntityDragHandler(_:)``) and routes it through its
+    /// own runtime. Drags that begin on empty space still orbit the camera, so
+    /// the user can reframe between moves.
+    case entityDrag
+}
+
+/// Where the viewport's model comes from.
+///
+/// This lets the view treat an injected entity hierarchy as a fully supported
+/// peer of the URL-driven load path, without the host having to fake a
+/// `modelURL` to unlock picking.
+public enum RealityKitModelSource: Sendable, Equatable {
+    /// The model is loaded from a URL via the store's load command flow.
+    case url
+    /// The model is injected directly via ``RealityKitProvider/setModel(_:metersPerUnit:isZUp:)``.
+    /// Picking, teardown, and lifecycle gates treat `setModel` as "loaded"
+    /// without requiring `store.modelURL`.
+    case injectedEntity
+}
+
 /// Configuration for the RealityKit viewport.
 ///
 /// `RealityKitConfiguration` is reserved for static embedding concerns and
@@ -101,6 +128,33 @@ public struct RealityKitConfiguration: Sendable {
     /// Enables the system RealityKit manipulation affordance for spatial hosts.
     public var enablesModelManipulation: Bool = false
 
+    /// How the viewport interprets a plain left-button drag.
+    ///
+    /// Defaults to `.camera`. Set to `.entityDrag` to have drags on the selected
+    /// entity reported to the host as scene-space moves (see
+    /// ``ViewportInteractionMode`` and ``RealityKitProvider/setEntityDragHandler(_:)``).
+    public var interactionMode: ViewportInteractionMode = .camera
+
+    /// Where the viewport's model comes from.
+    ///
+    /// Set to `.injectedEntity` when feeding the viewport via
+    /// ``RealityKitProvider/setModel(_:metersPerUnit:isZUp:)``. The pick gate and
+    /// lifecycle then treat the injected model as loaded without a `modelURL`,
+    /// removing the need for a sentinel URL.
+    public var source: RealityKitModelSource = .url
+
+    /// Optional explicit viewport appearance.
+    ///
+    /// When non-`nil` this overrides the store's `appearance` *and* the SwiftUI
+    /// environment's color scheme, and it disables the environment background
+    /// sphere by default so the themed solid background is visible. This is the
+    /// one-liner for "make the viewport match the host's light/dark mode"
+    /// without the caller touching the skybox or `showEnvironmentBackground`.
+    ///
+    /// Hosts that drive appearance through `StageViewFeature.State.appearance`
+    /// should leave this `nil`.
+    public var appearance: StageViewAppearance?
+
     public init(
         showGrid: Bool = true,
         showAxes: Bool = true,
@@ -122,7 +176,10 @@ public struct RealityKitConfiguration: Sendable {
         modelDisplayOffset: SIMD3<Float> = .zero,
         modelDisplaysOnBase: Bool = false,
         volumePresentationMode: VolumePresentationMode = .authored,
-        enablesModelManipulation: Bool = false
+        enablesModelManipulation: Bool = false,
+        interactionMode: ViewportInteractionMode = .camera,
+        source: RealityKitModelSource = .url,
+        appearance: StageViewAppearance? = nil
     ) {
         self.showGrid = showGrid
         self.showAxes = showAxes
@@ -145,6 +202,9 @@ public struct RealityKitConfiguration: Sendable {
         self.modelDisplaysOnBase = modelDisplaysOnBase
         self.volumePresentationMode = volumePresentationMode
         self.enablesModelManipulation = enablesModelManipulation
+        self.interactionMode = interactionMode
+        self.source = source
+        self.appearance = appearance
     }
 
     /// Treat StageView exposure as a direct stop offset over the authored HDR

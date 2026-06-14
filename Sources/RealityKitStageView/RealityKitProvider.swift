@@ -47,6 +47,46 @@ public struct RealityKitDiscreteSnapshot: Equatable, Sendable {
     }
 }
 
+/// A scene-space result reported by the *entity drag* interaction mode.
+///
+/// The host receives one of these per drag step and routes it through its own
+/// runtime. StageView never moves the entity itself.
+public struct SceneSpaceDragSample: Equatable, Sendable {
+    /// Phase of the drag.
+    public enum Phase: Equatable, Sendable {
+        case began
+        case changed
+        case ended
+    }
+
+    public let phase: Phase
+    /// Prim path of the entity being dragged (the selected entity at drag start).
+    public let primPath: String
+    /// Incremental scene-space delta since the previous sample (camera-basis
+    /// projection of the screen drag). `.zero` for `.began`.
+    public let delta: SIMD3<Double>
+    /// Total scene-space delta since the drag began.
+    public let totalDelta: SIMD3<Double>
+    /// Exact scene-space point under the cursor on a camera-facing plane through
+    /// the entity's drag-start position. `nil` if the cursor ray was parallel to
+    /// the plane (rare; the delta remains valid).
+    public let scenePoint: SIMD3<Double>?
+
+    public init(
+        phase: Phase,
+        primPath: String,
+        delta: SIMD3<Double>,
+        totalDelta: SIMD3<Double>,
+        scenePoint: SIMD3<Double>?
+    ) {
+        self.phase = phase
+        self.primPath = primPath
+        self.delta = delta
+        self.totalDelta = totalDelta
+        self.scenePoint = scenePoint
+    }
+}
+
 /// Observable provider for the RealityKit viewport.
 /// Manages scene state and provides feedback to the consumer.
 @Observable
@@ -99,6 +139,39 @@ public final class RealityKitProvider {
     // MARK: - File State
     public private(set) var currentFileURL: URL?
     public private(set) var isLoaded: Bool = false
+
+    /// True when the model was injected via `setModel` rather than loaded from a
+    /// URL. Used by the view to gate picking on `isLoaded` alone (no sentinel URL).
+    public private(set) var isExternallyDriven: Bool = false
+
+    // MARK: - Entity Drag (scene-space, host-routed)
+
+    /// The most recent scene-space drag sample, observable for SwiftUI/TCA hosts
+    /// that prefer to react to a published value rather than a callback. `nil`
+    /// until the first drag and reset to `nil` is never done (the `.ended` phase
+    /// signals completion).
+    public private(set) var lastSceneDragSample: SceneSpaceDragSample?
+    /// Monotonic counter bumped on every emitted drag sample, so a host can
+    /// distinguish a fresh `.began`/`.ended` even when the payload repeats.
+    public private(set) var sceneDragGeneration: UInt64 = 0
+    private var sceneDragHandler: (@MainActor (SceneSpaceDragSample) -> Void)?
+    private var activeSceneDrag: ActiveSceneDrag?
+
+    private struct ActiveSceneDrag {
+        let primPath: String
+        let startEntityWorldPosition: SIMD3<Float>
+        let planeNormal: SIMD3<Float>
+        var totalDelta: SIMD3<Double>
+    }
+
+    /// Register a handler that receives scene-space drag samples while the
+    /// viewport's interaction mode is `.entityDrag`.
+    ///
+    /// StageView reports the move in scene space; it does **not** move the
+    /// entity. The host applies the move through its own runtime.
+    public func setEntityDragHandler(_ handler: (@MainActor (SceneSpaceDragSample) -> Void)?) {
+        sceneDragHandler = handler
+    }
     
     // MARK: - Internal State
     internal var reloadToken: UUID = UUID()
@@ -275,13 +348,46 @@ public final class RealityKitProvider {
         }
     }
     
-    /// Set an externally loaded model
+    /// Set an externally loaded model.
+    ///
+    /// - Important: The prim-path mapping treats `entity` as an **anonymous root
+    ///   wrapper**: it is *not* itself mapped as a prim, and only its children
+    ///   are walked (matching the shape `Entity(contentsOf:)` produces, where the
+    ///   loaded result is an unnamed wrapper around the real prims). A node named
+    ///   on `entity` directly is therefore not selectable. If you want the passed
+    ///   entity to be mapped as the first node, use
+    ///   ``setModel(rootNode:metersPerUnit:isZUp:)`` instead.
     public func setModel(_ entity: Entity, metersPerUnit: Double, isZUp: Bool) {
+        applyInjectedModel(entity, mappingRoot: entity, metersPerUnit: metersPerUnit, isZUp: isZUp)
+    }
+
+    /// Set an externally loaded model whose **own** entity is mapped as the first
+    /// node, rather than being treated as an anonymous wrapper.
+    ///
+    /// Use this when you have a single named root entity (e.g. a `world` node)
+    /// and want it to be selectable, without manually wrapping it in an unnamed
+    /// container to satisfy ``setModel(_:metersPerUnit:isZUp:)``'s
+    /// anonymous-wrapper contract.
+    public func setModel(rootNode entity: Entity, metersPerUnit: Double, isZUp: Bool) {
+        // Wrap in an anonymous container so the existing name-walking mapping,
+        // which skips the handed-in root, maps `entity` itself as the first prim.
+        let container = Entity()
+        container.addChild(entity)
+        applyInjectedModel(container, mappingRoot: container, metersPerUnit: metersPerUnit, isZUp: isZUp)
+    }
+
+    private func applyInjectedModel(
+        _ entity: Entity,
+        mappingRoot: Entity,
+        metersPerUnit: Double,
+        isZUp: Bool
+    ) {
         self.modelEntity = entity
         self.metersPerUnit = metersPerUnit
         self.isZUp = isZUp
         self.isLoaded = true
-        refreshPrimPathMapping(root: entity)
+        self.isExternallyDriven = true
+        refreshPrimPathMapping(root: mappingRoot)
         applyVisibilityProjection()
         restoreExternallySuppliedSceneBounds()
         emitDiscreteSnapshotIfNeeded()
@@ -347,6 +453,8 @@ public final class RealityKitProvider {
         modelEntity = nil
         currentFileURL = nil
         isLoaded = false
+        isExternallyDriven = false
+        activeSceneDrag = nil
         sceneBounds = externallySuppliedSceneBounds ?? SceneBounds()
         selectedPrimPath = nil
         loadError = nil
@@ -481,16 +589,54 @@ public final class RealityKitProvider {
     internal func restoreExternallySuppliedSceneBounds() {
         if let authoredBounds = externallySuppliedSceneBounds, authoredBounds.isFrameable {
             self.sceneBounds = authoredBounds
-        } else {
-            providerLogger.error(
-                "No authored scene bounds supplied; clearing scene bounds instead of using RealityKit visual bounds."
+            providerLogger.notice(
+                "viewport_runtime phase=authored_scene_bounds_restored source=external frameable=\(self.sceneBounds.isFrameable, privacy: .public)"
             )
+        } else if let derived = derivedSceneBoundsFromModel(), derived.isFrameable {
+            // Host-free fallback: derive frameable bounds from the injected
+            // entity's visual bounds so camera auto-frame and the grid work
+            // without the host supplying authored bounds.
+            self.sceneBounds = derived
+            providerLogger.notice(
+                "viewport_runtime phase=authored_scene_bounds_restored source=derived_visual_bounds frameable=\(self.sceneBounds.isFrameable, privacy: .public)"
+            )
+        } else {
             self.sceneBounds = SceneBounds()
+            providerLogger.notice(
+                "viewport_runtime phase=authored_scene_bounds_restored source=none frameable=\(self.sceneBounds.isFrameable, privacy: .public)"
+            )
         }
-        providerLogger.notice(
-            "viewport_runtime phase=authored_scene_bounds_restored frameable=\(self.sceneBounds.isFrameable, privacy: .public)"
-        )
         emitDiscreteSnapshotIfNeeded()
+    }
+
+    /// Derive frameable scene bounds from the currently loaded model's visual
+    /// bounds. Used when no external bounds were supplied. Degenerate or
+    /// non-finite bounds are padded to a small frameable cube so the camera and
+    /// grid still have something to work with.
+    private func derivedSceneBoundsFromModel() -> SceneBounds? {
+        guard let modelEntity else { return nil }
+        let box = modelEntity.visualBounds(relativeTo: nil)
+
+        // RealityKit returns an "empty" bounding box (min > max sentinel) when no
+        // geometry contributes — e.g. a structural-only hierarchy. There is
+        // nothing to frame from, so let the host supply bounds instead.
+        guard box.min.x <= box.max.x,
+              box.min.y <= box.max.y,
+              box.min.z <= box.max.z,
+              box.min.x.isFinite, box.min.y.isFinite, box.min.z.isFinite,
+              box.max.x.isFinite, box.max.y.isFinite, box.max.z.isFinite
+        else { return nil }
+
+        let candidate = SceneBounds(min: box.min, max: box.max)
+        if candidate.isFrameable {
+            return candidate
+        }
+        // Geometry exists but is planar/degenerate (e.g. a single flat plane):
+        // pad to a frameable cube centered on its visual center so the camera
+        // and grid still work.
+        let center = candidate.center
+        let half = SIMD3<Float>(repeating: 0.5)
+        return SceneBounds(min: center - half, max: center + half)
     }
 
     private func convertAuthoredBoundsToRealityKitMeters(_ bounds: SceneBounds) -> SceneBounds? {
@@ -656,6 +802,158 @@ public final class RealityKitProvider {
             }
         }
         return nil
+    }
+}
+
+// MARK: - Entity Drag (scene-space, host-routed)
+
+extension RealityKitProvider {
+    /// Begin a scene-space entity drag on the currently selected entity.
+    ///
+    /// Returns `true` if a drag was started (a selected, mapped entity exists);
+    /// `false` otherwise (the caller should fall back to camera interaction).
+    ///
+    /// The view calls this when interaction mode is `.entityDrag` and a drag
+    /// begins on the selected entity. The drag is reported to the host in scene
+    /// space via the registered handler / published `lastSceneDragSample`; the
+    /// provider does not move the entity.
+    @discardableResult
+    public func beginEntityDrag() -> Bool {
+        guard let primPath = selectedPrimPath,
+              let entity = entity(for: primPath) ?? selectionEntity(for: primPath) else {
+            return false
+        }
+
+        let startWorldPosition = entity.position(relativeTo: nil)
+        // Camera-facing plane: normal is the camera forward axis.
+        let planeNormal = cameraForward()
+
+        activeSceneDrag = ActiveSceneDrag(
+            primPath: primPath,
+            startEntityWorldPosition: startWorldPosition,
+            planeNormal: planeNormal,
+            totalDelta: .zero
+        )
+
+        emitSceneDragSample(
+            SceneSpaceDragSample(
+                phase: .began,
+                primPath: primPath,
+                delta: .zero,
+                totalDelta: .zero,
+                scenePoint: SIMD3<Double>(
+                    Double(startWorldPosition.x),
+                    Double(startWorldPosition.y),
+                    Double(startWorldPosition.z)
+                )
+            )
+        )
+        return true
+    }
+
+    /// Update an in-flight scene-space entity drag.
+    ///
+    /// - Parameters:
+    ///   - screenDelta: Incremental cursor delta in view points (x right, y down).
+    ///   - viewLocation: Current cursor location in view points (x right, y down),
+    ///     used to recover an exact scene point via a camera-facing plane.
+    ///   - viewSize: View size in points.
+    public func updateEntityDrag(
+        screenDelta: SIMD2<Double>,
+        viewLocation: SIMD2<Double>,
+        viewSize: SIMD2<Double>
+    ) {
+        guard var drag = activeSceneDrag else { return }
+
+        let delta = SceneSpaceDragMath.sceneDelta(
+            screenDelta: screenDelta,
+            cameraRotation: cameraRotation,
+            distance: cameraDistance
+        )
+        drag.totalDelta += delta
+        activeSceneDrag = drag
+
+        let scenePoint = exactScenePoint(
+            viewLocation: viewLocation,
+            viewSize: viewSize,
+            planePoint: drag.startEntityWorldPosition,
+            planeNormal: drag.planeNormal
+        )
+
+        emitSceneDragSample(
+            SceneSpaceDragSample(
+                phase: .changed,
+                primPath: drag.primPath,
+                delta: delta,
+                totalDelta: drag.totalDelta,
+                scenePoint: scenePoint
+            )
+        )
+    }
+
+    /// End an in-flight scene-space entity drag.
+    public func endEntityDrag() {
+        guard let drag = activeSceneDrag else { return }
+        activeSceneDrag = nil
+        emitSceneDragSample(
+            SceneSpaceDragSample(
+                phase: .ended,
+                primPath: drag.primPath,
+                delta: .zero,
+                totalDelta: drag.totalDelta,
+                scenePoint: nil
+            )
+        )
+    }
+
+    /// Whether a scene-space entity drag is currently in flight.
+    public var isEntityDragging: Bool { activeSceneDrag != nil }
+
+    private func emitSceneDragSample(_ sample: SceneSpaceDragSample) {
+        lastSceneDragSample = sample
+        sceneDragGeneration &+= 1
+        sceneDragHandler?(sample)
+    }
+
+    private func cameraForward() -> SIMD3<Float> {
+        let t = cameraWorldTransform
+        let forward = simd_normalize(SIMD3<Float>(
+            -t.columns.2.x,
+            -t.columns.2.y,
+            -t.columns.2.z
+        ))
+        if forward.x.isFinite, forward.y.isFinite, forward.z.isFinite, simd_length(forward) > 0 {
+            return forward
+        }
+        return SIMD3<Float>(0, 0, -1)
+    }
+
+    private func exactScenePoint(
+        viewLocation: SIMD2<Double>,
+        viewSize: SIMD2<Double>,
+        planePoint: SIMD3<Float>,
+        planeNormal: SIMD3<Float>
+    ) -> SIMD3<Double>? {
+        guard viewSize.x > 0, viewSize.y > 0 else { return nil }
+        let camera = rootEntity?.findEntity(named: "MainCamera")
+        let fovDegrees = Float(
+            camera?.components[PerspectiveCameraComponent.self]?.fieldOfViewInDegrees ?? 60
+        )
+        let aspect = Float(viewSize.x / viewSize.y)
+        let ndc = SceneSpaceDragMath.ndc(forViewPoint: viewLocation, size: viewSize)
+        let ray = SceneSpaceDragMath.cameraRay(
+            ndc: ndc,
+            cameraWorldTransform: cameraWorldTransform,
+            fovDegrees: fovDegrees,
+            aspect: aspect
+        )
+        guard let hit = SceneSpaceDragMath.rayPlaneIntersection(
+            rayOrigin: ray.origin,
+            rayDirection: ray.direction,
+            planePoint: planePoint,
+            planeNormal: planeNormal
+        ) else { return nil }
+        return SIMD3<Double>(Double(hit.x), Double(hit.y), Double(hit.z))
     }
 }
 
