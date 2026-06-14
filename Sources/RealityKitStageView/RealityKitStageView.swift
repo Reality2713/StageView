@@ -661,6 +661,9 @@ public struct RealityKitStageView: View {
 				Self.entityDragHitTest(at: location, in: size, runtime: r, store: s)
 			},
 			onBegan: {
+				// Only capture the gesture when the provider actually begins a
+				// drag (a selected, mapped entity exists). Otherwise return false
+				// so the controller falls through to normal camera/pick handling.
 				r.beginEntityDrag()
 			},
 			onChanged: { screenDelta, location, size in
@@ -684,9 +687,9 @@ public struct RealityKitStageView: View {
 		)
 	}
 
-	/// Returns `true` if a click at `location` (AppKit y-down) hits the currently
-	/// selected entity, so a drag from there should move the entity rather than
-	/// the camera.
+	/// Returns `true` if a click at `location` (AppKit y-up: origin bottom-left,
+	/// matching `macOSPick`) hits the currently selected entity, so a drag from
+	/// there should move the entity rather than the camera.
 	@MainActor
 	private static func entityDragHitTest(
 		at location: CGPoint,

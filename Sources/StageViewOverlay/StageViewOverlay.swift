@@ -323,79 +323,105 @@ public struct OrientationGizmoView: View {
 			].sorted { $0.axis.z < $1.axis.z }
 
 			for (axis, color, label) in axes {
-				let isUp = label == upAxisTag
-				let endPoint = CGPoint(
-					x: center.x + CGFloat(axis.x) * axisLength,
-					y: center.y - CGFloat(axis.y) * axisLength
+				Self.drawAxis(
+					into: &context,
+					axis: axis,
+					color: color,
+					label: label,
+					center: center,
+					axisLength: axisLength,
+					upAxisTag: upAxisTag
 				)
-
-				let arrowSize: CGFloat = isUp ? 7 : 5
-				let direction = CGPoint(
-					x: endPoint.x - center.x,
-					y: endPoint.y - center.y
-				)
-				let length = sqrt(direction.x * direction.x + direction.y * direction.y)
-				if length > 0 {
-					let norm = CGPoint(x: direction.x / length, y: direction.y / length)
-					let perp = CGPoint(x: -norm.y, y: norm.x)
-
-					// Shorten the axis line to make room for the arrow
-					let lineEndPoint = CGPoint(
-						x: endPoint.x - norm.x * arrowSize,
-						y: endPoint.y - norm.y * arrowSize
-					)
-
-					var linePath = Path()
-					linePath.move(to: center)
-					linePath.addLine(to: lineEndPoint)
-					context.stroke(
-						linePath,
-						with: .color(color),
-						lineWidth: 1.5
-					)
-
-					var arrowPath = Path()
-					arrowPath.move(to: endPoint)
-					arrowPath.addLine(
-						to: CGPoint(
-							x: endPoint.x - norm.x * arrowSize + perp.x * arrowSize * 0.5,
-							y: endPoint.y - norm.y * arrowSize + perp.y * arrowSize * 0.5
-						)
-					)
-					arrowPath.addLine(
-						to: CGPoint(
-							x: endPoint.x - norm.x * arrowSize - perp.x * arrowSize * 0.5,
-							y: endPoint.y - norm.y * arrowSize - perp.y * arrowSize * 0.5
-						)
-					)
-					arrowPath.closeSubpath()
-					context.fill(arrowPath, with: .color(color))
-				}
-
-				if axis.z > -0.3 {
-					let labelPosition = CGPoint(
-						x: endPoint.x + CGFloat(axis.x) * 11,
-						y: endPoint.y - CGFloat(axis.y) * 11
-					)
-					context.draw(
-						Text(label)
-							.font(
-								.system(
-									size: isUp ? 12 : 10,
-									weight: isUp ? .heavy : .bold,
-									design: .monospaced
-								)
-							)
-							.foregroundColor(color),
-						at: labelPosition,
-						anchor: .center
-					)
-				}
 			}
 		}
 		.frame(width: size, height: size)
 		.padding(4)
 		.stageViewOverlayMaterial(in: .circle)
+	}
+
+	/// Draws a single gizmo axis (line + arrowhead + optional label) into the
+	/// supplied graphics context.
+	///
+	/// All arithmetic uses explicitly-typed `CGFloat` intermediates so the
+	/// `body` getter's type-checker stays cheap. The geometry is byte-identical
+	/// to the original inline drawing: wing points are
+	/// `endPoint - norm * arrowSize ± perp * (arrowSize * 0.5)`.
+	private static func drawAxis(
+		into context: inout GraphicsContext,
+		axis: SIMD3<Float>,
+		color: Color,
+		label: String,
+		center: CGPoint,
+		axisLength: CGFloat,
+		upAxisTag: String
+	) {
+		let isUp: Bool = label == upAxisTag
+
+		let axisX: CGFloat = CGFloat(axis.x)
+		let axisY: CGFloat = CGFloat(axis.y)
+
+		let endPointX: CGFloat = center.x + axisX * axisLength
+		let endPointY: CGFloat = center.y - axisY * axisLength
+		let endPoint = CGPoint(x: endPointX, y: endPointY)
+
+		let arrowSize: CGFloat = isUp ? 7 : 5
+		let directionX: CGFloat = endPointX - center.x
+		let directionY: CGFloat = endPointY - center.y
+		let length: CGFloat = sqrt(directionX * directionX + directionY * directionY)
+
+		if length > 0 {
+			let normX: CGFloat = directionX / length
+			let normY: CGFloat = directionY / length
+			let perpX: CGFloat = -normY
+			let perpY: CGFloat = normX
+
+			// Shorten the axis line to make room for the arrow
+			let lineEndPointX: CGFloat = endPointX - normX * arrowSize
+			let lineEndPointY: CGFloat = endPointY - normY * arrowSize
+			let lineEndPoint = CGPoint(x: lineEndPointX, y: lineEndPointY)
+
+			var linePath = Path()
+			linePath.move(to: center)
+			linePath.addLine(to: lineEndPoint)
+			context.stroke(
+				linePath,
+				with: .color(color),
+				lineWidth: 1.5
+			)
+
+			let wingBaseX: CGFloat = endPointX - normX * arrowSize
+			let wingBaseY: CGFloat = endPointY - normY * arrowSize
+			let wingOneX: CGFloat = wingBaseX + perpX * arrowSize * 0.5
+			let wingOneY: CGFloat = wingBaseY + perpY * arrowSize * 0.5
+			let wingTwoX: CGFloat = wingBaseX - perpX * arrowSize * 0.5
+			let wingTwoY: CGFloat = wingBaseY - perpY * arrowSize * 0.5
+
+			var arrowPath = Path()
+			arrowPath.move(to: endPoint)
+			arrowPath.addLine(to: CGPoint(x: wingOneX, y: wingOneY))
+			arrowPath.addLine(to: CGPoint(x: wingTwoX, y: wingTwoY))
+			arrowPath.closeSubpath()
+			context.fill(arrowPath, with: .color(color))
+		}
+
+		if axis.z > -0.3 {
+			let labelPositionX: CGFloat = endPointX + axisX * 11
+			let labelPositionY: CGFloat = endPointY - axisY * 11
+			let labelPosition = CGPoint(x: labelPositionX, y: labelPositionY)
+			context.draw(
+				Text(label)
+					.font(
+						.system(
+							size: isUp ? 12 : 10,
+							weight: isUp ? .heavy : .bold,
+							design: .monospaced
+						)
+					)
+					.foregroundColor(color),
+				at: labelPosition,
+				anchor: .center
+			)
+		}
 	}
 
 	private func rotatePoint(_ point: SIMD3<Float>, by quat: simd_quatf) -> SIMD3<

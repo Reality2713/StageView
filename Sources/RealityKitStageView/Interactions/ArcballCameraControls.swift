@@ -76,25 +76,44 @@ final class ArcballEventController {
     /// Direct entity update — called before publishState() so the camera moves
     /// at event time, not after the SwiftUI update: cycle.
     var applyCameraEntityTransform: ((ArcballCameraState) -> Void)?
-    /// Called with (location in view coords y-down, view size) when a click is detected.
+    /// Called with (location in AppKit view coords y-up, view size) when a click is detected.
     var onPick: ((CGPoint, CGSize) -> Void)?
 
     // MARK: - Entity drag (scene-space, host-routed)
 
     /// When `true`, a plain left-drag that begins on the selected entity is
     /// routed to the entity-drag callbacks instead of moving the camera.
-    var entityDragEnabled: Bool = false
-    /// Returns `true` if a mouse-down at the given (location y-down, size) should
+    /// Disabling mid-drag (e.g. interaction mode flips away from `.entityDrag`)
+    /// ends any in-flight drag so the host isn't left mid-move.
+    var entityDragEnabled: Bool = false {
+        didSet {
+            if !entityDragEnabled {
+                endActiveEntityDrag()
+            }
+        }
+    }
+    /// Returns `true` if a mouse-down at the given (location y-up, size) should
     /// begin an entity drag (i.e. it hit the selected entity).
     var entityDragHitTest: ((CGPoint, CGSize) -> Bool)?
-    /// Called once when an entity drag begins.
-    var onEntityDragBegan: (() -> Void)?
+    /// Called once when an entity drag begins. Returns `true` if the host
+    /// actually started a drag; `false` means fall through to camera handling.
+    var onEntityDragBegan: (() -> Bool)?
     /// Called per drag step with (incremental screen delta y-down, current
-    /// location y-down, view size).
+    /// AppKit location y-up, view size).
     var onEntityDragChanged: ((CGSize, CGPoint, CGSize) -> Void)?
     /// Called once when an entity drag ends.
     var onEntityDragEnded: (() -> Void)?
     private var activeEntityDrag: Bool = false
+
+    /// Defensively ends any in-flight entity drag: clears the captured state AND
+    /// emits the provider drag-end so `.ended` fires and the host isn't left
+    /// mid-move. Safe to call when no drag is active (does nothing).
+    func endActiveEntityDrag() {
+        guard activeEntityDrag else { return }
+        activeEntityDrag = false
+        lastMousePoint = nil
+        onEntityDragEnded?()
+    }
 
     private(set) var scrollMonitor: LocalScrollEventMonitor?
     private(set) var mouseMonitor: LocalMouseEventMonitor?
@@ -200,10 +219,15 @@ final class ArcballEventController {
             switch event.type {
             case .leftMouseDown where isEventInsideViewport(event):
                 if entityDragHitTest?(localPoint, size) == true {
-                    activeEntityDrag = true
-                    lastMousePoint = localPoint
-                    onEntityDragBegan?()
-                    return nil
+                    // Gate the capture on the host actually beginning the drag.
+                    // If `beginEntityDrag()` returned false (no selected/mapped
+                    // entity), do NOT swallow the event — fall through to normal
+                    // handling so the click still picks / the camera still orbits.
+                    if onEntityDragBegan?() == true {
+                        activeEntityDrag = true
+                        lastMousePoint = localPoint
+                        return nil
+                    }
                 }
             case .leftMouseDragged where activeEntityDrag:
                 let previous = lastMousePoint ?? localPoint
@@ -219,12 +243,16 @@ final class ArcballEventController {
                 onEntityDragChanged?(screenDelta, localPoint, size)
                 return nil
             case .leftMouseUp where activeEntityDrag:
-                activeEntityDrag = false
-                lastMousePoint = nil
-                onEntityDragEnded?()
+                endActiveEntityDrag()
                 return nil
             default:
-                break
+                // Any other event arriving while a drag is active means the drag
+                // was interrupted (e.g. window resigned, a non-continuation event
+                // slipped in). End it defensively so `.ended` fires and the host
+                // isn't left mid-move; then fall through to normal handling.
+                if activeEntityDrag {
+                    endActiveEntityDrag()
+                }
             }
         }
 
@@ -416,18 +444,21 @@ final class ArcballEventController {
 /// camera. Drags that start on empty space still orbit the camera.
 public struct ViewportEntityDragHooks {
     public var isEnabled: Bool
-    /// `(location y-down, view size) -> Bool`: whether a mouse-down should begin
+    /// `(location y-up, view size) -> Bool`: whether a mouse-down should begin
     /// an entity drag.
     public var hitTest: ((CGPoint, CGSize) -> Bool)?
-    public var onBegan: (() -> Void)?
-    /// `(incremental screen delta y-down, current location y-down, view size)`.
+    /// Returns `true` if the host actually began an entity drag. When it returns
+    /// `false` the controller does NOT capture the gesture and lets the event
+    /// fall through to normal camera handling.
+    public var onBegan: (() -> Bool)?
+    /// `(incremental screen delta y-down, current AppKit location y-up, view size)`.
     public var onChanged: ((CGSize, CGPoint, CGSize) -> Void)?
     public var onEnded: (() -> Void)?
 
     public init(
         isEnabled: Bool = false,
         hitTest: ((CGPoint, CGSize) -> Bool)? = nil,
-        onBegan: (() -> Void)? = nil,
+        onBegan: (() -> Bool)? = nil,
         onChanged: ((CGSize, CGPoint, CGSize) -> Void)? = nil,
         onEnded: (() -> Void)? = nil
     ) {
