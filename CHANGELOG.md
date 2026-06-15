@@ -2,12 +2,16 @@
 
 All notable changes to StageView are documented here.
 
-## 0.3.27
+## 0.3.28
 
 Adoption improvements for hosts that feed the viewport an externally-built
 entity hierarchy (an "entity source"), plus a native scene-space drag API. All
 changes are additive; the existing public API and the URL load path are
 unchanged.
+
+This release supersedes `0.3.27`, which was tagged before the touch-platform
+build check caught that the entity-drag hook type was macOS-scoped while the
+iOS/visionOS control initializer referenced it for API parity.
 
 ### Added
 
@@ -51,6 +55,9 @@ unchanged.
 
 ### Fixed / Maintenance
 
+- Fixed the generic visionOS library build by making `ViewportEntityDragHooks`
+  available to the touch-platform `ArcballCameraControls` API while keeping
+  scene-space entity drag behavior macOS-only.
 - Updated pinned dependency versions (`Package.resolved`) to build under the
   current Swift toolchain. Aligned two test files with the current toolchain
   (`import Foundation` for `tan`; key-path `receive` assertion form) and aligned
