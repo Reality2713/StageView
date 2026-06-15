@@ -53,6 +53,41 @@ public struct ArcballCameraState: Equatable, Sendable {
     }
 }
 
+// MARK: - Entity drag hooks
+
+/// Host-supplied callbacks for the viewport's `.entityDrag` interaction mode.
+///
+/// When `isEnabled` is `true`, a plain left-drag that begins on the selected
+/// entity (per `hitTest`) is routed to these callbacks instead of moving the
+/// camera. Drags that start on empty space still orbit the camera.
+public struct ViewportEntityDragHooks {
+    public var isEnabled: Bool
+    /// `(location y-up, view size) -> Bool`: whether a mouse-down should begin
+    /// an entity drag.
+    public var hitTest: ((CGPoint, CGSize) -> Bool)?
+    /// Returns `true` if the host actually began an entity drag. When it returns
+    /// `false` the controller does NOT capture the gesture and lets the event
+    /// fall through to normal camera handling.
+    public var onBegan: (() -> Bool)?
+    /// `(incremental screen delta y-down, current AppKit location y-up, view size)`.
+    public var onChanged: ((CGSize, CGPoint, CGSize) -> Void)?
+    public var onEnded: (() -> Void)?
+
+    public init(
+        isEnabled: Bool = false,
+        hitTest: ((CGPoint, CGSize) -> Bool)? = nil,
+        onBegan: (() -> Bool)? = nil,
+        onChanged: ((CGSize, CGPoint, CGSize) -> Void)? = nil,
+        onEnded: (() -> Void)? = nil
+    ) {
+        self.isEnabled = isEnabled
+        self.hitTest = hitTest
+        self.onBegan = onBegan
+        self.onChanged = onChanged
+        self.onEnded = onEnded
+    }
+}
+
 #if os(macOS)
 
 // MARK: - Event Controller (reference type for stable closure captures)
@@ -432,41 +467,6 @@ final class ArcballEventController {
 
     private func publishState() {
         onCameraStateChanged?(cameraState)
-    }
-}
-
-// MARK: - Entity drag hooks
-
-/// Host-supplied callbacks for the viewport's `.entityDrag` interaction mode.
-///
-/// When `isEnabled` is `true`, a plain left-drag that begins on the selected
-/// entity (per `hitTest`) is routed to these callbacks instead of moving the
-/// camera. Drags that start on empty space still orbit the camera.
-public struct ViewportEntityDragHooks {
-    public var isEnabled: Bool
-    /// `(location y-up, view size) -> Bool`: whether a mouse-down should begin
-    /// an entity drag.
-    public var hitTest: ((CGPoint, CGSize) -> Bool)?
-    /// Returns `true` if the host actually began an entity drag. When it returns
-    /// `false` the controller does NOT capture the gesture and lets the event
-    /// fall through to normal camera handling.
-    public var onBegan: (() -> Bool)?
-    /// `(incremental screen delta y-down, current AppKit location y-up, view size)`.
-    public var onChanged: ((CGSize, CGPoint, CGSize) -> Void)?
-    public var onEnded: (() -> Void)?
-
-    public init(
-        isEnabled: Bool = false,
-        hitTest: ((CGPoint, CGSize) -> Bool)? = nil,
-        onBegan: (() -> Bool)? = nil,
-        onChanged: ((CGSize, CGPoint, CGSize) -> Void)? = nil,
-        onEnded: (() -> Void)? = nil
-    ) {
-        self.isEnabled = isEnabled
-        self.hitTest = hitTest
-        self.onBegan = onBegan
-        self.onChanged = onChanged
-        self.onEnded = onEnded
     }
 }
 
