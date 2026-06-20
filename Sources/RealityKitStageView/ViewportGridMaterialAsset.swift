@@ -589,14 +589,30 @@ def Material "ViewportGridMaterial"
 
     private static func stepMaskBlocks(axis: String, label: String) -> [String] {
         [
-            shader("\(label)\(axis)LowStep", id: "ND_realitykit_step_float", [
-                "float inputs:in.connect = </Root/Looks/ViewportGridMaterial/\(label)\(axis)Fractional.outputs:out>",
-                "float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/\(label)Thickness.outputs:out>",
+            shader("\(label)\(axis)Fwidth", id: "ND_MTL_fwidth_float", [
+                "float inputs:p.connect = </Root/Looks/ViewportGridMaterial/\(label)\(axis)Scaled.outputs:out>",
                 "float outputs:out"
             ]),
-            shader("\(label)\(axis)HighStep", id: "ND_realitykit_step_float", [
+            shader("\(label)\(axis)LowEdge", id: "ND_subtract_float", [
+                "float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/\(label)Thickness.outputs:out>",
+                "float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/\(label)\(axis)Fwidth.outputs:out>",
+                "float outputs:out"
+            ]),
+            shader("\(label)\(axis)HighEdge", id: "ND_add_float", [
+                "float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/\(label)Thickness.outputs:out>",
+                "float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/\(label)\(axis)Fwidth.outputs:out>",
+                "float outputs:out"
+            ]),
+            shader("\(label)\(axis)LowStep", id: "ND_smoothstep_float", [
+                "float inputs:in.connect = </Root/Looks/ViewportGridMaterial/\(label)\(axis)Fractional.outputs:out>",
+                "float inputs:low.connect = </Root/Looks/ViewportGridMaterial/\(label)\(axis)LowEdge.outputs:out>",
+                "float inputs:high.connect = </Root/Looks/ViewportGridMaterial/\(label)\(axis)HighEdge.outputs:out>",
+                "float outputs:out"
+            ]),
+            shader("\(label)\(axis)HighStep", id: "ND_smoothstep_float", [
                 "float inputs:in.connect = </Root/Looks/ViewportGridMaterial/\(label)\(axis)Inverse.outputs:out>",
-                "float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/\(label)Thickness.outputs:out>",
+                "float inputs:low.connect = </Root/Looks/ViewportGridMaterial/\(label)\(axis)LowEdge.outputs:out>",
+                "float inputs:high.connect = </Root/Looks/ViewportGridMaterial/\(label)\(axis)HighEdge.outputs:out>",
                 "float outputs:out"
             ]),
             shader("\(label)\(axis)LowMask", id: "ND_subtract_float", [
@@ -623,9 +639,24 @@ def Material "ViewportGridMaterial"
                 "float inputs:in.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:\(sourceOutput)>",
                 "float outputs:out"
             ]),
-            shader("Axis\(axis)ThresholdStep", id: "ND_realitykit_step_float", [
+            shader("Axis\(axis)Fwidth", id: "ND_MTL_fwidth_float", [
+                "float inputs:p.connect = </Root/Looks/ViewportGridMaterial/WorldPositionChannels.outputs:\(sourceOutput)>",
+                "float outputs:out"
+            ]),
+            shader("Axis\(axis)LowEdge", id: "ND_subtract_float", [
+                "float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisThickness.outputs:out>",
+                "float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/Axis\(axis)Fwidth.outputs:out>",
+                "float outputs:out"
+            ]),
+            shader("Axis\(axis)HighEdge", id: "ND_add_float", [
+                "float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisThickness.outputs:out>",
+                "float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/Axis\(axis)Fwidth.outputs:out>",
+                "float outputs:out"
+            ]),
+            shader("Axis\(axis)ThresholdStep", id: "ND_smoothstep_float", [
                 "float inputs:in.connect = </Root/Looks/ViewportGridMaterial/Axis\(axis)Abs.outputs:out>",
-                "float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/AxisThickness.outputs:out>",
+                "float inputs:low.connect = </Root/Looks/ViewportGridMaterial/Axis\(axis)LowEdge.outputs:out>",
+                "float inputs:high.connect = </Root/Looks/ViewportGridMaterial/Axis\(axis)HighEdge.outputs:out>",
                 "float outputs:out"
             ]),
             shader("Axis\(axis)Mask", id: "ND_subtract_float", [

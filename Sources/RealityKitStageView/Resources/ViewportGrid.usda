@@ -347,19 +347,44 @@ def Xform "Root"
 
             # ── Minor step masks ──
 
+            def Shader "MinorXFwidth"
+            {
+                uniform token info:id = "ND_MTL_fwidth_float"
+                float inputs:p.connect = </Root/Looks/ViewportGridMaterial/MinorXScaled.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorXLowEdge"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorXFwidth.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorXHighEdge"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorXFwidth.outputs:out>
+                float outputs:out
+            }
+
             def Shader "MinorXLowStep"
             {
-                uniform token info:id = "ND_realitykit_step_float"
+                uniform token info:id = "ND_smoothstep_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MinorXFractional.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float inputs:low.connect = </Root/Looks/ViewportGridMaterial/MinorXLowEdge.outputs:out>
+                float inputs:high.connect = </Root/Looks/ViewportGridMaterial/MinorXHighEdge.outputs:out>
                 float outputs:out
             }
 
             def Shader "MinorXHighStep"
             {
-                uniform token info:id = "ND_realitykit_step_float"
+                uniform token info:id = "ND_smoothstep_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MinorXInverse.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float inputs:low.connect = </Root/Looks/ViewportGridMaterial/MinorXLowEdge.outputs:out>
+                float inputs:high.connect = </Root/Looks/ViewportGridMaterial/MinorXHighEdge.outputs:out>
                 float outputs:out
             }
 
@@ -387,19 +412,44 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "MinorZFwidth"
+            {
+                uniform token info:id = "ND_MTL_fwidth_float"
+                float inputs:p.connect = </Root/Looks/ViewportGridMaterial/MinorZScaled.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorZLowEdge"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorZFwidth.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MinorZHighEdge"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MinorZFwidth.outputs:out>
+                float outputs:out
+            }
+
             def Shader "MinorZLowStep"
             {
-                uniform token info:id = "ND_realitykit_step_float"
+                uniform token info:id = "ND_smoothstep_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MinorZFractional.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float inputs:low.connect = </Root/Looks/ViewportGridMaterial/MinorZLowEdge.outputs:out>
+                float inputs:high.connect = </Root/Looks/ViewportGridMaterial/MinorZHighEdge.outputs:out>
                 float outputs:out
             }
 
             def Shader "MinorZHighStep"
             {
-                uniform token info:id = "ND_realitykit_step_float"
+                uniform token info:id = "ND_smoothstep_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MinorZInverse.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MinorThickness.outputs:out>
+                float inputs:low.connect = </Root/Looks/ViewportGridMaterial/MinorZLowEdge.outputs:out>
+                float inputs:high.connect = </Root/Looks/ViewportGridMaterial/MinorZHighEdge.outputs:out>
                 float outputs:out
             }
 
@@ -429,19 +479,44 @@ def Xform "Root"
 
             # ── Major step masks ──
 
+            def Shader "MajorXFwidth"
+            {
+                uniform token info:id = "ND_MTL_fwidth_float"
+                float inputs:p.connect = </Root/Looks/ViewportGridMaterial/MajorXScaled.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorXLowEdge"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorXFwidth.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorXHighEdge"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorXFwidth.outputs:out>
+                float outputs:out
+            }
+
             def Shader "MajorXLowStep"
             {
-                uniform token info:id = "ND_realitykit_step_float"
+                uniform token info:id = "ND_smoothstep_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MajorXFractional.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float inputs:low.connect = </Root/Looks/ViewportGridMaterial/MajorXLowEdge.outputs:out>
+                float inputs:high.connect = </Root/Looks/ViewportGridMaterial/MajorXHighEdge.outputs:out>
                 float outputs:out
             }
 
             def Shader "MajorXHighStep"
             {
-                uniform token info:id = "ND_realitykit_step_float"
+                uniform token info:id = "ND_smoothstep_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MajorXInverse.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float inputs:low.connect = </Root/Looks/ViewportGridMaterial/MajorXLowEdge.outputs:out>
+                float inputs:high.connect = </Root/Looks/ViewportGridMaterial/MajorXHighEdge.outputs:out>
                 float outputs:out
             }
 
@@ -469,19 +544,44 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "MajorZFwidth"
+            {
+                uniform token info:id = "ND_MTL_fwidth_float"
+                float inputs:p.connect = </Root/Looks/ViewportGridMaterial/MajorZScaled.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorZLowEdge"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorZFwidth.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "MajorZHighEdge"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/MajorZFwidth.outputs:out>
+                float outputs:out
+            }
+
             def Shader "MajorZLowStep"
             {
-                uniform token info:id = "ND_realitykit_step_float"
+                uniform token info:id = "ND_smoothstep_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MajorZFractional.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float inputs:low.connect = </Root/Looks/ViewportGridMaterial/MajorZLowEdge.outputs:out>
+                float inputs:high.connect = </Root/Looks/ViewportGridMaterial/MajorZHighEdge.outputs:out>
                 float outputs:out
             }
 
             def Shader "MajorZHighStep"
             {
-                uniform token info:id = "ND_realitykit_step_float"
+                uniform token info:id = "ND_smoothstep_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/MajorZInverse.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/MajorThickness.outputs:out>
+                float inputs:low.connect = </Root/Looks/ViewportGridMaterial/MajorZLowEdge.outputs:out>
+                float inputs:high.connect = </Root/Looks/ViewportGridMaterial/MajorZHighEdge.outputs:out>
                 float outputs:out
             }
 
@@ -518,6 +618,29 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "AxisXFwidth"
+            {
+                uniform token info:id = "ND_MTL_fwidth_float"
+                float inputs:p.connect = </Root/Looks/ViewportGridMaterial/GridPositionX.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisXLowEdge"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisThicknessWorld.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisXFwidth.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisXHighEdge"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisThicknessWorld.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisXFwidth.outputs:out>
+                float outputs:out
+            }
+
             def Shader "AxisXAlongAbs"
             {
                 uniform token info:id = "ND_absval_float"
@@ -527,9 +650,10 @@ def Xform "Root"
 
             def Shader "AxisXThresholdStep"
             {
-                uniform token info:id = "ND_realitykit_step_float"
+                uniform token info:id = "ND_smoothstep_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/AxisXAbs.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/AxisThicknessWorld.outputs:out>
+                float inputs:low.connect = </Root/Looks/ViewportGridMaterial/AxisXLowEdge.outputs:out>
+                float inputs:high.connect = </Root/Looks/ViewportGridMaterial/AxisXHighEdge.outputs:out>
                 float outputs:out
             }
 
@@ -572,6 +696,29 @@ def Xform "Root"
                 float outputs:out
             }
 
+            def Shader "AxisZFwidth"
+            {
+                uniform token info:id = "ND_MTL_fwidth_float"
+                float inputs:p.connect = </Root/Looks/ViewportGridMaterial/GridPositionZ.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisZLowEdge"
+            {
+                uniform token info:id = "ND_subtract_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisThicknessWorld.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZFwidth.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "AxisZHighEdge"
+            {
+                uniform token info:id = "ND_add_float"
+                float inputs:in1.connect = </Root/Looks/ViewportGridMaterial/AxisThicknessWorld.outputs:out>
+                float inputs:in2.connect = </Root/Looks/ViewportGridMaterial/AxisZFwidth.outputs:out>
+                float outputs:out
+            }
+
             def Shader "AxisZAlongAbs"
             {
                 uniform token info:id = "ND_absval_float"
@@ -581,9 +728,10 @@ def Xform "Root"
 
             def Shader "AxisZThresholdStep"
             {
-                uniform token info:id = "ND_realitykit_step_float"
+                uniform token info:id = "ND_smoothstep_float"
                 float inputs:in.connect = </Root/Looks/ViewportGridMaterial/AxisZAbs.outputs:out>
-                float inputs:edge.connect = </Root/Looks/ViewportGridMaterial/AxisThicknessWorld.outputs:out>
+                float inputs:low.connect = </Root/Looks/ViewportGridMaterial/AxisZLowEdge.outputs:out>
+                float inputs:high.connect = </Root/Looks/ViewportGridMaterial/AxisZHighEdge.outputs:out>
                 float outputs:out
             }
 
