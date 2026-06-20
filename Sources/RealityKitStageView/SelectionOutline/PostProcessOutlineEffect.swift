@@ -163,9 +163,18 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
     /// Outline width in screen pixels.
     public var radius: Int
 
-    public init(color: Color = .cyan, radius: Int = 2) {
+    /// Prefer renderable child meshes over the selected entity's own mesh.
+    ///
+    /// USDStageComponent can attach aggregate meshes to parent prim entities whose
+    /// extracted vertices don't match the displayed child renderables. Keeping this
+    /// off by default preserves StageView's historical "selected entity mesh wins"
+    /// behavior for regular RealityKit imports.
+    public var prefersChildMeshes: Bool
+
+    public init(color: Color = .cyan, radius: Int = 2, prefersChildMeshes: Bool = false) {
         self.color = color
         self.radius = radius
+        self.prefersChildMeshes = prefersChildMeshes
     }
 
     @MainActor
@@ -199,6 +208,16 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         from entity: Entity,
         into entries: inout [OutlineRenderState.PendingEntry]
     ) {
+        if prefersChildMeshes {
+            let startCount = entries.count
+            for child in entity.children {
+                collectSelectionMeshEntries(from: child, into: &entries)
+            }
+            if entries.count > startCount {
+                return
+            }
+        }
+
         if appendMeshEntryIfAvailable(from: entity, into: &entries) {
             // If the selected entity already owns a concrete mesh, outline that
             // mesh only. Descending into every child tends to explode the
@@ -224,6 +243,15 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         let noRef: Entity? = nil
         let worldTransform = entity.transformMatrix(relativeTo: noRef)
 
+        if let lowLevel = model.mesh.lowLevelMesh,
+           let entry = makePendingEntry(mesh: lowLevel, worldTransform: worldTransform) {
+            entries.append(entry)
+            outlineLogger.debug(
+                "Post-process mesh extraction for '\(entity.name, privacy: .public)' used lowLevelMesh"
+            )
+            return true
+        }
+
         let contentEntries = makePendingEntries(
             from: model.mesh.contents,
             entityWorldTransform: worldTransform
@@ -232,15 +260,6 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
             entries.append(contentsOf: contentEntries)
             outlineLogger.debug(
                 "Post-process mesh extraction for '\(entity.name, privacy: .public)' used MeshResource.contents with \(contentEntries.count, privacy: .public) entries"
-            )
-            return true
-        }
-
-        if let lowLevel = model.mesh.lowLevelMesh,
-           let entry = makePendingEntry(mesh: lowLevel, worldTransform: worldTransform) {
-            entries.append(entry)
-            outlineLogger.debug(
-                "Post-process mesh extraction for '\(entity.name, privacy: .public)' used lowLevelMesh"
             )
             return true
         }
