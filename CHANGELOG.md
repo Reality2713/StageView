@@ -2,6 +2,17 @@
 
 All notable changes to StageView are documented here.
 
+## 0.3.31
+
+No code changes.
+
+- MIT license added (`LICENSE`).
+- README condensed (install, quick start, features, configuration, picking,
+  hosting) with a new banner.
+- `resources/SELECTION_OUTLINE.md` notes that the outline renderer now lives in
+  PostProcessOutline; the published article's draft and unreferenced
+  screenshots are removed.
+
 ## 0.3.30
 
 The post-process selection outline now comes from the
