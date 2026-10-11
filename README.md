@@ -5,7 +5,7 @@ A RealityKit viewport for SwiftUI apps: orbit camera, scale-aware grid, colored 
 ## Install
 
 ```swift
-.package(url: "https://github.com/Reality2713/StageView.git", from: "0.3.30")
+.package(url: "https://github.com/Reality2713/StageView.git", from: "0.3.31")
 ```
 
 Products: `RealityKitStageView` (the viewport) and `StageViewOverlay` (SwiftUI overlays with no RealityKit dependency).
