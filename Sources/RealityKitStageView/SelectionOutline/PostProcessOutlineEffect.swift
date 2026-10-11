@@ -67,7 +67,8 @@ final class OutlineEffectStorage: @unchecked Sendable {
 /// capture (`requestFrameCapture`) reads the finished frame from this effect.
 ///
 /// Copies share one renderer and one storage, so a setting changed through any
-/// copy is what every copy reads and draws with.
+/// copy is what every copy reads and draws with. Setters are still `mutating`,
+/// so writing through a `@State` property notifies SwiftUI as before.
 @available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
 @available(visionOS, unavailable)
 public struct PostProcessOutlineEffect: PostProcessEffect {
@@ -78,7 +79,7 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
     /// Outline colour. Defaults to the same cyan as `OutlineConfiguration`.
     public var color: Color {
         get { storage.color }
-        nonmutating set {
+        set {
             let renderer = renderer
             storage.setColor(newValue) { renderer.color = Self.rgba(from: $0) }
         }
@@ -87,7 +88,7 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
     /// Outline width in screen pixels (0...`OutlineRenderer.maxRadius`).
     public var radius: Int {
         get { renderer.radius }
-        nonmutating set { renderer.radius = newValue }
+        set { renderer.radius = newValue }
     }
 
     /// Prefer renderable child meshes over the selected entity's own mesh.
@@ -98,7 +99,7 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
     /// behavior for regular RealityKit imports.
     public var prefersChildMeshes: Bool {
         get { renderer.meshSelection == .preferDescendants }
-        nonmutating set { renderer.meshSelection = newValue ? .preferDescendants : .nearestMeshes }
+        set { renderer.meshSelection = newValue ? .preferDescendants : .nearestMeshes }
     }
 
     public init(color: Color = .cyan, radius: Int = 2, prefersChildMeshes: Bool = false) {
@@ -255,9 +256,9 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
     /// apply an unnecessary gamut conversion that visibly darkens the output.
     ///
     /// `_srgb` formats are decoded to linear by the GPU when Core Image reads
-    /// them, so they get the *linear* variant of the colour space. Labelling
-    /// them with a gamma-encoded space made captures read darker than the
-    /// on-screen viewport.
+    /// them, and float formats store linear values, so both get the *linear*
+    /// variant of the colour space. Labelling them with a gamma-encoded space
+    /// made captures read darker than the on-screen viewport.
     private func sourceColorSpace(
         for pixelFormat: MTLPixelFormat,
         captureColorSpace: CGColorSpace
@@ -273,7 +274,7 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
             return CGColorSpace(name: CGColorSpace.extendedLinearSRGB)
                 ?? CGColorSpace(name: CGColorSpace.sRGB)
                 ?? CGColorSpaceCreateDeviceRGB()
-        case .bgra10_xr, .bgr10_xr:
+        case .bgra10_xr, .bgr10_xr, .rgba16Float, .rgba32Float:
             if usesP3, let p3 = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) {
                 return p3
             }

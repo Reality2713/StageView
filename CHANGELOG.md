@@ -16,7 +16,11 @@ unchanged (`init(color:radius:prefersChildMeshes:)`, `color`, `radius`,
   `SelectionOutline/Shaders/OutlineShaders.metal` is removed.
 - **Effect copies share their settings.** `color`, `radius` and
   `prefersChildMeshes` now read and write shared state, so every copy reports
-  the values it draws with. Their setters are `nonmutating`.
+  the values it draws with. Setters stay `mutating`, so `@State` observation
+  is unchanged.
+- **`radius` is clamped to `0...64`** (`OutlineRenderer.maxRadius`); larger
+  values stalled the GPU's dilation pass. A stored radius above 64 now reads
+  back as 64.
 
 ### Fixed
 
@@ -31,9 +35,9 @@ unchanged (`init(color:radius:prefersChildMeshes:)`, `color`, `radius`,
   previous code could darken the frame or abort.
 - Thread-safe view matrix, cached intermediate textures, and a pass-through
   frame when Metal encoding fails.
-- **Viewport capture colour:** `_srgb` frames are now read with the linear
-  variant of the capture colour space (the GPU decodes them to linear), so
-  captures no longer come out darker than the on-screen viewport.
+- **Viewport capture colour:** `_srgb` and float (`rgba16Float`) frames are
+  now read with the linear variant of the capture colour space, so captures
+  no longer come out darker than the on-screen viewport.
 - **Outline colour** is blended in linear space, so non-primary colours
   (including the default `.cyan`) render as specified instead of lighter.
 
