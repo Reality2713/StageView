@@ -1,3 +1,5 @@
+![StageView: Apple-native 3D viewport UI for RealityKit](.github/banner.png)
+
 # StageView
 
 ![StageView Preview](resources/Screenshot%202026-01-07%20at%2019.41.29.jpg)

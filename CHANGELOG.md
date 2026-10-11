@@ -2,6 +2,50 @@
 
 All notable changes to StageView are documented here.
 
+## Unreleased
+
+The post-process selection outline now comes from the
+[PostProcessOutline](https://github.com/elkraneo/PostProcessOutline) package
+instead of a vendored copy. `PostProcessOutlineEffect`'s public API is
+unchanged (`init(color:radius:prefersChildMeshes:)`, `color`, `radius`,
+`prefersChildMeshes`, `setSelection`, `setViewMatrix`, `requestFrameCapture`).
+
+### Changed
+
+- **Outline rendering** is delegated to `PostProcessOutline.OutlineRenderer`.
+  `SelectionOutline/Shaders/OutlineShaders.metal` is removed.
+- **Effect copies share their settings.** `color`, `radius` and
+  `prefersChildMeshes` now read and write shared state, so every copy reports
+  the values it draws with. Setters stay `mutating`, so `@State` observation
+  is unchanged.
+- **`radius` is clamped to `0...64`** (`OutlineRenderer.maxRadius`); larger
+  values stalled the GPU's dilation pass. A stored radius above 64 now reads
+  back as 64.
+
+### Fixed
+
+- **Viewport capture** no longer hangs when two captures are requested before
+  the next frame: every pending request receives that frame.
+- **Viewport capture** reads a copy of the finished frame made on the same
+  command buffer, instead of RealityKit's target texture after the frame ends.
+- **Viewport capture** reports an error when the GPU work fails, instead of
+  returning a stale image.
+- **Intel/AMD Macs:** the outline writes sRGB targets through a non-sRGB view
+  with manual sRGB encoding, and writes `rgba16Float` targets directly. The
+  previous code could darken the frame or abort.
+- Thread-safe view matrix, cached intermediate textures, and a pass-through
+  frame when Metal encoding fails.
+- **Viewport capture colour:** `_srgb` and float (`rgba16Float`) frames are
+  now read with the linear variant of the capture colour space, so captures
+  no longer come out darker than the on-screen viewport.
+- **Outline colour** is blended in linear space, so non-primary colours
+  (including the default `.cyan`) render as specified instead of lighter.
+
+### Added
+
+- `PostProcessOutlineEffect.updateTransforms()` to refresh the outline of
+  moving entities (call it per frame from a scene event or system).
+
 ## 0.3.28
 
 Adoption improvements for hosts that feed the viewport an externally-built

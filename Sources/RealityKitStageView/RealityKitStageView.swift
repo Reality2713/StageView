@@ -1839,7 +1839,7 @@ public struct RealityKitStageView: View {
 	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
 	@MainActor
 	private func clearPostProcessOutline() {
-		if var effect = outlineBox.effect as? PostProcessOutlineEffect {
+		if let effect = outlineBox.effect as? PostProcessOutlineEffect {
 			effect.setSelection(nil)
 			outlineBox.effect = effect
 			outlineGeneration += 1
