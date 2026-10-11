@@ -2,7 +2,7 @@
 
 All notable changes to StageView are documented here.
 
-## Unreleased
+## 0.3.30
 
 The post-process selection outline now comes from the
 [PostProcessOutline](https://github.com/elkraneo/PostProcessOutline) package
@@ -45,6 +45,9 @@ unchanged (`init(color:radius:prefersChildMeshes:)`, `color`, `radius`,
 
 - `PostProcessOutlineEffect.updateTransforms()` to refresh the outline of
   moving entities (call it per frame from a scene event or system).
+- **Embedded animation playback controls** on `RealityKitProvider`:
+  observable `isEmbeddedAnimationPlaying`, `toggleEmbeddedAnimationPlayback()`,
+  and `resetEmbeddedAnimation()` (pauses and returns to the first frame).
 
 ## 0.3.28
 

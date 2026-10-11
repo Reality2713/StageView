@@ -80,7 +80,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Reality2713/StageView.git", from: "0.3.28"),
+    .package(url: "https://github.com/Reality2713/StageView.git", from: "0.3.30"),
 ]
 ```
 
