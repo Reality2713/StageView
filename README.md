@@ -80,3 +80,8 @@ macOS 15+, iOS 18+, visionOS 2+, Swift 6. The post-process outline needs iOS/mac
 - [StageViewHydra](https://github.com/reality2713/StageViewHydra): Hydra/OpenUSD viewport
 - [PostProcessOutline](https://github.com/elkraneo/PostProcessOutline): the selection outline renderer
 - [OpenUSDKit](https://github.com/Reality2713/OpenUSDKit): USD inspection, editing and validation
+
+## License
+
+This project is available under the MIT license.
+See the LICENSE file for more info.
