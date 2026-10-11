@@ -2,166 +2,93 @@ import CoreGraphics
 import CoreImage
 import Metal
 import OSLog
+import PostProcessOutline
 import RealityKit
 import SwiftUI
 import simd
 
 private let outlineLogger = Logger(subsystem: "RealityKitStageView", category: "PostProcessOutline")
 
-// MARK: - Internal State
+// MARK: - Shared state
 
-/// Thread-safe reference type that holds all mutable Metal state and pending
-/// mesh data. Shared between @MainActor call sites and the nonisolated
-/// PostProcessEffect callbacks via @unchecked Sendable.
+/// State shared by every copy of a `PostProcessOutlineEffect`: the outline
+/// colour (the renderer only keeps resolved RGBA) and pending viewport
+/// captures, handed from @MainActor to the render callback.
 @available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
 @available(visionOS, unavailable)
-final class OutlineRenderState: @unchecked Sendable {
-
-    // MARK: Pending mesh data
-
-    struct PendingEntry {
-        /// Packed xyz float positions (stride 12 bytes).
-        let positions: [Float]
-        let indices: [UInt8]
-        let indexCount: Int
-        let indexType: MTLIndexType
-        let modelMatrix: simd_float4x4
-    }
-
-    private let lock = NSLock()
-    private var _pending: [PendingEntry]? = nil
-
-    var pending: [PendingEntry]? {
-        get { lock.withLock { _pending } }
-        set { lock.withLock { _pending = newValue } }
-    }
-
+final class OutlineEffectStorage: @unchecked Sendable {
     struct PendingCapture {
         let colorSpace: CGColorSpace
         let onComplete: @Sendable (Result<CGImage, Error>) -> Void
     }
 
-    private var _pendingCapture: PendingCapture?
+    private let lock = NSLock()
+    private var _color: Color
+    private var _pendingCaptures: [PendingCapture] = []
 
-    var pendingCapture: PendingCapture? {
-        get { lock.withLock { _pendingCapture } }
-        set { lock.withLock { _pendingCapture = newValue } }
+    init(color: Color) {
+        _color = color
     }
 
-    func takePendingCapture() -> PendingCapture? {
+    var color: Color {
+        lock.withLock { _color }
+    }
+
+    /// Stores `color` and applies it to the renderer in one critical section,
+    /// so concurrent setters can't leave the stored and drawn colours apart.
+    func setColor(_ color: Color, apply: (Color) -> Void) {
         lock.withLock {
-            let capture = _pendingCapture
-            _pendingCapture = nil
-            return capture
+            _color = color
+            apply(color)
         }
     }
 
-    // MARK: Compiled Metal state
-
-    var device: (any MTLDevice)?
-    var maskPipeline: (any MTLRenderPipelineState)?
-    var dilatePipeline: (any MTLComputePipelineState)?
-    var compositePipeline: (any MTLComputePipelineState)?
-    var viewMatrix: simd_float4x4 = matrix_identity_float4x4
-    var didLogPrepare = false
-    var didLogFirstPostProcess = false
-
-    // MARK: Resolved mesh entries (only accessed from postProcess)
-
-    struct MeshEntry {
-        let vertexBuffer: any MTLBuffer
-        let indexBuffer: any MTLBuffer
-        let indexCount: Int
-        let indexType: MTLIndexType
-        let modelMatrix: simd_float4x4
+    /// Queues a capture. Every capture queued before the next frame receives
+    /// that frame.
+    func enqueueCapture(_ capture: PendingCapture) {
+        lock.withLock { _pendingCaptures.append(capture) }
     }
 
-    var meshEntries: [MeshEntry] = []
-
-    // MARK: Pipeline setup
-
-    func preparePipelines(device: any MTLDevice) {
-        self.device = device
-
-        guard let library = try? device.makeDefaultLibrary(bundle: Bundle.module) else {
-            return
-        }
-
-        let maskDesc = MTLRenderPipelineDescriptor()
-        maskDesc.vertexFunction = library.makeFunction(name: "outlineMaskVertex")
-        maskDesc.fragmentFunction = library.makeFunction(name: "outlineMaskFragment")
-        maskDesc.colorAttachments[0].pixelFormat = .r8Unorm
-        maskDesc.depthAttachmentPixelFormat = .depth32Float
-
-        // Packed float3 positions: format=float3, offset=0, stride=12.
-        let vd = MTLVertexDescriptor()
-        vd.attributes[0].format = .float3
-        vd.attributes[0].offset = 0
-        vd.attributes[0].bufferIndex = 0
-        vd.layouts[0].stride = 12
-        maskDesc.vertexDescriptor = vd
-
-        maskPipeline = try? device.makeRenderPipelineState(descriptor: maskDesc)
-
-        guard
-            let dilateFunc = library.makeFunction(name: "outlineDilate"),
-            let compositeFunc = library.makeFunction(name: "outlineComposite")
-        else { return }
-
-        dilatePipeline = try? device.makeComputePipelineState(function: dilateFunc)
-        compositePipeline = try? device.makeComputePipelineState(function: compositeFunc)
-    }
-
-    // MARK: Buffer creation from pending entries (called inside postProcess)
-
-    func flushPending(device: any MTLDevice) {
-        guard let entries = pending else { return }
-        pending = nil
-
-        meshEntries = entries.compactMap { entry in
-            guard
-                let vb = device.makeBuffer(
-                    bytes: entry.positions,
-                    length: entry.positions.count * MemoryLayout<Float>.size,
-                    options: .storageModeShared
-                ),
-                let ib = device.makeBuffer(
-                    bytes: entry.indices,
-                    length: entry.indices.count,
-                    options: .storageModeShared
-                )
-            else { return nil }
-
-            return MeshEntry(
-                vertexBuffer: vb,
-                indexBuffer: ib,
-                indexCount: entry.indexCount,
-                indexType: entry.indexType,
-                modelMatrix: entry.modelMatrix
-            )
+    func takePendingCaptures() -> [PendingCapture] {
+        lock.withLock {
+            let captures = _pendingCaptures
+            _pendingCaptures = []
+            return captures
         }
     }
 }
 
-// MARK: - Public Effect
+// MARK: - Effect
 
-/// A `PostProcessEffect` that renders a pixel-perfect, scale-independent
-/// selection outline using a three-pass Metal pipeline:
+/// StageView's post-process selection outline: the `PostProcessOutline`
+/// package's `OutlineRenderer` plus viewport frame capture.
 ///
-/// 1. **Mask pass** — renders the selected mesh(es) silhouette into an R8 texture.
-/// 2. **Dilation pass** — expands the mask by `radius` pixels (compute kernel).
-/// 3. **Composite pass** — blends the outline colour over the source frame (compute kernel).
+/// RealityView allows a single custom post-process effect, so viewport
+/// capture (`requestFrameCapture`) reads the finished frame from this effect.
+///
+/// Copies share one renderer and one storage, so a setting changed through any
+/// copy is what every copy reads and draws with.
 @available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
 @available(visionOS, unavailable)
 public struct PostProcessOutlineEffect: PostProcessEffect {
 
-    private let state = OutlineRenderState()
+    private let renderer: OutlineRenderer
+    private let storage: OutlineEffectStorage
 
     /// Outline colour. Defaults to the same cyan as `OutlineConfiguration`.
-    public var color: Color
+    public var color: Color {
+        get { storage.color }
+        nonmutating set {
+            let renderer = renderer
+            storage.setColor(newValue) { renderer.color = Self.rgba(from: $0) }
+        }
+    }
 
-    /// Outline width in screen pixels.
-    public var radius: Int
+    /// Outline width in screen pixels (0...`OutlineRenderer.maxRadius`).
+    public var radius: Int {
+        get { renderer.radius }
+        nonmutating set { renderer.radius = newValue }
+    }
 
     /// Prefer renderable child meshes over the selected entity's own mesh.
     ///
@@ -169,12 +96,18 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
     /// extracted vertices don't match the displayed child renderables. Keeping this
     /// off by default preserves StageView's historical "selected entity mesh wins"
     /// behavior for regular RealityKit imports.
-    public var prefersChildMeshes: Bool
+    public var prefersChildMeshes: Bool {
+        get { renderer.meshSelection == .preferDescendants }
+        nonmutating set { renderer.meshSelection = newValue ? .preferDescendants : .nearestMeshes }
+    }
 
     public init(color: Color = .cyan, radius: Int = 2, prefersChildMeshes: Bool = false) {
-        self.color = color
-        self.radius = radius
-        self.prefersChildMeshes = prefersChildMeshes
+        renderer = OutlineRenderer(color: Self.rgba(from: color), radius: radius)
+        // Stage content can be edited in place (USD), so read meshes fresh on
+        // every selection, as StageView always has.
+        renderer.cachesGeometry = false
+        renderer.meshSelection = prefersChildMeshes ? .preferDescendants : .nearestMeshes
+        storage = OutlineEffectStorage(color: color)
     }
 
     @MainActor
@@ -182,361 +115,113 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         colorSpace: CGColorSpace,
         onComplete: @escaping @Sendable (Result<CGImage, Error>) -> Void
     ) {
-        state.pendingCapture = .init(colorSpace: colorSpace, onComplete: onComplete)
+        storage.enqueueCapture(.init(colorSpace: colorSpace, onComplete: onComplete))
     }
 
     // MARK: Selection API
 
-    /// Sets the selected entity. Walks the subtree collecting every
-    /// `ModelComponent` mesh and queues the packed position data for GPU upload
-    /// on the next `postProcess` call.
-    ///
-    /// Pass `nil` to clear the selection.
+    /// Sets the selected entity, or clears the selection when `nil`.
     @MainActor
     public func setSelection(_ entity: Entity?) {
-        guard let entity else {
-            state.pending = []
-            return
-        }
-        var entries: [OutlineRenderState.PendingEntry] = []
-        collectSelectionMeshEntries(from: entity, into: &entries)
-        state.pending = entries
-    }
-
-    @MainActor
-    private func collectSelectionMeshEntries(
-        from entity: Entity,
-        into entries: inout [OutlineRenderState.PendingEntry]
-    ) {
-        if prefersChildMeshes {
-            let startCount = entries.count
-            for child in entity.children {
-                collectSelectionMeshEntries(from: child, into: &entries)
-            }
-            if entries.count > startCount {
-                return
-            }
-        }
-
-        if appendMeshEntryIfAvailable(from: entity, into: &entries) {
-            // If the selected entity already owns a concrete mesh, outline that
-            // mesh only. Descending into every child tends to explode the
-            // selection to the whole imported subtree for material-group nodes.
-            return
-        }
-
-        for child in entity.children {
-            collectSelectionMeshEntries(from: child, into: &entries)
+        renderer.setSelection(entity)
+        if let entity {
+            outlineLogger.debug("Post-process outline selection set to '\(entity.name, privacy: .public)'")
         }
     }
 
+    /// Re-reads world transforms of the selected entities so moving entities
+    /// stay outlined. Call alongside `setViewMatrix(_:)`.
     @MainActor
-    private func appendMeshEntryIfAvailable(
-        from entity: Entity,
-        into entries: inout [OutlineRenderState.PendingEntry]
-    ) -> Bool {
-        guard let model = entity.components[ModelComponent.self] else {
-            outlineLogger.debug("Post-process mesh extraction skipped for '\(entity.name, privacy: .public)': no ModelComponent")
-            return false
-        }
-
-        let noRef: Entity? = nil
-        let worldTransform = entity.transformMatrix(relativeTo: noRef)
-
-        if let lowLevel = model.mesh.lowLevelMesh,
-           let entry = makePendingEntry(mesh: lowLevel, worldTransform: worldTransform) {
-            entries.append(entry)
-            outlineLogger.debug(
-                "Post-process mesh extraction for '\(entity.name, privacy: .public)' used lowLevelMesh"
-            )
-            return true
-        }
-
-        let contentEntries = makePendingEntries(
-            from: model.mesh.contents,
-            entityWorldTransform: worldTransform
-        )
-        if contentEntries.isEmpty == false {
-            entries.append(contentsOf: contentEntries)
-            outlineLogger.debug(
-                "Post-process mesh extraction for '\(entity.name, privacy: .public)' used MeshResource.contents with \(contentEntries.count, privacy: .public) entries"
-            )
-            return true
-        }
-
-        outlineLogger.info(
-            "Post-process mesh extraction failed for '\(entity.name, privacy: .public)': ModelComponent present but neither MeshResource.contents nor lowLevelMesh produced entries"
-        )
-        return false
-    }
-
-    @MainActor
-    private func makePendingEntry(
-        mesh: LowLevelMesh,
-        worldTransform: simd_float4x4
-    ) -> OutlineRenderState.PendingEntry? {
-        let descriptor = mesh.descriptor
-
-        guard let posAttr = descriptor.vertexAttributes.first(where: { $0.semantic == .position })
-        else { return nil }
-
-        let layoutIndex = posAttr.layoutIndex
-        let stride = descriptor.vertexLayouts[layoutIndex].bufferStride
-        let posOffset = posAttr.offset
-
-        // Extract packed xyz floats, handling any interleaved vertex layout.
-        var positions: [Float] = []
-        mesh.withUnsafeBytes(bufferIndex: layoutIndex) { rawBytes in
-            let bytes = rawBytes.bindMemory(to: UInt8.self)
-            let vertexCount = rawBytes.count / stride
-            positions.reserveCapacity(vertexCount * 3)
-            for i in 0..<vertexCount {
-                let base = i * stride + posOffset
-                var x: Float = 0, y: Float = 0, z: Float = 0
-                withUnsafeMutableBytes(of: &x) { $0.copyBytes(from: bytes[base ..< base + 4]) }
-                withUnsafeMutableBytes(of: &y) { $0.copyBytes(from: bytes[(base + 4) ..< (base + 8)]) }
-                withUnsafeMutableBytes(of: &z) { $0.copyBytes(from: bytes[(base + 8) ..< (base + 12)]) }
-                positions.append(x)
-                positions.append(y)
-                positions.append(z)
-            }
-        }
-
-        var indexBytes: [UInt8] = []
-        mesh.withUnsafeIndices { rawBytes in
-            indexBytes = Array(rawBytes)
-        }
-
-        let indexType = descriptor.indexType
-        let indexCount: Int
-        switch indexType {
-        case .uint32: indexCount = indexBytes.count / MemoryLayout<UInt32>.size
-        case .uint16: indexCount = indexBytes.count / MemoryLayout<UInt16>.size
-        @unknown default: return nil
-        }
-
-        guard !positions.isEmpty, indexCount > 0 else { return nil }
-
-        return .init(
-            positions: positions,
-            indices: indexBytes,
-            indexCount: indexCount,
-            indexType: indexType,
-            modelMatrix: worldTransform
-        )
-    }
-
-    @MainActor
-    private func makePendingEntries(
-        from contents: MeshResource.Contents,
-        entityWorldTransform: simd_float4x4
-    ) -> [OutlineRenderState.PendingEntry] {
-        let modelsByID = Dictionary(uniqueKeysWithValues: contents.models.map { ($0.id, $0) })
-        let instances = Array(contents.instances)
-
-        if instances.isEmpty {
-            return contents.models.flatMap { model in
-                makePendingEntries(from: model, worldTransform: entityWorldTransform)
-            }
-        }
-
-        return instances.flatMap { instance -> [OutlineRenderState.PendingEntry] in
-            guard let model = modelsByID[instance.model] else { return [] }
-            let worldTransform = simd_mul(entityWorldTransform, instance.transform)
-            return makePendingEntries(from: model, worldTransform: worldTransform)
-        }
-    }
-
-    @MainActor
-    private func makePendingEntries(
-        from model: MeshResource.Model,
-        worldTransform: simd_float4x4
-    ) -> [OutlineRenderState.PendingEntry] {
-        model.parts.compactMap { part in
-            makePendingEntry(from: part, worldTransform: worldTransform)
-        }
-    }
-
-    @MainActor
-    private func makePendingEntry(
-        from part: MeshResource.Part,
-        worldTransform: simd_float4x4
-    ) -> OutlineRenderState.PendingEntry? {
-        guard let triangleIndices = part.triangleIndices?.elements, triangleIndices.isEmpty == false else {
-            return nil
-        }
-
-        let positions = part.positions.elements
-        guard positions.isEmpty == false else { return nil }
-
-        let packedPositions = positions.flatMap { [$0.x, $0.y, $0.z] }
-        let indexBytes = triangleIndices.withUnsafeBytes { Array($0) }
-
-        return .init(
-            positions: packedPositions,
-            indices: indexBytes,
-            indexCount: triangleIndices.count,
-            indexType: .uint32,
-            modelMatrix: worldTransform
-        )
+    public func updateTransforms() {
+        renderer.updateTransforms()
     }
 
     // MARK: PostProcessEffect
 
-    public mutating func prepare(for device: any MTLDevice) {
-        state.preparePipelines(device: device)
-        if state.didLogPrepare == false {
-            state.didLogPrepare = true
-            outlineLogger.info("Post-process outline prepared on device '\(device.name, privacy: .public)'")
-        }
+    public func prepare(for device: any MTLDevice) {
+        renderer.prepare(device: device)
+        outlineLogger.info("Post-process outline prepared on device '\(device.name, privacy: .public)'")
     }
 
     public func setViewMatrix(_ viewMatrix: simd_float4x4) {
-        state.viewMatrix = viewMatrix
+        renderer.setViewMatrix(viewMatrix)
     }
 
-    public mutating func postProcess(
+    public func postProcess(
         context: borrowing PostProcessEffectContext<any MTLCommandBuffer>
     ) {
-        let device = context.device
-        let textureWidth = context.sourceColorTexture.width
-        let textureHeight = context.sourceColorTexture.height
-        let cb = context.commandBuffer
-
-        state.flushPending(device: device)
-
-        if state.didLogFirstPostProcess == false {
-            state.didLogFirstPostProcess = true
-            let meshEntryCount = state.meshEntries.count
-            outlineLogger.info(
-                "Post-process outline pass running with \(meshEntryCount, privacy: .public) mesh entries at \(textureWidth, privacy: .public)x\(textureHeight, privacy: .public)"
-            )
-        }
-
-        guard
-            !state.meshEntries.isEmpty,
-            let maskPipeline = state.maskPipeline,
-            let dilatePipeline = state.dilatePipeline,
-            let compositePipeline = state.compositePipeline
-        else {
-            passThrough(context: context)
-            enqueueFrameCaptureIfNeeded(
-                texture: context.targetColorTexture,
-                commandBuffer: cb,
-                device: device
-            )
-            return
-        }
-
-        let w = textureWidth
-        let h = textureHeight
-
-        guard
-            let maskTex  = makeSingleChannelTexture(device: device, width: w, height: h,
-                                                     usage: [.renderTarget, .shaderRead]),
-            let depthTex = makeDepthTexture(device: device, width: w, height: h),
-            let edgeTex  = makeSingleChannelTexture(device: device, width: w, height: h,
-                                                     usage: [.shaderRead, .shaderWrite])
-        else { return }
-
-        // Pass 1 — render mesh silhouettes into the mask.
-        let rpd = MTLRenderPassDescriptor()
-        rpd.colorAttachments[0].texture    = maskTex
-        rpd.colorAttachments[0].loadAction  = .clear
-        rpd.colorAttachments[0].storeAction = .store
-        rpd.colorAttachments[0].clearColor  = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
-        rpd.depthAttachment.texture         = depthTex
-        rpd.depthAttachment.loadAction      = .clear
-        rpd.depthAttachment.storeAction     = .dontCare
-        rpd.depthAttachment.clearDepth      = 1.0
-
-        guard let renc = cb.makeRenderCommandEncoder(descriptor: rpd) else { return }
-        renc.setRenderPipelineState(maskPipeline)
-        for entry in state.meshEntries {
-            var mvp = context.projection * state.viewMatrix * entry.modelMatrix
-            renc.setVertexBuffer(entry.vertexBuffer, offset: 0, index: 0)
-            renc.setVertexBytes(&mvp, length: MemoryLayout<simd_float4x4>.size, index: 1)
-            renc.drawIndexedPrimitives(
-                type: .triangle,
-                indexCount: entry.indexCount,
-                indexType: entry.indexType,
-                indexBuffer: entry.indexBuffer,
-                indexBufferOffset: 0
-            )
-        }
-        renc.endEncoding()
-
-        // Pass 2 — dilate mask into the edge ring.
-        guard let cenc1 = cb.makeComputeCommandEncoder() else { return }
-        cenc1.setComputePipelineState(dilatePipeline)
-        cenc1.setTexture(maskTex, index: 0)
-        cenc1.setTexture(edgeTex, index: 1)
-        var r = Int32(radius)
-        cenc1.setBytes(&r, length: MemoryLayout<Int32>.size, index: 0)
-        dispatchFullscreen(encoder: cenc1, pipeline: dilatePipeline, width: w, height: h)
-        cenc1.endEncoding()
-
-        // Pass 3 — composite outline colour over the source frame.
-        guard let cenc2 = cb.makeComputeCommandEncoder() else { return }
-        cenc2.setComputePipelineState(compositePipeline)
-        cenc2.setTexture(context.sourceColorTexture, index: 0)
-        cenc2.setTexture(edgeTex, index: 1)
-        cenc2.setTexture(context.targetColorTexture, index: 2)
-        var c = resolvedColor
-        cenc2.setBytes(&c, length: MemoryLayout<SIMD4<Float>>.size, index: 0)
-        dispatchFullscreen(encoder: cenc2, pipeline: compositePipeline, width: w, height: h)
-        cenc2.endEncoding()
+        renderer.encode(
+            device: context.device,
+            commandBuffer: context.commandBuffer,
+            source: context.sourceColorTexture,
+            target: context.targetColorTexture,
+            projection: context.projection
+        )
         enqueueFrameCaptureIfNeeded(
             texture: context.targetColorTexture,
-            commandBuffer: cb,
-            device: device
+            commandBuffer: context.commandBuffer,
+            device: context.device
         )
     }
 
     // MARK: Helpers
 
-    private var resolvedColor: SIMD4<Float> {
+    private static func rgba(from color: Color) -> SIMD4<Float> {
         let r = color.resolve(in: EnvironmentValues())
         return SIMD4<Float>(Float(r.red), Float(r.green), Float(r.blue), Float(r.opacity))
     }
 
-    private func passThrough(context: borrowing PostProcessEffectContext<any MTLCommandBuffer>) {
-        guard let blit = context.commandBuffer.makeBlitCommandEncoder() else { return }
-        blit.copy(
-            from: context.sourceColorTexture,
-            sourceSlice: 0, sourceLevel: 0,
-            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-            sourceSize: MTLSize(
-                width:  context.sourceColorTexture.width,
-                height: context.sourceColorTexture.height,
-                depth:  1
-            ),
-            to: context.targetColorTexture,
-            destinationSlice: 0, destinationLevel: 0,
-            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
-        )
-        blit.endEncoding()
-    }
-
+    /// Copies the finished frame into a capture-owned texture on the same
+    /// command buffer, so RealityKit reusing its target for the next frame
+    /// can't change what's read back.
     private func enqueueFrameCaptureIfNeeded(
         texture: any MTLTexture,
         commandBuffer: any MTLCommandBuffer,
         device: any MTLDevice
     ) {
-        guard let capture = state.takePendingCapture() else { return }
-        commandBuffer.addCompletedHandler { _ in
-            self.completeFrameCaptureUsingCoreImage(
-                texture: texture,
-                device: device,
-                capture: capture
-            )
+        let captures = storage.takePendingCaptures()
+        guard !captures.isEmpty else { return }
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: texture.pixelFormat,
+            width: texture.width,
+            height: texture.height,
+            mipmapped: false
+        )
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = .private
+        guard
+            let copy = device.makeTexture(descriptor: descriptor),
+            let blit = commandBuffer.makeBlitCommandEncoder()
+        else {
+            captures.forEach { $0.onComplete(.failure(PostProcessFrameCaptureError.blitEncodingFailed)) }
+            return
+        }
+        blit.copy(from: texture, to: copy)
+        blit.endEncoding()
+
+        // Only this handler reads `copy`, after the GPU finished writing it.
+        nonisolated(unsafe) let frame = copy
+        commandBuffer.addCompletedHandler { buffer in
+            guard buffer.status == .completed else {
+                let error = buffer.error ?? PostProcessFrameCaptureError.imageCreationFailed
+                captures.forEach { $0.onComplete(.failure(error)) }
+                return
+            }
+            for capture in captures {
+                self.completeFrameCaptureUsingCoreImage(
+                    texture: frame,
+                    device: device,
+                    capture: capture
+                )
+            }
         }
     }
 
     private func completeFrameCaptureUsingCoreImage(
         texture: any MTLTexture,
         device: any MTLDevice,
-        capture: OutlineRenderState.PendingCapture
+        capture: OutlineEffectStorage.PendingCapture
     ) {
         let sourceColorSpace = sourceColorSpace(
             for: texture.pixelFormat,
@@ -568,6 +253,11 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
     /// sRGB-primaries interpretation. On a P3 display the drawable stores
     /// P3-primaries values; treating them as sRGB would cause Core Image to
     /// apply an unnecessary gamut conversion that visibly darkens the output.
+    ///
+    /// `_srgb` formats are decoded to linear by the GPU when Core Image reads
+    /// them, so they get the *linear* variant of the colour space. Labelling
+    /// them with a gamma-encoded space made captures read darker than the
+    /// on-screen viewport.
     private func sourceColorSpace(
         for pixelFormat: MTLPixelFormat,
         captureColorSpace: CGColorSpace
@@ -576,11 +266,11 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
             || captureColorSpace.name == CGColorSpace.extendedDisplayP3
             || captureColorSpace.name == CGColorSpace.extendedLinearDisplayP3
         switch pixelFormat {
-        case .bgra10_xr_srgb, .bgr10_xr_srgb, .bgra8Unorm_srgb:
-            if usesP3, let p3 = CGColorSpace(name: CGColorSpace.extendedDisplayP3) {
+        case .bgra10_xr_srgb, .bgr10_xr_srgb, .bgra8Unorm_srgb, .rgba8Unorm_srgb:
+            if usesP3, let p3 = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) {
                 return p3
             }
-            return CGColorSpace(name: CGColorSpace.extendedSRGB)
+            return CGColorSpace(name: CGColorSpace.extendedLinearSRGB)
                 ?? CGColorSpace(name: CGColorSpace.sRGB)
                 ?? CGColorSpaceCreateDeviceRGB()
         case .bgra10_xr, .bgr10_xr:
@@ -593,42 +283,6 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
         default:
             return captureColorSpace
         }
-    }
-
-    private func makeSingleChannelTexture(
-        device: any MTLDevice, width: Int, height: Int, usage: MTLTextureUsage
-    ) -> (any MTLTexture)? {
-        let desc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .r8Unorm, width: width, height: height, mipmapped: false
-        )
-        desc.usage = usage
-        desc.storageMode = .private
-        return device.makeTexture(descriptor: desc)
-    }
-
-    private func makeDepthTexture(
-        device: any MTLDevice, width: Int, height: Int
-    ) -> (any MTLTexture)? {
-        let desc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .depth32Float, width: width, height: height, mipmapped: false
-        )
-        desc.usage = .renderTarget
-        desc.storageMode = .private
-        return device.makeTexture(descriptor: desc)
-    }
-
-    private func dispatchFullscreen(
-        encoder: any MTLComputeCommandEncoder,
-        pipeline: any MTLComputePipelineState,
-        width: Int, height: Int
-    ) {
-        let tgs = MTLSize(width: 16, height: 16, depth: 1)
-        let grid = MTLSize(
-            width:  (width  + tgs.width  - 1) / tgs.width,
-            height: (height + tgs.height - 1) / tgs.height,
-            depth:  1
-        )
-        encoder.dispatchThreadgroups(grid, threadsPerThreadgroup: tgs)
     }
 }
 
