@@ -1,6 +1,6 @@
 ![StageView: Apple-native 3D viewport UI for RealityKit](.github/banner.png)
 
-A RealityKit viewport for SwiftUI apps: orbit camera, scale-aware grid, colored axes, image-based lighting, overlays, picking and selection highlighting, on macOS, iOS and visionOS. For production OpenUSD rendering with Hydra, see [StageViewHydra](https://github.com/reality2713/StageViewHydra).
+A RealityKit viewport for SwiftUI apps: orbit camera, scale-aware grid, colored axes, image-based lighting, overlays, picking and selection highlighting, on macOS, iOS and visionOS.
 
 ## Install
 
@@ -77,9 +77,7 @@ macOS 15+, iOS 18+, visionOS 2+, Swift 6. The post-process outline needs iOS/mac
 
 ## Related
 
-- [StageViewHydra](https://github.com/reality2713/StageViewHydra): Hydra/OpenUSD viewport
 - [PostProcessOutline](https://github.com/elkraneo/PostProcessOutline): the selection outline renderer
-- [OpenUSDKit](https://github.com/Reality2713/OpenUSDKit): USD inspection, editing and validation
 
 ## License
 
