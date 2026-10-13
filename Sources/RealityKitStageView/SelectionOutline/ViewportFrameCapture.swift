@@ -10,6 +10,7 @@ import Metal
 /// `PostProcessOutlineEffect`, by that effect's `postProcess`).
 final class ViewportFrameCapture: @unchecked Sendable {
     struct PendingCapture {
+        var id = UUID()
         let colorSpace: CGColorSpace
         let onComplete: @Sendable (Result<CGImage, Error>) -> Void
     }
@@ -20,10 +21,23 @@ final class ViewportFrameCapture: @unchecked Sendable {
     /// Queues a capture. Every capture queued before the next frame receives
     /// that frame.
     func request(
+        id: UUID = UUID(),
         colorSpace: CGColorSpace,
         onComplete: @escaping @Sendable (Result<CGImage, Error>) -> Void
     ) {
-        lock.withLock { pendingCaptures.append(PendingCapture(colorSpace: colorSpace, onComplete: onComplete)) }
+        lock.withLock {
+            pendingCaptures.append(PendingCapture(id: id, colorSpace: colorSpace, onComplete: onComplete))
+        }
+    }
+
+    /// Fails a capture that hasn't been handed a frame yet, with `error`.
+    /// Does nothing once its frame is being read back (it then completes normally).
+    func cancel(id: UUID, error: any Error) {
+        let cancelled: PendingCapture? = lock.withLock {
+            guard let index = pendingCaptures.firstIndex(where: { $0.id == id }) else { return nil }
+            return pendingCaptures.remove(at: index)
+        }
+        cancelled?.onComplete(.failure(error))
     }
 
     private func takePendingCaptures() -> [PendingCapture] {

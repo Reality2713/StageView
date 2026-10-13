@@ -113,6 +113,8 @@ public struct RealityKitStageView: View {
 	@State private var lastGridUpdateTime: Date = Date.distantPast
 	@State private var lastGridBoundsExtent: Double = 0
 	private static let gridUpdateInterval: TimeInterval = 0.5 // Max 2 updates per second
+	/// How long a viewport capture waits for a rendered frame before failing.
+	private static let frameCaptureTimeout: TimeInterval = 5
 	private static let gridBoundsThreshold: Double = 0.05 // 5% change threshold
 
 	// Environment slider throttling: track pending values and debounce updates
@@ -231,8 +233,16 @@ public struct RealityKitStageView: View {
 					"RealityKit viewport appeared: \(self.viewportInstanceID.uuidString, privacy: .public)"
 				)
 				store.send(.viewportAppeared)
+				// Becoming the active viewport: take over the selection highlight.
+				updateSelectionHighlight(for: runtime.selectedPrimPath)
 			}
 			.onDisappear {
+				#if !os(visionOS)
+					// Don't leave this viewport's selection component on a shared entity.
+					if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
+						clearPostProcessOutline()
+					}
+				#endif
 				runtime.deactivateViewport(viewportInstanceID)
 				logger.debug(
 					"RealityKit viewport disappeared: \(self.viewportInstanceID.uuidString, privacy: .public)"
@@ -263,6 +273,8 @@ public struct RealityKitStageView: View {
 				newId in
 				if let entity = runtime.modelEntity, newId != nil {
 					loadModel(entity)
+					// The selected prim may now map to a new entity.
+					updateSelectionHighlight(for: runtime.selectedPrimPath)
 				} else {
 					// Clear the loaded model when modelEntity becomes nil
 					let anchor = rootEntity?.findEntity(named: "ModelAnchor")
@@ -333,6 +345,9 @@ public struct RealityKitStageView: View {
 			skyboxEntity?.isEnabled = effectiveShowEnvironmentBackground
 		}
 		.onChange(of: configuration.selectionHighlightStyle) { _, _ in
+			updateSelectionHighlight(for: runtime.selectedPrimPath)
+		}
+		.onChange(of: configuration.outlineConfiguration.color) { _, _ in
 			updateSelectionHighlight(for: runtime.selectedPrimPath)
 		}
 		.onChange(of: configuration.modelDisplayScale) { _, _ in
@@ -1788,7 +1803,11 @@ public struct RealityKitStageView: View {
 		selectionHighlightEntity = nil
 
 		#if !os(visionOS)
-			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
+			// The selection component lives on the provider's entity, which every
+			// viewport sharing the provider sees; only the active viewport owns it.
+			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *),
+				runtime.isActiveViewport(viewportInstanceID)
+			{
 				clearPostProcessOutline()
 			}
 		#endif
@@ -1810,7 +1829,9 @@ public struct RealityKitStageView: View {
 		#if !os(visionOS)
 		case .postProcessOutline:
 			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-				applyPostProcessOutline(to: target)
+				if runtime.isActiveViewport(viewportInstanceID) {
+					applyPostProcessOutline(to: target)
+				}
 			} else {
 				applyOutline(to: target)
 			}
@@ -2425,11 +2446,21 @@ public struct RealityKitStageView: View {
 				let colorSpace = CGColorSpace(name: CGColorSpace.displayP3)
 					?? CGColorSpaceCreateDeviceRGB()
 				let capture = frameCapture
-				return try await withCheckedThrowingContinuation {
-					(continuation: CheckedContinuation<CGImage, any Error>) in
-					capture.request(colorSpace: colorSpace) { result in
-						continuation.resume(with: result)
+				let requestID = UUID()
+				return try await withTaskCancellationHandler {
+					try await withCheckedThrowingContinuation {
+						(continuation: CheckedContinuation<CGImage, any Error>) in
+						capture.request(id: requestID, colorSpace: colorSpace) { result in
+							continuation.resume(with: result)
+						}
+						// No frame within the timeout (view not rendering, effect not yet
+						// attached): fail instead of waiting forever.
+						DispatchQueue.main.asyncAfter(deadline: .now() + Self.frameCaptureTimeout) {
+							capture.cancel(id: requestID, error: ViewportImageCaptureError.timedOut)
+						}
 					}
+				} onCancel: {
+					capture.cancel(id: requestID, error: CancellationError())
 				}
 			} else {
 				throw ViewportImageCaptureError.captureUnavailable
@@ -2453,6 +2484,7 @@ extension SIMD4 where Scalar == Float {
 }
 
 private enum ViewportImageCaptureError: LocalizedError {
+	case timedOut
 	case captureUnavailable
 	case captureViewUnavailable
 	case emptyBounds
@@ -2460,6 +2492,8 @@ private enum ViewportImageCaptureError: LocalizedError {
 
 	var errorDescription: String? {
 		switch self {
+		case .timedOut:
+			return "The viewport didn't render a frame to export in time."
 		case .captureUnavailable:
 			return "Image export requires the post-processed renderer on this platform version."
 		case .captureViewUnavailable:
