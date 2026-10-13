@@ -3,6 +3,7 @@ import CoreImage
 import ImageIO
 import OSLog
 import RealityKit
+import SelectionEffects
 import StageViewOverlay
 import SwiftUI
 import simd
@@ -28,11 +29,6 @@ private let preflightRealityKitAnimationTimeNotification = Notification.Name(
 )
 private let preflightRealityKitAnimationPlaybackNotification =
 	Notification.Name("preflight.realitykit.animation.playback")
-/// Stores a PostProcessOutlineEffect across SwiftUI render cycles without
-/// requiring @available on the view struct itself.
-private final class OutlineEffectBox: @unchecked Sendable {
-	var effect: Any? = nil  // PostProcessOutlineEffect when available
-}
 
 #if os(visionOS)
 private struct VolumeModelPresentationComponent: Component, Sendable {
@@ -108,10 +104,10 @@ public struct RealityKitStageView: View {
 		@State private var latestVolumeBounds: Rect3D?
 		@State private var volumePresentationScalePercent: Double?
 	#endif
-	/// Stable box holding the post-process outline effect (macOS 26+).
-	@State private var outlineBox = OutlineEffectBox()
-	/// Incremented to force a RealityView update cycle when outline state changes.
-	@State private var outlineGeneration = 0
+	/// Entity carrying the `.postProcessOutline` selection (SelectionEffects).
+	@State private var postProcessOutlinedEntity: Entity?
+	/// Viewport captures, fulfilled from the frames SelectionEffects hands back.
+	@State private var frameCapture = ViewportFrameCapture()
 	
 	// Grid throttling: track last update time and bounds to avoid excessive refreshes
 	@State private var lastGridUpdateTime: Date = Date.distantPast
@@ -601,6 +597,22 @@ public struct RealityKitStageView: View {
 				if let camera = root.findEntity(named: "MainCamera") {
 					runtime.setCameraEntity(camera)
 				}
+				// Draws `.postProcessOutline` selections and hands each finished
+				// frame to viewport capture. SelectionEffects owns the view's
+				// single post-process slot and attaches it on the first frame.
+				if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
+					let capture = frameCapture
+					content.installSelectionEffects(
+						camera: root.findEntity(named: "MainCamera"),
+						frameHandler: { frame in
+							capture.captureIfRequested(
+								texture: frame.texture,
+								commandBuffer: frame.commandBuffer,
+								device: frame.device
+							)
+						}
+					)
+				}
 				refreshGrid()
 
 				if runtime.isActiveViewport(viewportInstanceID), let entity = runtime.modelEntity {
@@ -613,18 +625,6 @@ public struct RealityKitStageView: View {
 				// triggered by onChange handlers for all relevant state (showGrid,
 				// metersPerUnit, isZUp, sceneBounds, colorScheme, store.appearance).
 				// No per-frame work is needed here.
-				if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-					if let effect = outlineBox.effect as? PostProcessOutlineEffect {
-						if let camera = rootEntity?.findEntity(named: "MainCamera") {
-							let noRef: Entity? = nil
-							effect.setViewMatrix(camera.transformMatrix(relativeTo: noRef).inverse)
-						}
-						content.renderingEffects.customPostProcessing = .effect(effect)
-					} else {
-						content.renderingEffects.customPostProcessing = .none
-					}
-				}
-				_ = outlineGeneration  // establish dependency so RealityView re-runs on selection change
 			}
 			.overlay {
 				if let error = runtime.loadError {
@@ -1822,28 +1822,24 @@ public struct RealityKitStageView: View {
 	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
 	@MainActor
 	private func applyPostProcessOutline(to entity: Entity) {
-		var effect: PostProcessOutlineEffect
-		if let existing = outlineBox.effect as? PostProcessOutlineEffect {
-			effect = existing
-		} else {
-			effect = PostProcessOutlineEffect(
-				color: configuration.outlineConfiguration.color,
-				radius: 2
+		// Stage content can be edited in place (USD), so read its meshes again
+		// whenever it's selected, as StageView always has.
+		SelectionEffectComponent.reloadGeometry(of: [entity])
+		entity.components.set(
+			SelectionEffectComponent(
+				.outline(.init(color: PlatformColor(configuration.outlineConfiguration.color), width: 2)),
+				// The selected entity's own mesh wins, as before.
+				meshSelection: .nearestMeshes
 			)
-		}
-		effect.setSelection(entity)
-		outlineBox.effect = effect
-		outlineGeneration += 1
+		)
+		postProcessOutlinedEntity = entity
 	}
 
 	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
 	@MainActor
 	private func clearPostProcessOutline() {
-		if let effect = outlineBox.effect as? PostProcessOutlineEffect {
-			effect.setSelection(nil)
-			outlineBox.effect = effect
-			outlineGeneration += 1
-		}
+		postProcessOutlinedEntity?.components.remove(SelectionEffectComponent.self)
+		postProcessOutlinedEntity = nil
 	}
 	#endif
 
@@ -2426,19 +2422,12 @@ public struct RealityKitStageView: View {
 			// scaling isn't reproduced here, so the file may read slightly darker than
 			// the on-screen viewport.
 			if #available(macOS 26.0, *) {
-				let effect = activePostProcessEffect()
-				if outlineBox.effect == nil {
-					outlineBox.effect = effect
-					outlineGeneration += 1
-					// Give RealityView one update cycle to attach the effect before
-					// the next postProcess fires.
-					try? await Task.sleep(nanoseconds: 32_000_000)
-				}
 				let colorSpace = CGColorSpace(name: CGColorSpace.displayP3)
 					?? CGColorSpaceCreateDeviceRGB()
+				let capture = frameCapture
 				return try await withCheckedThrowingContinuation {
 					(continuation: CheckedContinuation<CGImage, any Error>) in
-					effect.requestFrameCapture(colorSpace: colorSpace) { result in
+					capture.request(colorSpace: colorSpace) { result in
 						continuation.resume(with: result)
 					}
 				}
@@ -2454,19 +2443,6 @@ public struct RealityKitStageView: View {
 		#endif
 	}
 
-	#if os(macOS)
-	@available(macOS 26.0, *)
-	@MainActor
-	private func activePostProcessEffect() -> PostProcessOutlineEffect {
-		if let existing = outlineBox.effect as? PostProcessOutlineEffect {
-			return existing
-		}
-		return PostProcessOutlineEffect(
-			color: configuration.outlineConfiguration.color,
-			radius: 2
-		)
-	}
-	#endif
 
 }
 

@@ -11,6 +11,8 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.25.3"),
         .package(url: "https://github.com/elkraneo/PostProcessOutline.git", from: "1.1.1"),
+        // TODO before merging: .package(url: "https://github.com/elkraneo/SelectionEffects.git", from: "0.2.0")
+        .package(path: "../SelectionEffects"),
     ],
     targets: [
         .target(
@@ -23,6 +25,7 @@ let package = Package(
                 "StageViewOverlay",
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
                 .product(name: "PostProcessOutline", package: "PostProcessOutline"),
+                .product(name: "SelectionEffects", package: "SelectionEffects"),
             ],
             resources: [
                 .process("Resources"),

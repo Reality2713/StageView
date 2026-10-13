@@ -30,7 +30,7 @@ RealityKitStageView(provider: provider, store: store)
 - **Grid and axes:** scale-aware grid (1 m is always 1 m, `metersPerUnit`, Z-up) with X/Y/Z axes.
 - **Lighting:** IBL from an environment map with EV-style exposure, rotation and blur.
 - **Overlays:** orientation gizmo and an auto-switching scale indicator (cm/m/km), plus custom overlay items.
-- **Selection:** bounding box, mesh outline, or a pixel-exact post-process outline ([PostProcessOutline](https://github.com/elkraneo/PostProcessOutline), iOS/macOS 26+).
+- **Selection:** bounding box, mesh outline, or a pixel-exact post-process outline ([SelectionEffects](https://github.com/elkraneo/SelectionEffects), iOS/macOS 26+).
 - **Picking:** imported entities map back to prim paths, with hooks to remap coarse importer nodes.
 - **Hosting:** render your own entity hierarchy, receive scene-space drag samples, capture the viewport as an image, control embedded animation playback.
 
