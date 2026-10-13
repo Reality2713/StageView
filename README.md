@@ -77,7 +77,7 @@ macOS 15+, iOS 18+, visionOS 2+, Swift 6. The post-process outline needs iOS/mac
 
 ## Related
 
-- [PostProcessOutline](https://github.com/elkraneo/PostProcessOutline): the selection outline renderer
+- [SelectionEffects](https://github.com/elkraneo/SelectionEffects): the post-process selection outline and frame capture
 
 ## License
 
