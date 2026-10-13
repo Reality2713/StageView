@@ -620,11 +620,7 @@ public struct RealityKitStageView: View {
 					content.installSelectionEffects(
 						camera: root.findEntity(named: "MainCamera"),
 						frameHandler: { frame in
-							capture.captureIfRequested(
-								texture: frame.texture,
-								commandBuffer: frame.commandBuffer,
-								device: frame.device
-							)
+							capture.captureIfRequested(from: frame)
 						}
 					)
 				}

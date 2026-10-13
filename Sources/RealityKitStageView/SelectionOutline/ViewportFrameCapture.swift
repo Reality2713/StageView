@@ -2,13 +2,22 @@ import CoreGraphics
 import CoreImage
 import Foundation
 import Metal
+import SelectionEffects
 
 /// Viewport captures requested on the main actor and fulfilled on the render
-/// thread from the next finished frame.
+/// thread from the next rendered frame, as `CGImage`s in the requested color space.
 ///
-/// Fed by SelectionEffects' `frameHandler` (and, for the deprecated
-/// `PostProcessOutlineEffect`, by that effect's `postProcess`).
-final class ViewportFrameCapture: @unchecked Sendable {
+/// StageView uses it for image export. A host with its own `RealityView` can
+/// feed it from SelectionEffects:
+///
+/// ```swift
+/// let capture = ViewportFrameCapture()
+/// content.installSelectionEffects(camera: camera, frameHandler: { frame in
+///     capture.captureIfRequested(from: frame)
+/// })
+/// capture.request(colorSpace: displayP3) { result in … }
+/// ```
+public final class ViewportFrameCapture: @unchecked Sendable {
     struct PendingCapture {
         var id = UUID()
         let colorSpace: CGColorSpace
@@ -18,9 +27,11 @@ final class ViewportFrameCapture: @unchecked Sendable {
     private let lock = NSLock()
     private var pendingCaptures: [PendingCapture] = []
 
+    public init() {}
+
     /// Queues a capture. Every capture queued before the next frame receives
     /// that frame.
-    func request(
+    public func request(
         id: UUID = UUID(),
         colorSpace: CGColorSpace,
         onComplete: @escaping @Sendable (Result<CGImage, Error>) -> Void
@@ -32,7 +43,7 @@ final class ViewportFrameCapture: @unchecked Sendable {
 
     /// Fails a capture that hasn't been handed a frame yet, with `error`.
     /// Does nothing once its frame is being read back (it then completes normally).
-    func cancel(id: UUID, error: any Error) {
+    public func cancel(id: UUID, error: any Error) {
         let cancelled: PendingCapture? = lock.withLock {
             guard let index = pendingCaptures.firstIndex(where: { $0.id == id }) else { return nil }
             return pendingCaptures.remove(at: index)
@@ -51,7 +62,16 @@ final class ViewportFrameCapture: @unchecked Sendable {
     /// Copies the finished frame into a capture-owned texture on the same
     /// command buffer, so RealityKit reusing its target for the next frame
     /// can't change what's read back.
-    func captureIfRequested(
+    #if !os(visionOS)
+    @available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
+    public func captureIfRequested(from frame: SelectionEffectsFrame) {
+        captureIfRequested(texture: frame.texture, commandBuffer: frame.commandBuffer, device: frame.device)
+    }
+    #endif
+
+    /// Copies `texture` for every pending capture, on `commandBuffer`. Call it
+    /// from the render callback, before the buffer is committed.
+    public func captureIfRequested(
         texture: any MTLTexture,
         commandBuffer: any MTLCommandBuffer,
         device: any MTLDevice
