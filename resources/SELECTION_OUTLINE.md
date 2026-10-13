@@ -2,10 +2,11 @@
 
 A log of the full process that produced the post-process selection outline in `RealityKitStageView`.
 
-> **Since 0.3.30** the outline renderer (Phase 4 below) lives in the
-> [PostProcessOutline](https://github.com/elkraneo/PostProcessOutline) package;
-> `PostProcessOutlineEffect` here wraps its `OutlineRenderer`. The write-up is
-> published as [RealityKit Outline Selection](https://elkraneo.com/realitykit-outline-selection/).
+> **Since 0.4.0** the `.postProcessOutline` style is drawn by
+> [SelectionEffects](https://github.com/elkraneo/SelectionEffects), and
+> `PostProcessOutlineEffect` (Phase 4 below) is removed. Phase 4 is kept as
+> history. The write-up is published as
+> [RealityKit Outline Selection](https://elkraneo.com/realitykit-outline-selection/).
 > Phases 1–3 (selection flow, macOS click detection, choosing the style) still
 > describe StageView.
 

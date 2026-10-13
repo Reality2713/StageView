@@ -1,6 +1,7 @@
 import Foundation
 import OSLog
 import RealityKit
+import SelectionEffects
 import simd
 
 // MARK: - Entity-Prim Mapping
@@ -231,6 +232,24 @@ public final class RealityKitProvider {
     public func isActiveViewport(_ id: UUID) -> Bool {
         activeViewportID == id
     }
+
+    // MARK: - Post-process outline ownership
+
+    /// The entity carrying the `.postProcessOutline` selection component. The
+    /// entity is shared by every viewport on this provider, so its one record
+    /// lives here rather than in each view.
+    @ObservationIgnored private weak var postProcessOutlinedEntity: Entity?
+
+    func setPostProcessOutline(_ component: SelectionEffectComponent, on entity: Entity) {
+        if postProcessOutlinedEntity !== entity { clearPostProcessOutline() }
+        entity.components.set(component)
+        postProcessOutlinedEntity = entity
+    }
+
+    func clearPostProcessOutline() {
+        postProcessOutlinedEntity?.components.remove(SelectionEffectComponent.self)
+        postProcessOutlinedEntity = nil
+    }
     
     // MARK: - Lifecycle
     
@@ -453,13 +472,19 @@ public final class RealityKitProvider {
 
     private func teardownState() {
         stopEmbeddedAnimations()
+        clearPostProcessOutline()
         modelEntity = nil
         currentFileURL = nil
         isLoaded = false
         isExternallyDriven = false
         activeSceneDrag = nil
         sceneBounds = externallySuppliedSceneBounds ?? SceneBounds()
-        selectedPrimPath = nil
+        if selectedPrimPath != nil {
+            selectedPrimPath = nil
+            // Viewports reconcile their highlight on a generation change; a later
+            // setSelection(nil) would return early and never trigger it.
+            selectionGeneration &+= 1
+        }
         loadError = nil
         primPathToEntityID.removeAll()
         entityIDToPrimPath.removeAll()

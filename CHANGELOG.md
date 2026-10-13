@@ -2,6 +2,33 @@
 
 All notable changes to StageView are documented here.
 
+## 0.4.0
+
+The `.postProcessOutline` style is now drawn by
+[SelectionEffects](https://github.com/elkraneo/SelectionEffects), which also
+outlines content rendered by USDKit's `USDStageComponent`.
+
+### Changed
+
+- **`.postProcessOutline`** sets a `SelectionEffectComponent` on the selected
+  entity. The provider keeps the one record of it, and only the active
+  viewport changes it, so viewports sharing a provider don't erase each
+  other's selection. It's removed when the active view disappears and when
+  the model is torn down, re-applied after a model refresh, and restyled when
+  the outline colour changes.
+- **Provider teardown** advances `selectionGeneration` when it clears the
+  selection, so viewports reconcile their highlight.
+- **Frame capture** goes through `ViewportFrameCapture` (public, with
+  `captureIfRequested(from:)`). A capture times out after 5 seconds without a
+  frame; a cancelled capture throws `CancellationError`, including when it's
+  cancelled before it's queued or while its frame is read back.
+
+### Removed
+
+- **`PostProcessOutlineEffect`** and the PostProcessOutline dependency. Use
+  `SelectionEffectComponent` with `installSelectionEffects()` from
+  SelectionEffects instead.
+
 ## 0.3.31
 
 No code changes.

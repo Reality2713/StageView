@@ -3,6 +3,7 @@ import CoreImage
 import ImageIO
 import OSLog
 import RealityKit
+import SelectionEffects
 import StageViewOverlay
 import SwiftUI
 import simd
@@ -28,11 +29,6 @@ private let preflightRealityKitAnimationTimeNotification = Notification.Name(
 )
 private let preflightRealityKitAnimationPlaybackNotification =
 	Notification.Name("preflight.realitykit.animation.playback")
-/// Stores a PostProcessOutlineEffect across SwiftUI render cycles without
-/// requiring @available on the view struct itself.
-private final class OutlineEffectBox: @unchecked Sendable {
-	var effect: Any? = nil  // PostProcessOutlineEffect when available
-}
 
 #if os(visionOS)
 private struct VolumeModelPresentationComponent: Component, Sendable {
@@ -108,15 +104,15 @@ public struct RealityKitStageView: View {
 		@State private var latestVolumeBounds: Rect3D?
 		@State private var volumePresentationScalePercent: Double?
 	#endif
-	/// Stable box holding the post-process outline effect (macOS 26+).
-	@State private var outlineBox = OutlineEffectBox()
-	/// Incremented to force a RealityView update cycle when outline state changes.
-	@State private var outlineGeneration = 0
+	/// Viewport captures, fulfilled from the frames SelectionEffects hands back.
+	@State private var frameCapture = ViewportFrameCapture()
 	
 	// Grid throttling: track last update time and bounds to avoid excessive refreshes
 	@State private var lastGridUpdateTime: Date = Date.distantPast
 	@State private var lastGridBoundsExtent: Double = 0
 	private static let gridUpdateInterval: TimeInterval = 0.5 // Max 2 updates per second
+	/// How long a viewport capture waits for a rendered frame before failing.
+	private static let frameCaptureTimeout: TimeInterval = 5
 	private static let gridBoundsThreshold: Double = 0.05 // 5% change threshold
 
 	// Environment slider throttling: track pending values and debounce updates
@@ -235,8 +231,15 @@ public struct RealityKitStageView: View {
 					"RealityKit viewport appeared: \(self.viewportInstanceID.uuidString, privacy: .public)"
 				)
 				store.send(.viewportAppeared)
+				// Becoming the active viewport: take over the selection highlight.
+				updateSelectionHighlight(for: runtime.selectedPrimPath)
 			}
 			.onDisappear {
+				// Don't leave the selection component behind; only the active
+				// viewport owns it, so an inactive one leaves the active one's alone.
+				if runtime.isActiveViewport(viewportInstanceID) {
+					runtime.clearPostProcessOutline()
+				}
 				runtime.deactivateViewport(viewportInstanceID)
 				logger.debug(
 					"RealityKit viewport disappeared: \(self.viewportInstanceID.uuidString, privacy: .public)"
@@ -267,8 +270,11 @@ public struct RealityKitStageView: View {
 				newId in
 				if let entity = runtime.modelEntity, newId != nil {
 					loadModel(entity)
+					// The selected prim may now map to a new entity.
+					updateSelectionHighlight(for: runtime.selectedPrimPath)
 				} else {
 					// Clear the loaded model when modelEntity becomes nil
+					runtime.clearPostProcessOutline()
 					let anchor = rootEntity?.findEntity(named: "ModelAnchor")
 					anchor?.children.first(where: { $0.name == "LoadedModel" })?.removeFromParent()
 				}
@@ -337,6 +343,9 @@ public struct RealityKitStageView: View {
 			skyboxEntity?.isEnabled = effectiveShowEnvironmentBackground
 		}
 		.onChange(of: configuration.selectionHighlightStyle) { _, _ in
+			updateSelectionHighlight(for: runtime.selectedPrimPath)
+		}
+		.onChange(of: configuration.outlineConfiguration.color) { _, _ in
 			updateSelectionHighlight(for: runtime.selectedPrimPath)
 		}
 		.onChange(of: configuration.modelDisplayScale) { _, _ in
@@ -601,6 +610,18 @@ public struct RealityKitStageView: View {
 				if let camera = root.findEntity(named: "MainCamera") {
 					runtime.setCameraEntity(camera)
 				}
+				// Draws `.postProcessOutline` selections and hands each finished
+				// frame to viewport capture. SelectionEffects owns the view's
+				// single post-process slot and attaches it on the first frame.
+				if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
+					let capture = frameCapture
+					content.installSelectionEffects(
+						camera: root.findEntity(named: "MainCamera"),
+						frameHandler: { frame in
+							capture.captureIfRequested(from: frame)
+						}
+					)
+				}
 				refreshGrid()
 
 				if runtime.isActiveViewport(viewportInstanceID), let entity = runtime.modelEntity {
@@ -613,18 +634,6 @@ public struct RealityKitStageView: View {
 				// triggered by onChange handlers for all relevant state (showGrid,
 				// metersPerUnit, isZUp, sceneBounds, colorScheme, store.appearance).
 				// No per-frame work is needed here.
-				if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-					if let effect = outlineBox.effect as? PostProcessOutlineEffect {
-						if let camera = rootEntity?.findEntity(named: "MainCamera") {
-							let noRef: Entity? = nil
-							effect.setViewMatrix(camera.transformMatrix(relativeTo: noRef).inverse)
-						}
-						content.renderingEffects.customPostProcessing = .effect(effect)
-					} else {
-						content.renderingEffects.customPostProcessing = .none
-					}
-				}
-				_ = outlineGeneration  // establish dependency so RealityView re-runs on selection change
 			}
 			.overlay {
 				if let error = runtime.loadError {
@@ -1788,8 +1797,10 @@ public struct RealityKitStageView: View {
 		selectionHighlightEntity = nil
 
 		#if !os(visionOS)
-			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-				clearPostProcessOutline()
+			// The selection component lives on the provider's entity, which every
+			// viewport sharing the provider sees; only the active viewport owns it.
+			if runtime.isActiveViewport(viewportInstanceID) {
+				runtime.clearPostProcessOutline()
 			}
 		#endif
 
@@ -1810,7 +1821,9 @@ public struct RealityKitStageView: View {
 		#if !os(visionOS)
 		case .postProcessOutline:
 			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-				applyPostProcessOutline(to: target)
+				if runtime.isActiveViewport(viewportInstanceID) {
+					applyPostProcessOutline(to: target)
+				}
 			} else {
 				applyOutline(to: target)
 			}
@@ -1822,28 +1835,17 @@ public struct RealityKitStageView: View {
 	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
 	@MainActor
 	private func applyPostProcessOutline(to entity: Entity) {
-		var effect: PostProcessOutlineEffect
-		if let existing = outlineBox.effect as? PostProcessOutlineEffect {
-			effect = existing
-		} else {
-			effect = PostProcessOutlineEffect(
-				color: configuration.outlineConfiguration.color,
-				radius: 2
-			)
-		}
-		effect.setSelection(entity)
-		outlineBox.effect = effect
-		outlineGeneration += 1
-	}
-
-	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
-	@MainActor
-	private func clearPostProcessOutline() {
-		if let effect = outlineBox.effect as? PostProcessOutlineEffect {
-			effect.setSelection(nil)
-			outlineBox.effect = effect
-			outlineGeneration += 1
-		}
+		// Stage content can be edited in place (USD), so read its meshes again
+		// whenever it's selected, as StageView always has.
+		SelectionEffectComponent.reloadGeometry(of: [entity])
+		runtime.setPostProcessOutline(
+			SelectionEffectComponent(
+				.outline(.init(color: PlatformColor(configuration.outlineConfiguration.color), width: 2)),
+				// The selected entity's own mesh wins, as before.
+				meshSelection: .nearestMeshes
+			),
+			on: entity
+		)
 	}
 	#endif
 
@@ -2426,22 +2428,31 @@ public struct RealityKitStageView: View {
 			// scaling isn't reproduced here, so the file may read slightly darker than
 			// the on-screen viewport.
 			if #available(macOS 26.0, *) {
-				let effect = activePostProcessEffect()
-				if outlineBox.effect == nil {
-					outlineBox.effect = effect
-					outlineGeneration += 1
-					// Give RealityView one update cycle to attach the effect before
-					// the next postProcess fires.
-					try? await Task.sleep(nanoseconds: 32_000_000)
-				}
 				let colorSpace = CGColorSpace(name: CGColorSpace.displayP3)
 					?? CGColorSpaceCreateDeviceRGB()
-				return try await withCheckedThrowingContinuation {
-					(continuation: CheckedContinuation<CGImage, any Error>) in
-					effect.requestFrameCapture(colorSpace: colorSpace) { result in
-						continuation.resume(with: result)
+				let capture = frameCapture
+				let requestID = UUID()
+				let image: CGImage = try await withTaskCancellationHandler {
+					// Cancelled before the request is queued: onCancel already ran
+					// and found nothing to cancel.
+					try Task.checkCancellation()
+					return try await withCheckedThrowingContinuation {
+						(continuation: CheckedContinuation<CGImage, any Error>) in
+						capture.request(id: requestID, colorSpace: colorSpace) { result in
+							continuation.resume(with: result)
+						}
+						// No frame within the timeout (view not rendering, effect not yet
+						// attached): fail instead of waiting forever.
+						DispatchQueue.main.asyncAfter(deadline: .now() + Self.frameCaptureTimeout) {
+							capture.cancel(id: requestID, error: ViewportImageCaptureError.timedOut)
+						}
 					}
+				} onCancel: {
+					capture.cancel(id: requestID, error: CancellationError())
 				}
+				// Cancelled while the frame was being read back: don't deliver it.
+				try Task.checkCancellation()
+				return image
 			} else {
 				throw ViewportImageCaptureError.captureUnavailable
 			}
@@ -2454,19 +2465,6 @@ public struct RealityKitStageView: View {
 		#endif
 	}
 
-	#if os(macOS)
-	@available(macOS 26.0, *)
-	@MainActor
-	private func activePostProcessEffect() -> PostProcessOutlineEffect {
-		if let existing = outlineBox.effect as? PostProcessOutlineEffect {
-			return existing
-		}
-		return PostProcessOutlineEffect(
-			color: configuration.outlineConfiguration.color,
-			radius: 2
-		)
-	}
-	#endif
 
 }
 
@@ -2477,6 +2475,7 @@ extension SIMD4 where Scalar == Float {
 }
 
 private enum ViewportImageCaptureError: LocalizedError {
+	case timedOut
 	case captureUnavailable
 	case captureViewUnavailable
 	case emptyBounds
@@ -2484,6 +2483,8 @@ private enum ViewportImageCaptureError: LocalizedError {
 
 	var errorDescription: String? {
 		switch self {
+		case .timedOut:
+			return "The viewport didn't render a frame to export in time."
 		case .captureUnavailable:
 			return "Image export requires the post-processed renderer on this platform version."
 		case .captureViewUnavailable:

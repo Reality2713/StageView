@@ -1,186 +1,82 @@
 import CoreGraphics
 import CoreImage
+import Foundation
 import Metal
-import OSLog
-import PostProcessOutline
-import RealityKit
-import SwiftUI
-import simd
+import SelectionEffects
 
-private let outlineLogger = Logger(subsystem: "RealityKitStageView", category: "PostProcessOutline")
-
-// MARK: - Shared state
-
-/// State shared by every copy of a `PostProcessOutlineEffect`: the outline
-/// colour (the renderer only keeps resolved RGBA) and pending viewport
-/// captures, handed from @MainActor to the render callback.
-@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
-@available(visionOS, unavailable)
-final class OutlineEffectStorage: @unchecked Sendable {
+/// Viewport captures requested on the main actor and fulfilled on the render
+/// thread from the next rendered frame, as `CGImage`s in the requested color space.
+///
+/// StageView uses it for image export. A host with its own `RealityView` can
+/// feed it from SelectionEffects:
+///
+/// ```swift
+/// let capture = ViewportFrameCapture()
+/// content.installSelectionEffects(camera: camera, frameHandler: { frame in
+///     capture.captureIfRequested(from: frame)
+/// })
+/// capture.request(colorSpace: displayP3) { result in … }
+/// ```
+public final class ViewportFrameCapture: @unchecked Sendable {
     struct PendingCapture {
+        var id = UUID()
         let colorSpace: CGColorSpace
         let onComplete: @Sendable (Result<CGImage, Error>) -> Void
     }
 
     private let lock = NSLock()
-    private var _color: Color
-    private var _pendingCaptures: [PendingCapture] = []
+    private var pendingCaptures: [PendingCapture] = []
 
-    init(color: Color) {
-        _color = color
-    }
-
-    var color: Color {
-        lock.withLock { _color }
-    }
-
-    /// Stores `color` and applies it to the renderer in one critical section,
-    /// so concurrent setters can't leave the stored and drawn colours apart.
-    func setColor(_ color: Color, apply: (Color) -> Void) {
-        lock.withLock {
-            _color = color
-            apply(color)
-        }
-    }
+    public init() {}
 
     /// Queues a capture. Every capture queued before the next frame receives
     /// that frame.
-    func enqueueCapture(_ capture: PendingCapture) {
-        lock.withLock { _pendingCaptures.append(capture) }
-    }
-
-    func takePendingCaptures() -> [PendingCapture] {
-        lock.withLock {
-            let captures = _pendingCaptures
-            _pendingCaptures = []
-            return captures
-        }
-    }
-}
-
-// MARK: - Effect
-
-/// StageView's post-process selection outline: the `PostProcessOutline`
-/// package's `OutlineRenderer` plus viewport frame capture.
-///
-/// RealityView allows a single custom post-process effect, so viewport
-/// capture (`requestFrameCapture`) reads the finished frame from this effect.
-///
-/// Copies share one renderer and one storage, so a setting changed through any
-/// copy is what every copy reads and draws with. Setters are still `mutating`,
-/// so writing through a `@State` property notifies SwiftUI as before.
-@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
-@available(visionOS, unavailable)
-public struct PostProcessOutlineEffect: PostProcessEffect {
-
-    private let renderer: OutlineRenderer
-    private let storage: OutlineEffectStorage
-
-    /// Outline colour. Defaults to the same cyan as `OutlineConfiguration`.
-    public var color: Color {
-        get { storage.color }
-        set {
-            let renderer = renderer
-            storage.setColor(newValue) { renderer.color = Self.rgba(from: $0) }
-        }
-    }
-
-    /// Outline width in screen pixels (0...`OutlineRenderer.maxRadius`).
-    public var radius: Int {
-        get { renderer.radius }
-        set { renderer.radius = newValue }
-    }
-
-    /// Prefer renderable child meshes over the selected entity's own mesh.
-    ///
-    /// USDStageComponent can attach aggregate meshes to parent prim entities whose
-    /// extracted vertices don't match the displayed child renderables. Keeping this
-    /// off by default preserves StageView's historical "selected entity mesh wins"
-    /// behavior for regular RealityKit imports.
-    public var prefersChildMeshes: Bool {
-        get { renderer.meshSelection == .preferDescendants }
-        set { renderer.meshSelection = newValue ? .preferDescendants : .nearestMeshes }
-    }
-
-    public init(color: Color = .cyan, radius: Int = 2, prefersChildMeshes: Bool = false) {
-        renderer = OutlineRenderer(color: Self.rgba(from: color), radius: radius)
-        // Stage content can be edited in place (USD), so read meshes fresh on
-        // every selection, as StageView always has.
-        renderer.cachesGeometry = false
-        renderer.meshSelection = prefersChildMeshes ? .preferDescendants : .nearestMeshes
-        storage = OutlineEffectStorage(color: color)
-    }
-
-    @MainActor
-    public func requestFrameCapture(
+    public func request(
+        id: UUID = UUID(),
         colorSpace: CGColorSpace,
         onComplete: @escaping @Sendable (Result<CGImage, Error>) -> Void
     ) {
-        storage.enqueueCapture(.init(colorSpace: colorSpace, onComplete: onComplete))
-    }
-
-    // MARK: Selection API
-
-    /// Sets the selected entity, or clears the selection when `nil`.
-    @MainActor
-    public func setSelection(_ entity: Entity?) {
-        renderer.setSelection(entity)
-        if let entity {
-            outlineLogger.debug("Post-process outline selection set to '\(entity.name, privacy: .public)'")
+        lock.withLock {
+            pendingCaptures.append(PendingCapture(id: id, colorSpace: colorSpace, onComplete: onComplete))
         }
     }
 
-    /// Re-reads world transforms of the selected entities so moving entities
-    /// stay outlined. Call alongside `setViewMatrix(_:)`.
-    @MainActor
-    public func updateTransforms() {
-        renderer.updateTransforms()
+    /// Fails a capture that hasn't been handed a frame yet, with `error`.
+    /// Does nothing once its frame is being read back (it then completes normally).
+    public func cancel(id: UUID, error: any Error) {
+        let cancelled: PendingCapture? = lock.withLock {
+            guard let index = pendingCaptures.firstIndex(where: { $0.id == id }) else { return nil }
+            return pendingCaptures.remove(at: index)
+        }
+        cancelled?.onComplete(.failure(error))
     }
 
-    // MARK: PostProcessEffect
-
-    public func prepare(for device: any MTLDevice) {
-        renderer.prepare(device: device)
-        outlineLogger.info("Post-process outline prepared on device '\(device.name, privacy: .public)'")
-    }
-
-    public func setViewMatrix(_ viewMatrix: simd_float4x4) {
-        renderer.setViewMatrix(viewMatrix)
-    }
-
-    public func postProcess(
-        context: borrowing PostProcessEffectContext<any MTLCommandBuffer>
-    ) {
-        renderer.encode(
-            device: context.device,
-            commandBuffer: context.commandBuffer,
-            source: context.sourceColorTexture,
-            target: context.targetColorTexture,
-            projection: context.projection
-        )
-        enqueueFrameCaptureIfNeeded(
-            texture: context.targetColorTexture,
-            commandBuffer: context.commandBuffer,
-            device: context.device
-        )
-    }
-
-    // MARK: Helpers
-
-    private static func rgba(from color: Color) -> SIMD4<Float> {
-        let r = color.resolve(in: EnvironmentValues())
-        return SIMD4<Float>(Float(r.red), Float(r.green), Float(r.blue), Float(r.opacity))
+    private func takePendingCaptures() -> [PendingCapture] {
+        lock.withLock {
+            let captures = pendingCaptures
+            pendingCaptures = []
+            return captures
+        }
     }
 
     /// Copies the finished frame into a capture-owned texture on the same
     /// command buffer, so RealityKit reusing its target for the next frame
     /// can't change what's read back.
-    private func enqueueFrameCaptureIfNeeded(
+    #if !os(visionOS)
+    @available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
+    public func captureIfRequested(from frame: SelectionEffectsFrame) {
+        captureIfRequested(texture: frame.texture, commandBuffer: frame.commandBuffer, device: frame.device)
+    }
+    #endif
+
+    /// Copies `texture` for every pending capture, on `commandBuffer`. Call it
+    /// from the render callback, before the buffer is committed.
+    public func captureIfRequested(
         texture: any MTLTexture,
         commandBuffer: any MTLCommandBuffer,
         device: any MTLDevice
     ) {
-        let captures = storage.takePendingCaptures()
+        let captures = takePendingCaptures()
         guard !captures.isEmpty else { return }
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -222,7 +118,7 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
     private func completeFrameCaptureUsingCoreImage(
         texture: any MTLTexture,
         device: any MTLDevice,
-        capture: OutlineEffectStorage.PendingCapture
+        capture: PendingCapture
     ) {
         let sourceColorSpace = sourceColorSpace(
             for: texture.pixelFormat,
@@ -287,9 +183,7 @@ public struct PostProcessOutlineEffect: PostProcessEffect {
     }
 }
 
-@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
-@available(visionOS, unavailable)
-private enum PostProcessFrameCaptureError: LocalizedError {
+enum PostProcessFrameCaptureError: LocalizedError {
     case blitEncodingFailed
     case bufferAllocationFailed
     case imageCreationFailed
