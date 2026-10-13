@@ -10,7 +10,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.25.3"),
-        .package(url: "https://github.com/elkraneo/PostProcessOutline.git", from: "1.1.1"),
+        .package(url: "https://github.com/elkraneo/PostProcessOutline.git", from: "1.1.3"),
         .package(url: "https://github.com/elkraneo/SelectionEffects.git", from: "0.2.1"),
     ],
     targets: [
