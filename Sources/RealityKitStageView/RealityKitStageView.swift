@@ -104,8 +104,6 @@ public struct RealityKitStageView: View {
 		@State private var latestVolumeBounds: Rect3D?
 		@State private var volumePresentationScalePercent: Double?
 	#endif
-	/// Entity carrying the `.postProcessOutline` selection (SelectionEffects).
-	@State private var postProcessOutlinedEntity: Entity?
 	/// Viewport captures, fulfilled from the frames SelectionEffects hands back.
 	@State private var frameCapture = ViewportFrameCapture()
 	
@@ -237,12 +235,11 @@ public struct RealityKitStageView: View {
 				updateSelectionHighlight(for: runtime.selectedPrimPath)
 			}
 			.onDisappear {
-				#if !os(visionOS)
-					// Don't leave this viewport's selection component on a shared entity.
-					if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *) {
-						clearPostProcessOutline()
-					}
-				#endif
+				// Don't leave the selection component behind; only the active
+				// viewport owns it, so an inactive one leaves the active one's alone.
+				if runtime.isActiveViewport(viewportInstanceID) {
+					runtime.clearPostProcessOutline()
+				}
 				runtime.deactivateViewport(viewportInstanceID)
 				logger.debug(
 					"RealityKit viewport disappeared: \(self.viewportInstanceID.uuidString, privacy: .public)"
@@ -277,6 +274,7 @@ public struct RealityKitStageView: View {
 					updateSelectionHighlight(for: runtime.selectedPrimPath)
 				} else {
 					// Clear the loaded model when modelEntity becomes nil
+					runtime.clearPostProcessOutline()
 					let anchor = rootEntity?.findEntity(named: "ModelAnchor")
 					anchor?.children.first(where: { $0.name == "LoadedModel" })?.removeFromParent()
 				}
@@ -1801,10 +1799,8 @@ public struct RealityKitStageView: View {
 		#if !os(visionOS)
 			// The selection component lives on the provider's entity, which every
 			// viewport sharing the provider sees; only the active viewport owns it.
-			if #available(macOS 26.0, iOS 26.0, tvOS 26.0, *),
-				runtime.isActiveViewport(viewportInstanceID)
-			{
-				clearPostProcessOutline()
+			if runtime.isActiveViewport(viewportInstanceID) {
+				runtime.clearPostProcessOutline()
 			}
 		#endif
 
@@ -1842,21 +1838,14 @@ public struct RealityKitStageView: View {
 		// Stage content can be edited in place (USD), so read its meshes again
 		// whenever it's selected, as StageView always has.
 		SelectionEffectComponent.reloadGeometry(of: [entity])
-		entity.components.set(
+		runtime.setPostProcessOutline(
 			SelectionEffectComponent(
 				.outline(.init(color: PlatformColor(configuration.outlineConfiguration.color), width: 2)),
 				// The selected entity's own mesh wins, as before.
 				meshSelection: .nearestMeshes
-			)
+			),
+			on: entity
 		)
-		postProcessOutlinedEntity = entity
-	}
-
-	@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)
-	@MainActor
-	private func clearPostProcessOutline() {
-		postProcessOutlinedEntity?.components.remove(SelectionEffectComponent.self)
-		postProcessOutlinedEntity = nil
 	}
 	#endif
 
@@ -2443,8 +2432,11 @@ public struct RealityKitStageView: View {
 					?? CGColorSpaceCreateDeviceRGB()
 				let capture = frameCapture
 				let requestID = UUID()
-				return try await withTaskCancellationHandler {
-					try await withCheckedThrowingContinuation {
+				let image: CGImage = try await withTaskCancellationHandler {
+					// Cancelled before the request is queued: onCancel already ran
+					// and found nothing to cancel.
+					try Task.checkCancellation()
+					return try await withCheckedThrowingContinuation {
 						(continuation: CheckedContinuation<CGImage, any Error>) in
 						capture.request(id: requestID, colorSpace: colorSpace) { result in
 							continuation.resume(with: result)
@@ -2458,6 +2450,9 @@ public struct RealityKitStageView: View {
 				} onCancel: {
 					capture.cancel(id: requestID, error: CancellationError())
 				}
+				// Cancelled while the frame was being read back: don't deliver it.
+				try Task.checkCancellation()
+				return image
 			} else {
 				throw ViewportImageCaptureError.captureUnavailable
 			}
