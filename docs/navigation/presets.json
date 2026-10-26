@@ -1,0 +1,524 @@
+{
+  "version": 1,
+  "date": "2026-10-26",
+  "spec": "README.md",
+  "touchSurfaceFamilies": {
+    "orbit": {
+      "swipe": "orbit",
+      "shift+swipe": "pan",
+      "control+swipe": "dolly",
+      "pinch": "dolly",
+      "rotate": "orbit",
+      "apps": [
+        "blender",
+        "shapr3d",
+        "godot"
+      ]
+    },
+    "pan": {
+      "swipe": "pan",
+      "control+swipe": "dolly",
+      "pinch": "dolly",
+      "rotate": "orbit",
+      "apps": [
+        "rcp3",
+        "plasticity",
+        "maya"
+      ]
+    },
+    "dolly": {
+      "swipe": "dolly",
+      "pinch": "dolly",
+      "apps": [
+        "unity",
+        "houdini"
+      ]
+    }
+  },
+  "presets": {
+    "industry": {
+      "title": "Industry (Maya / RCP)",
+      "tieBreaker": "maya",
+      "sources": [
+        "maya",
+        "rcp3",
+        "c4d",
+        "blenderIC",
+        "unity",
+        "blender54963"
+      ],
+      "bindings": [
+        {
+          "input": "left",
+          "modifiers": [
+            "option"
+          ],
+          "action": "orbit"
+        },
+        {
+          "input": "middle",
+          "modifiers": [
+            "option"
+          ],
+          "action": "pan"
+        },
+        {
+          "input": "middle",
+          "modifiers": [],
+          "action": "pan"
+        },
+        {
+          "input": "right",
+          "modifiers": [
+            "option"
+          ],
+          "action": "dolly"
+        },
+        {
+          "input": "wheel",
+          "modifiers": [],
+          "action": "dolly"
+        },
+        {
+          "input": "key:F",
+          "modifiers": [],
+          "action": "frameSelection"
+        },
+        {
+          "input": "key:A",
+          "modifiers": [],
+          "action": "frameAll"
+        },
+        {
+          "input": "right",
+          "modifiers": [],
+          "action": "fly",
+          "note": "hold + WASD/QE (Unity, Unreal, RCP 3)"
+        }
+      ],
+      "touchSurface": "pan"
+    },
+    "blender": {
+      "title": "Blender",
+      "sources": [
+        "blender"
+      ],
+      "bindings": [
+        {
+          "input": "middle",
+          "modifiers": [],
+          "action": "orbit"
+        },
+        {
+          "input": "middle",
+          "modifiers": [
+            "shift"
+          ],
+          "action": "pan"
+        },
+        {
+          "input": "middle",
+          "modifiers": [
+            "control"
+          ],
+          "action": "dolly"
+        },
+        {
+          "input": "wheel",
+          "modifiers": [],
+          "action": "dolly"
+        },
+        {
+          "input": "key:numpad.",
+          "modifiers": [],
+          "action": "frameSelection"
+        },
+        {
+          "input": "key:Home",
+          "modifiers": [],
+          "action": "frameAll"
+        },
+        {
+          "input": "rotate",
+          "modifiers": [],
+          "action": "orbit"
+        }
+      ],
+      "touchSurface": "orbit",
+      "emulateMiddleButton": {
+        "default": false,
+        "modifier": "option"
+      }
+    },
+    "plasticity": {
+      "title": "Plasticity",
+      "sources": [
+        "plasticity"
+      ],
+      "bindings": [
+        {
+          "input": "middle",
+          "modifiers": [],
+          "action": "orbit"
+        },
+        {
+          "input": "right",
+          "modifiers": [],
+          "action": "pan"
+        },
+        {
+          "input": "middle",
+          "modifiers": [
+            "control"
+          ],
+          "action": "dolly"
+        },
+        {
+          "input": "middle",
+          "modifiers": [
+            "option"
+          ],
+          "action": "align"
+        },
+        {
+          "input": "wheel",
+          "modifiers": [],
+          "action": "dolly"
+        }
+      ],
+      "touchSurface": "pan"
+    },
+    "godot": {
+      "title": "Godot",
+      "sources": [
+        "godot"
+      ],
+      "bindings": [
+        {
+          "input": "middle",
+          "modifiers": [],
+          "action": "orbit"
+        },
+        {
+          "input": "middle",
+          "modifiers": [
+            "shift"
+          ],
+          "action": "pan"
+        },
+        {
+          "input": "middle",
+          "modifiers": [
+            "control"
+          ],
+          "action": "dolly"
+        },
+        {
+          "input": "wheel",
+          "modifiers": [],
+          "action": "dolly"
+        },
+        {
+          "input": "key:F",
+          "modifiers": [],
+          "action": "frameSelection"
+        },
+        {
+          "input": "right",
+          "modifiers": [],
+          "action": "fly",
+          "note": "hold + WASD/QE"
+        }
+      ],
+      "touchSurface": "orbit",
+      "orbitSnapModifier": "option"
+    },
+    "houdini": {
+      "title": "Houdini",
+      "sources": [
+        "houdini"
+      ],
+      "bindings": [
+        {
+          "input": "left",
+          "modifiers": [
+            "space"
+          ],
+          "action": "orbit"
+        },
+        {
+          "input": "middle",
+          "modifiers": [
+            "space"
+          ],
+          "action": "pan"
+        },
+        {
+          "input": "right",
+          "modifiers": [
+            "space"
+          ],
+          "action": "dolly"
+        },
+        {
+          "input": "left",
+          "modifiers": [
+            "option"
+          ],
+          "action": "orbit"
+        },
+        {
+          "input": "middle",
+          "modifiers": [
+            "option"
+          ],
+          "action": "pan"
+        },
+        {
+          "input": "right",
+          "modifiers": [
+            "option"
+          ],
+          "action": "dolly"
+        },
+        {
+          "input": "wheel",
+          "modifiers": [],
+          "action": "dolly"
+        },
+        {
+          "input": "key:F",
+          "modifiers": [],
+          "action": "frameSelection"
+        },
+        {
+          "input": "key:A",
+          "modifiers": [
+            "command"
+          ],
+          "action": "frameAll"
+        },
+        {
+          "input": "key:M",
+          "modifiers": [],
+          "action": "fly",
+          "note": "View tool active"
+        }
+      ],
+      "touchSurface": "dolly"
+    },
+    "shapr3d": {
+      "title": "Shapr3D",
+      "sources": [
+        "shapr3d"
+      ],
+      "bindings": [
+        {
+          "input": "right",
+          "modifiers": [],
+          "action": "orbit"
+        },
+        {
+          "input": "middle",
+          "modifiers": [],
+          "action": "pan"
+        },
+        {
+          "input": "right",
+          "modifiers": [
+            "shift"
+          ],
+          "action": "pan"
+        },
+        {
+          "input": "wheel",
+          "modifiers": [],
+          "action": "dolly"
+        },
+        {
+          "input": "key:Space",
+          "modifiers": [],
+          "action": "frameSelection",
+          "note": "frames the face under the pointer"
+        }
+      ],
+      "touchSurface": "orbit"
+    },
+    "fusion360": {
+      "title": "Fusion 360",
+      "sources": [
+        "fusion"
+      ],
+      "bindings": [
+        {
+          "input": "middle",
+          "modifiers": [
+            "shift"
+          ],
+          "action": "orbit"
+        },
+        {
+          "input": "middle",
+          "modifiers": [],
+          "action": "pan"
+        },
+        {
+          "input": "wheel",
+          "modifiers": [],
+          "action": "dolly"
+        }
+      ]
+    },
+    "rhino": {
+      "title": "Rhino / Mol3D",
+      "sources": [
+        "plasticity"
+      ],
+      "bindings": [
+        {
+          "input": "right",
+          "modifiers": [],
+          "action": "orbit"
+        },
+        {
+          "input": "right",
+          "modifiers": [
+            "shift"
+          ],
+          "action": "pan"
+        },
+        {
+          "input": "right",
+          "modifiers": [
+            "option"
+          ],
+          "action": "dolly"
+        },
+        {
+          "input": "wheel",
+          "modifiers": [],
+          "action": "dolly"
+        }
+      ],
+      "note": "From Plasticity's Rhino and Mol3D presets; McNeel docs not yet checked."
+    },
+    "max3ds": {
+      "title": "3ds Max",
+      "reference": true,
+      "sources": [
+        "max"
+      ],
+      "bindings": [
+        {
+          "input": "middle",
+          "modifiers": [
+            "option"
+          ],
+          "action": "orbit"
+        },
+        {
+          "input": "middle",
+          "modifiers": [],
+          "action": "pan"
+        },
+        {
+          "input": "middle",
+          "modifiers": [
+            "control",
+            "option"
+          ],
+          "action": "dolly"
+        },
+        {
+          "input": "wheel",
+          "modifiers": [],
+          "action": "dolly"
+        }
+      ]
+    },
+    "modo": {
+      "title": "Modo",
+      "reference": true,
+      "discontinued": "2024-11-07",
+      "sources": [
+        "modo"
+      ],
+      "bindings": [
+        {
+          "input": "left",
+          "modifiers": [
+            "option"
+          ],
+          "action": "orbit"
+        },
+        {
+          "input": "left",
+          "modifiers": [
+            "shift",
+            "option"
+          ],
+          "action": "pan"
+        },
+        {
+          "input": "left",
+          "modifiers": [
+            "control",
+            "option"
+          ],
+          "action": "dolly"
+        },
+        {
+          "input": "wheel",
+          "modifiers": [],
+          "action": "dolly"
+        },
+        {
+          "input": "key:A",
+          "modifiers": [
+            "shift"
+          ],
+          "action": "frameSelection"
+        },
+        {
+          "input": "key:A",
+          "modifiers": [],
+          "action": "frameAll"
+        }
+      ]
+    },
+    "touchSurface": {
+      "title": "Trackpad / Tablet (modifier-only)",
+      "sources": [
+        "godot"
+      ],
+      "bindings": [
+        {
+          "input": "none",
+          "modifiers": [
+            "option"
+          ],
+          "action": "orbit"
+        },
+        {
+          "input": "none",
+          "modifiers": [
+            "shift"
+          ],
+          "action": "pan"
+        },
+        {
+          "input": "none",
+          "modifiers": [
+            "control"
+          ],
+          "action": "dolly"
+        },
+        {
+          "input": "key:F",
+          "modifiers": [],
+          "action": "frameSelection"
+        }
+      ]
+    }
+  }
+}
